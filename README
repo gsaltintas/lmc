@@ -1,0 +1,14 @@
+# Linear Mode-Connectivity and Perutation Invariance
+
+This is the code base to perform several experiments related to lmc.
+
+Pass models as below
+
+```bash
+python train.py train --model=mlp --mlp.width=1024
+```
+
+or 
+```bash
+python train.py train --model=resnet --resnet.width_multiplier=64
+```
