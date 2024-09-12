@@ -13,6 +13,10 @@ import torch
 import torchvision.transforms as transforms
 import wandb
 import wandb.sync
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from lmc.config import DataConfig
 from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
                                  MEAN_DICT, STD_DICT, TORCH_DICT)
@@ -20,9 +24,6 @@ from lmc.experiment_config import Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from torch import nn, optim
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 logger = logging.getLogger("setup")
 
@@ -312,6 +313,7 @@ def setup_model_dir(config: Trainer) -> Path:
     model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
     config.model_dir = model_dir
     
+    config.model_dir = model_dir
     # Save code as zip and config as yaml into the model directory.
     config.save(model_dir)
 
@@ -446,7 +448,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             train_eval_loader=train_eval_loader,
             test_loader=test_loader,
             max_steps=max_steps,
-            save_freq_step=save_freq,
+            save_freq_step=save_freq
         ))
     seed_everything(first_seed)
     logger.info("Model setups complete, switching seed to %d, which is passed to the first model.", first_seed)
@@ -481,7 +483,6 @@ def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, 
     )
 
 def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int = None) -> None:
-    # import code; code.interact(local=locals()|globals())
     """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
     torch.save(
         {

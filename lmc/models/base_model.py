@@ -4,13 +4,14 @@ from typing import Dict, Optional, get_args
 
 import numpy as np
 import torch
+from torch import nn
+
 from lmc.models.layers import LayerNorm2d
 from lmc.models.type_declaration import Activations, Inits, Norms
 from lmc.utils.permutations import (PermSpec, PermType, get_permutation_sizes,
                                     get_random_permutation_with_fixed_points,
                                     permute_model)
 from lmc.utils.utils import match_pattern
-from torch import nn
 
 from .type_declaration import PATTERNS
 

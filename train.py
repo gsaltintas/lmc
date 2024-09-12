@@ -2,28 +2,25 @@ import argparse
 import logging
 import math
 import traceback
-from dataclasses import dataclass
-from typing import Dict, Mapping
 
 import numpy as np
 import torch
+import wandb
 from rich.logging import RichHandler
-from torch import nn, optim
+from torch import nn
 from tqdm import tqdm
 
-import wandb
-from lmc.config import Config
-from lmc.data.data_stats import CLASS_DICT, SAMPLE_DICT
+from lmc.data.data_stats import SAMPLE_DICT
 from lmc.experiment_config import Trainer
 from lmc.utils.metrics import AverageMeter, mixup_topk_accuracy, report_results
-from lmc.utils.setup_training import (TrainingElement, TrainingElements,
-                                      cleanup, save_model_opt,
-                                      setup_experiment)
+from lmc.utils.setup_training import (TrainingElements, cleanup,
+                                      save_model_opt, setup_experiment)
 
 FORMAT = "%(name)s - %(levelname)s: %(message)s"
 
 logger = logging.getLogger("trainer")
 def get_early_iter_ckpt_steps(steps_per_epoch: int, n_ckpts: int = 10):
+    """ schedule for checkpoints """
     first_epoch = np.concatenate(([1,2,3,4,5], np.linspace(6, steps_per_epoch, n_ckpts)))
     later_epochs = np.concatenate([np.linspace(ep*steps_per_epoch, (ep+1)*steps_per_epoch, n_ckpts) for ep in range(1, 10, )])
     ckpts = np.concatenate((first_epoch, later_epochs)).astype(int)
@@ -60,17 +57,15 @@ def test(model, loader, loss_fn, config, iterator: tqdm, device):
     iterator.refresh()
     return res
 
-def train(config):
-    # import code; code.interact(local=locals()|globals())
-    training_elements: TrainingElements; device: torch.device 
+def train(config: Trainer):
+    training_elements: TrainingElements
+    device: torch.device 
     training_elements, device = setup_experiment(config)
-    # TODO: ckpt
-    # TODO: wandb
     steps_per_epoch = math.ceil(SAMPLE_DICT[config.data.dataset] / config.data.batch_size)
     max_epochs = math.ceil(training_elements.max_steps / steps_per_epoch)
     loss_fn, test_loss_fn = nn.CrossEntropyLoss(label_smoothing=config.trainer.label_smoothing), nn.CrossEntropyLoss()
     global_step: int = 0
-    EARLY_ITER_CKPT_STEPS = get_early_iter_ckpt_steps(steps_per_epoch, n_ckpts=10)
+    early_iter_ckpt_steps = get_early_iter_ckpt_steps(steps_per_epoch, n_ckpts=10)
     for ep in range(1, max_epochs+1):
         ### train epoch
         log_dct = dict(epoch=ep)
@@ -110,7 +105,7 @@ def train(config):
                 element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
                 element.curr_step += 1
                 save: bool = element.save_freq_step and element.curr_step % element.save_freq_step == 0
-                save = save or (config.trainer.save_early_iters and element.curr_step in EARLY_ITER_CKPT_STEPS)
+                save = save or (config.trainer.save_early_iters and element.curr_step in early_iter_ckpt_steps)
                 if save:
                     ckpt_name = f"checkpoints/ep-{ep}-st-{element.curr_step}.ckpt"
                     save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
@@ -159,15 +154,11 @@ def train(config):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(conflict_handler="resolve")
     parser.add_argument("subcommand")
-    parser.add_argument("--level",choices=["debug", "info", "warning", "error", "critical"], default= "info")
-
-    # Add arguments for the various runners.
+    parser.add_argument("--level",choices=["debug", "info", "warning", "error", "critical"], default= "info", help="")
     Trainer.add_args(parser)
 
     args = parser.parse_args()
-    logging.basicConfig(
-    level=args.level.upper(), format=FORMAT, handlers=[RichHandler(show_time=False)]
-)
+    logging.basicConfig(level=args.level.upper(), format=FORMAT, handlers=[RichHandler(show_time=False)])
     platform = Trainer.create_from_args(args)
     print(platform.display)
     try:

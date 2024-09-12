@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass
-from typing import Any, List, Union
+from typing import Any, List, Optional, Union
 
 import torch
 from rich.console import Console
@@ -9,8 +9,10 @@ from tabulate import tabulate
 
 
 def mixup_topk_accuracy(
-    preds, targets, targets_shuffled=None, k: int = 3, avg: bool = False
+    preds:  torch.Tensor, targets:  torch.Tensor, targets_shuffled: Optional[torch.Tensor]=None, k: int = 3, avg: bool = False
 ):
+    #TODO: may need to change this in the future, to control for how mixup is handled in torch loader
+    """ computes the top-1 and top-k accuracy with or without mixup """
     num = preds.size(0) if avg else 1
     _, top_k_inds = torch.topk(preds, k)
     topk = (

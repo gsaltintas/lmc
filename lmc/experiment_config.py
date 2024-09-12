@@ -118,7 +118,6 @@ class Experiment:
     resume_from: str = None
     n_models: int = 1  
     model_dir: Path = None
-    
     _resume_from: str = "Pass the model_dir or wandb run (wandb:project/username/run_id) to continue training from, the following model dir must exist in the current file system."
     _name_prefix: str = field(init=False, default="")
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
