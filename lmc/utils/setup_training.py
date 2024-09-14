@@ -17,7 +17,7 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from lmc.config import DataConfig
+from lmc.config import DataConfig, Step
 from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
                                  MEAN_DICT, STD_DICT, TORCH_DICT)
 from lmc.experiment_config import Trainer
@@ -63,9 +63,9 @@ class TrainingElement(object):
     permutation = None
     prev_perm_wm = None
     prev_perm_am = None
-    max_steps: int = None
-    curr_step: int = 0 # not sure if this is the best way?
-    save_freq_step: int = None
+    max_steps: Step = None
+    curr_step: Step = 0 # not sure if this is the best way?
+    save_freq_step: Step = None
     model_dir: Path = None
     train_iterator: tqdm = Iterator()
     test_iterator: tqdm = Iterator()
@@ -109,10 +109,14 @@ class TrainingElements(object):
         return {i: getattr(self, i) for i in range(self.n_elements)}
     
     @property
-    def max_steps(self):
-        max_step = 0
+    def max_steps(self) -> Step:
+        max_step = None
         for el in self._elements:
-            max_step = max(max_step, el.max_steps)
+            if max_step is None:
+                max_step = el.max_steps
+                continue
+            if max_step.get_step(1) < el.max_steps.get_step(1):
+                max_step = el.max_steps
         return max_step
 
     def on_epoch_start(self):
@@ -179,7 +183,7 @@ def configure_model(config: Trainer, model_dir: Path, device: torch.device, retu
     out = CLASS_DICT[config.data.dataset]
     #TODO: load checkpoints
     if "mlp" in conf.model_name:
-        model = MLP.get_model_from_code(conf.model_name, output_dim=out, input_dim=CHANNELS_DICT[config.data.dataset] * DEFAULT_RES_DICT[config.data.dataset] ** 2, initialization_strategy=conf.initialization_strategy, norm=conf.norm, act=conf.act)
+        model = MLP.get_model_from_code(conf.model_name, output_dim=out, input_dim=CHANNELS_DICT[config.data.dataset] * DEFAULT_RES_DICT[config.data.dataset] ** 2, initialization_strategy=conf.initialization_strategy, norm=conf.norm, act=conf.act, hidden_dim=conf.width, depth=conf.num_hidden_layers+1)
     elif "resnet" in conf.model_name:
         if conf.model_name == "resnet":
             if config.data.dataset.lower() == "cifar10":
@@ -413,17 +417,11 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)
-        training_steps = config.trainer.training_steps
-        max_steps = int(training_steps[:-2])
-        if training_steps.endswith("ep"):
-            max_steps *= steps_per_epoch
-        save_freq_ = config.trainer.save_freq
-        save_freq = int(save_freq_[:-2])
-        if save_freq_.endswith("ep"):
-            save_freq *= steps_per_epoch
+        max_steps = config.trainer.training_steps
+        save_freq = config.trainer.save_freq
         seed_everything(seed)
         opt = configure_optimizer(config, model)
-        scheduler = configure_lr_scheduler(opt, max_steps, config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
+        scheduler = configure_lr_scheduler(opt, max_steps.get_step(steps_per_epoch), config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
             opt.load_state_dict(ckpt["optimizer_state_dict"])
             logger.info("Optimizer loaded from ckpt")

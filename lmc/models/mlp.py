@@ -9,6 +9,7 @@ from .type_declaration import Activations, Inits, Norms
 
 
 class MLP(BaseModel):
+    _name: str = "mlp"
 
     def __init__(
         self,
@@ -48,11 +49,16 @@ class MLP(BaseModel):
         initialization_strategy: str = ...,
         act: Activations = ...,
         norm: Norms = ...,
+        hidden_dim: int = ...,
+        depth: int = ...,
     ) -> "MLP":
         model_code = model_code.lower()
         if not MLP.is_valid_model_code(model_code):
             raise ValueError(f"{model_code} invalid.")
-        hidden_dim, depth = model_code[4:].split("x")
+        try:
+            hidden_dim, depth = model_code[4:].split("x")
+        except ValueError:
+            pass
         return MLP(
             hidden_dim=int(hidden_dim),
             num_hidden_layers=int(depth) - 1,

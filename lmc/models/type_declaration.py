@@ -1,5 +1,5 @@
 """ defines patterns for different model codes """
-from typing import Literal
+from typing import Literal, Optional
 
 import numpy as np
 
@@ -23,8 +23,7 @@ PATTERNS = {
         r"wideresnet[a-zA-Z]*/(\d+)xk=(\d+)-s=(\d+)-d=(\d+)-fc=(\d+)",
     ],
 }
-
-MODEL_NAME_PATTERNS = np.concatenate(PATTERNS.values())
+MODEL_NAME_PATTERNS = np.concatenate(list(PATTERNS.values()))
 Inits = Optional[
     Literal[
         "xavier_uniform",

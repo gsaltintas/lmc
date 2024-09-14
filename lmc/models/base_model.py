@@ -11,7 +11,7 @@ from lmc.models.type_declaration import Activations, Inits, Norms
 from lmc.utils.permutations import (PermSpec, PermType, get_permutation_sizes,
                                     get_random_permutation_with_fixed_points,
                                     permute_model)
-from lmc.utils.utils import match_pattern
+from lmc.utils.utils import pattern_matched
 
 from .type_declaration import PATTERNS
 
@@ -50,19 +50,19 @@ class BaseModel(nn.Module):
     @abstractmethod
     def is_valid_model_code(cls, model_code: str) -> bool:
         """Is the model name string a valid name for models in this class?"""
-        return match_pattern(model_code, PATTERNS.get(cls._name, []))
+        match = pattern_matched(model_code, PATTERNS.get(cls._name, []))
+        return match
 
     @staticmethod
     @abstractmethod
     def get_model_from_code(model_code: str, output_dim: int, **kwargs) -> "BaseModel":
         """Returns an instance of this class as described by the model_code string."""
-
         pass
 
     def reset_parameters(self, init_strategy: str = None):
         init_strategy = (
             self.initialization_strategy if init_strategy is None else init_strategy
-        )
+        )   
         for name, m in self.named_modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
                 if m.bias is not None:

@@ -62,7 +62,7 @@ def train(config: Trainer):
     device: torch.device 
     training_elements, device = setup_experiment(config)
     steps_per_epoch = math.ceil(SAMPLE_DICT[config.data.dataset] / config.data.batch_size)
-    max_epochs = math.ceil(training_elements.max_steps / steps_per_epoch)
+    max_epochs = training_elements.max_steps.get_epoch(steps_per_epoch)
     loss_fn, test_loss_fn = nn.CrossEntropyLoss(label_smoothing=config.trainer.label_smoothing), nn.CrossEntropyLoss()
     global_step: int = 0
     early_iter_ckpt_steps = get_early_iter_ckpt_steps(steps_per_epoch, n_ckpts=10)
@@ -72,13 +72,13 @@ def train(config: Trainer):
         training_elements.on_epoch_start()
         train_loaders = [iter(el.train_loader) for el in training_elements]
         for ind, batches in enumerate(zip(*train_loaders)):
-            if global_step >= training_elements.max_steps:
+            if global_step >= training_elements.max_steps.get_step(steps_per_epoch):
                 break
             global_step += 1
             for i, (x, y) in enumerate(batches):
                 element = training_elements[i]
                 i = i + 1
-                if element.curr_step >= element.max_steps:
+                if element.curr_step >= element.max_steps.get_step(steps_per_epoch):
                     break
                 if element.scheduler is None:
                     lr = element.opt.param_groups[0]["lr"]
@@ -104,7 +104,7 @@ def train(config: Trainer):
                 acc, topk = mixup_topk_accuracy(out.detach(), y.detach(), targs_perm, k=3, avg=True)
                 element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
                 element.curr_step += 1
-                save: bool = element.save_freq_step and element.curr_step % element.save_freq_step == 0
+                save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, steps_per_epoch) == 0
                 save = save or (config.trainer.save_early_iters and element.curr_step in early_iter_ckpt_steps)
                 if save:
                     ckpt_name = f"checkpoints/ep-{ep}-st-{element.curr_step}.ckpt"
@@ -115,7 +115,7 @@ def train(config: Trainer):
             ckpt_name = f"checkpoints/ep-{ep}.ckpt"
             save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
             element.model.eval()
-            if element.curr_step > element.max_steps:
+            if element.curr_step > element.max_steps.get_step(steps_per_epoch):
                 continue
             # logging
             log_dct.update( {

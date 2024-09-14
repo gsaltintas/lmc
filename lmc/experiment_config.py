@@ -13,7 +13,8 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LoggerConfig,
-                     ModelConfig, TrainerConfig, add_basic_args, maybe_get_arg)
+                     TrainerConfig, add_basic_args, make_model_config,
+                     maybe_get_arg)
 
 
 def dataclass_from_dict(klass: Type, d: Dict[str, Any]) -> dataclass:
@@ -102,6 +103,10 @@ def make_seeds_class() -> Type:
     cls_ = make_dataclass("Seeds", fields_, bases=(Seeds,))
     return cls_
 
+# def make_model_config() -> Type:
+#     return field_factory("model_name",
+#             mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
+#             default_val="mlp",)
 
 @dataclass 
 class Experiment:
@@ -111,7 +116,7 @@ class Experiment:
     Each config object should be a field of this dataclass.
     """
     trainer: TrainerConfig = None
-    model: ModelConfig = None
+    model: make_model_config() = field(init=True, default_factory=make_model_config) #None
     data: DataConfig = None
     logger: LoggerConfig = None
     seeds: make_seeds_class() = field(init=True, default_factory=make_seeds_class)
@@ -222,5 +227,11 @@ class Experiment:
 
 @dataclass
 class Trainer(Experiment):
-    subconfigs = [TrainerConfig, DataConfig, ModelConfig]
     _name_prefix = "trainer"
+
+
+@dataclass
+class PerturbedTrainer(Experiment):
+    perturb_at: int = 0
+    _perturb_at: str = "Perturbation step either of the from Xst | X or Xep"
+    _name_prefix = "perturbed-trainer"

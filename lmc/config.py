@@ -1,9 +1,11 @@
 import argparse
 import logging
+import math
 import os
 import re
 from copy import deepcopy
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from dataclasses import (MISSING, asdict, dataclass, field, fields,
+                         make_dataclass)
 from pathlib import Path
 from pprint import pformat
 from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
@@ -14,7 +16,7 @@ from rich.table import Table
 
 from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
                                          Inits, Norms)
-from lmc.utils.utils import match_pattern
+from lmc.utils.utils import pattern_matched
 
 """ TODO: maybe omit defaults in the future versions """
 logger = logging.getLogger("config")
@@ -160,6 +162,8 @@ def add_basic_args(
             parser.add_argument(arg_name, nargs="*", **kwargs)
         elif isinstance(get_origin(typ), type) and issubclass(get_origin(typ), tuple):
             parser.add_argument(arg_name, nargs=len(get_args(typ)), **kwargs)
+        elif typ == Step:
+            parser.add_argument(arg_name, type=str, **kwargs)
         elif isinstance(typ, type) and issubclass(typ, Config):
             add_basic_args(
                 parser_,
@@ -173,13 +177,56 @@ def add_basic_args(
                 create_group=create_group,
             )
         else:
-            parser_.error(f"Invalid field type {typ} for hparams.")
+            parser_.error(f"Invalid field type {typ} for config.")
     parser = parser_
+
+@dataclass
+class Step:
+    value: Union[str, int] = None
+    steps_per_epoch: Optional[int] = 1
+    _name: str = None
+
+    def __post_init__(self):
+        if str(self.value).isnumeric():
+            self.value = f"{self.value}st"
+        self.value = self.value.lower()
+        if not self.value.endswith("ep") and not self.value.endswith(
+            "st"
+        ):
+            raise ValueError(f"Please specify {self._name} steps as either X | Xst or Xep.")
+
+    @property
+    def suffix(self):
+        if str(self.value).isnumeric():
+            return "st"
+        return self.value[-2:]
+    
+    def get_step(self, steps_per_epoch: Optional[int] = None) -> int:
+        val = int(self.value[:-2])
+        if self.value.endswith("st"):
+            return val
+        steps_per_epoch = steps_per_epoch if steps_per_epoch is not None else self.steps_per_epoch
+        return val * steps_per_epoch
+
+    def get_epoch(self, steps_per_epoch: Optional[int] = None) -> int:
+        val = int(self.value[:-2])
+        if self.value.endswith("ep"):
+            return val
+        steps_per_epoch = steps_per_epoch if steps_per_epoch is not None else self.steps_per_epoch
+        return math.ceil(val / steps_per_epoch)
+    
+    def modulo(self, val: int, mode: Literal["st", "ep"], steps_per_epoch: Optional[int] = None) -> int:
+        if mode == "st":
+            return val % self.get_step(steps_per_epoch)
+        return val % self.get_epoch(steps_per_epoch)
+    
 
 @dataclass
 class Config:
     """ base config class """
     _add_prefix: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
+    _name: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
+    _description: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
 
     def __post_init__(self):
         if not hasattr(self, "_name"):
@@ -241,6 +288,8 @@ class Config:
                 if not hasattr(args, arg_name):
                     raise ValueError(f"Missing argument: {arg_name}.")
                 d[_field.name] = getattr(args, arg_name)
+            elif typ == Step:
+                d[_field.name] = Step(getattr(args, arg_name))
             # Nested hparams.
             elif isinstance(typ, type) and issubclass(typ, Config):
                 subprefix = typ._name if typ._add_prefix else None
@@ -313,8 +362,8 @@ class LrSchedule(Config):
 
 @dataclass
 class Optimizer(Config):
-    lr: float
-    optimizer: Literal["sgd", "adam", "adamw"]
+    lr: float = 0.1
+    optimizer: Literal["sgd", "adam", "adamw"] = "sgd"
     weight_decay: float = 0.0
     warmup_ratio: float = 0.0
     gradient_clip_val: float = 0.0
@@ -346,7 +395,7 @@ class _AdamConfig(Optimizer):
 
 @dataclass
 class TrainerConfig(Config):
-    training_steps: str
+    training_steps: Step
     opt: Union[_SGDConfig, _AdamConfig] = field(
         init=True,
         default_factory=field_factory(
@@ -356,7 +405,8 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: str = "1ep"
+    save_freq: Step = "1ep"
+    # save_freq: str = "1ep"
     save_early_iters: bool = False
     save_best: bool = True
     use_scaler: bool = False
@@ -370,21 +420,21 @@ class TrainerConfig(Config):
     _name = "trainer"
     _description = "Training hyper-parameters"
 
-    @classmethod
-    def create_from_args(cls, args: argparse.Namespace, prefix: str = None) -> Config:
-        if args.training_steps.isnumeric():
-            args.training_steps = f"{args.training_steps}st"
-        if args.save_freq.isnumeric():
-            args.save_freq = f"{args.save_freq}st"
-        if not args.training_steps.endswith("ep") and not args.training_steps.endswith(
-            "st"
-        ):
-            raise ValueError("Please specify training steps as either X | Xst or Xep.")
-        if not args.save_freq.endswith("ep") and not args.save_freq.endswith(
-            "st"
-        ):
-            raise ValueError("Please specify save frequency as either X | Xst or Xep.")
-        return super().create_from_args(args, prefix)
+    # @classmethod
+    # def create_from_args(cls, args: argparse.Namespace, prefix: str = None) -> Config:
+    #     if args.training_steps.isnumeric():
+    #         args.training_steps = f"{args.training_steps}st"
+    #     if args.save_freq.isnumeric():
+    #         args.save_freq = f"{args.save_freq}st"
+    #     if not args.training_steps.endswith("ep") and not args.training_steps.endswith(
+    #         "st"
+    #     ):
+    #         raise ValueError("Please specify training steps as either X | Xst or Xep.")
+    #     if not args.save_freq.endswith("ep") and not args.save_freq.endswith(
+    #         "st"
+    #     ):
+    #         raise ValueError("Please specify save frequency as either X | Xst or Xep.")
+    #     return super().create_from_args(args, prefix)
 
 
 @dataclass
@@ -459,9 +509,33 @@ class Model:
             s += f.name + "=" + f.value
         return s + ")"
 
+@dataclass
+class ModelConfig_(Config):
+    model_name: str
+
+    norm: Norms = None
+    act: Activations = "relu"
+    initialization_strategy: Inits = "kaiming_normal"
+    ckpt_path: Optional[Path] = None
+
+    _model_name = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
+    _initialization_strategy = "Initialization strategy for the model's layers"
+
+    _name = "model"
+    _description = ""
+    _add_prefix = False
+
+    def __post_init__(self):
+        correct_name = pattern_matched(self.model_name, MODEL_NAME_PATTERNS)
+        if not correct_name:
+            raise ValueError(
+                f"Model name not properly configured, try one of {pformat(MODEL_NAME_PATTERNS)}"
+            )
+        return super().__post_init__()
+
 
 @dataclass
-class ResNetConfig(Config):
+class ResNetConfig(ModelConfig_):
     _name = "resnet"
     _description = ""
     _add_prefix = True
@@ -473,7 +547,7 @@ class ResNetConfig(Config):
 
 
 @dataclass
-class MLPConfig(Config):
+class MLPConfig(ModelConfig_):
     _name = "mlp"
     _description = ""
     _add_prefix = True
@@ -483,13 +557,17 @@ class MLPConfig(Config):
 
     _num_hidden_layers: str = "Number of hidden layers, depth: (num_hidden_layers + 1)."
 
+def make_model_config() -> Type:
+    model_name = maybe_get_arg("model_name")
+    model_cls = MLPConfig
+    if "mlp" in model_name:
+        model_cls = MLPConfig
+    elif "resnet" in model_name:
+        model_cls = ResNetConfig
+    fields_ = [(f.name, f.type, f) for f in fields(model_cls) if not f.name.startswith("_")] +  [(f.name, f.type, f) for f in fields(model_cls) if f.name.startswith("_")]
+    
+    return make_dataclass("ModelConfig", fields_ , bases=(model_cls, ))
 
-@dataclass
-class ModelConfig(Config):
-    _name = "model"
-    _description = ""
-
-    model_name: str
     model: Union[MLPConfig, ResNetConfig] = field(
         init=True,
         default_factory=field_factory(
@@ -498,21 +576,11 @@ class ModelConfig(Config):
             default_val="mlp",
         ),
     )
-    norm: Norms = None
-    act: Activations = "relu"
-    initialization_strategy: Inits = "kaiming_normal"
-    ckpt_path: Optional[Path] = None
+@dataclass
+class ModelConfig(Config):
+    pass
 
-    _model_name = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
-    _initialization_strategy = "Initialization strategy for the model's layers"
-
-    def __post_init__(self):
-        correct_name = match_pattern(self.model_name, MODEL_NAME_PATTERNS)
-        if not correct_name:
-            raise ValueError(
-                f"Model name not properly configured, try one of {pformat(MODEL_NAME_PATTERNS)}"
-            )
-        return super().__post_init__()
+ModelConfig = make_model_config()
 
 
 @dataclass
