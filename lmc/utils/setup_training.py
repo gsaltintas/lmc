@@ -198,7 +198,7 @@ def configure_model(config: Trainer, model_dir: Path, device: torch.device, retu
     logger.info("Model created.")
     # logger.info
     print(model)
-    logger.info(f"Total number of trainable parameters {count_parameters(model)//1e6}M.")
+    logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
     return model
 
 def configure_optimizer(config: Trainer, model: 'BaseModel'):
@@ -457,7 +457,6 @@ def cleanup(config: Trainer):
     """ if script is called with cleanup_after, deletes the model_dir and all checkpoints created"""
     if config.logger.cleanup_after:
         if not config.hashname in config.model_dir.as_posix():
-            import code; code.interact(local=locals()|globals())
             logger.info(f"Not sure if the model_dir is an outer directory, cleanup manually ({config.model_dir})")
             return
 

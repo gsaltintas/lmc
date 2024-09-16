@@ -6,14 +6,15 @@ import zipfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field, fields, make_dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple, Type, Union, get_args, get_origin
+from typing import (Any, Dict, List, Literal, Tuple, Type, Union, get_args,
+                    get_origin)
 
 import yaml
 from rich.console import Console
 from rich.table import Table
 
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LoggerConfig,
-                     TrainerConfig, add_basic_args, make_model_config,
+                     Step, TrainerConfig, add_basic_args, make_model_config,
                      maybe_get_arg)
 
 
@@ -103,11 +104,6 @@ def make_seeds_class() -> Type:
     cls_ = make_dataclass("Seeds", fields_, bases=(Seeds,))
     return cls_
 
-# def make_model_config() -> Type:
-#     return field_factory("model_name",
-#             mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
-#             default_val="mlp",)
-
 @dataclass 
 class Experiment:
 
@@ -128,6 +124,7 @@ class Experiment:
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
     _description: str = field(init=False, default="")
 
+    
     @property
     def command(self) -> str:
         return maybe_get_arg("command", positional=True, position=0)
@@ -187,7 +184,7 @@ class Experiment:
         return dataclass_from_dict(cls, dct)
 
     @property
-    def display(self):
+    def display(self) -> str:
         console = Console()
         s = ""
 
@@ -227,11 +224,37 @@ class Experiment:
 
 @dataclass
 class Trainer(Experiment):
-    _name_prefix = "trainer"
+    _name_prefix: str = "trainer"
+    _description: str = "Run a training script."
 
 
 @dataclass
-class PerturbedTrainer(Experiment):
-    perturb_at: int = 0
-    _perturb_at: str = "Perturbation step either of the from Xst | X or Xep"
-    _name_prefix = "perturbed-trainer"
+class PerturbedTrainer(Trainer):
+    perturb_step: int = 0#TODO: make step Step  = field(init=True, default_factory=lambda: Step(0))
+    perturb_inds: List[int] = (-1, ) #field(init=True, default_factory=lambda x: [-1], default=(-1, ))
+    perturb_mode: Literal["gaussian", "batch"] = "gaussian"
+    perturb_scale: float = 0
+    norm_perturb: bool = False
+    same_steps_pperturb: bool = True
+    rewind_lr: bool = False
+
+    _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
+    _perturb_inds: str = "List of models to perturb"
+    _perturb_mode: str = "Determines the perturbation mode,\n\tif gaussian, ϵ∼N(0,σ2)\n\tif batch, ϵ=∇L(x,y;θ_0​ ),where (x,y)∼D"
+    _perturb_scale: str = "Scale to multiply the perturbation with"
+    _norm_perturb: str = "If true, perturbation is normalized to have a total l2 norm of perturb_scale"
+    _same_steps_pperturb: str = "If true, perturbed model is trained for `training_steps` after perturbation"
+    _rewind_lr: str = "If true, learning rate is rewound back to the max learning rate"
+
+    _name_prefix: str = "perturbed-trainer"
+    _description: str = "Run a butterfly experiment."
+
+    def __post_init__(self):
+        for i, p in enumerate(self.perturb_inds):
+            p = int(p)
+            if p < 0:
+                # todo: make sure that the indexing is the same 0 or 1 based
+                p = self.n_models + p + 1 # here it is 1-based
+            self.perturb_inds[i] = p
+
+        return super().__post_init__()

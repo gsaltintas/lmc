@@ -2,6 +2,7 @@ import argparse
 import logging
 import math
 import traceback
+from typing import List
 
 import numpy as np
 import torch
@@ -10,6 +11,7 @@ from rich.logging import RichHandler
 from torch import nn
 from tqdm import tqdm
 
+from lmc.config import maybe_get_arg
 from lmc.data.data_stats import SAMPLE_DICT
 from lmc.experiment_config import Trainer
 from lmc.utils.metrics import AverageMeter, mixup_topk_accuracy, report_results
@@ -57,6 +59,36 @@ def test(model, loader, loss_fn, config, iterator: tqdm, device):
     iterator.refresh()
     return res
 
+def step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, ckpt_steps: List[int] = [], i: int =1):
+    if element.scheduler is None:
+        lr = element.opt.param_groups[0]["lr"]
+    else:
+        lr = element.scheduler.get_last_lr()[-1]
+    if config.logger.use_wandb:
+        wandb.log({f"lr/model{i}": lr})
+
+    element.opt.zero_grad()
+    x = x.to(device)
+    y = y.to(device)
+    out = element.model(x)
+    loss = loss_fn(out, y)
+    targs_perm = None
+    loss.backward()
+
+    element.opt.step()
+    if element.scheduler is not None:
+        element.scheduler.step()
+
+    # update metrics
+    acc, topk = mixup_topk_accuracy(out.detach(), y.detach(), targs_perm, k=3, avg=True)
+    element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
+    element.curr_step += 1
+    save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, steps_per_epoch) == 0
+    save = save or (config.trainer.save_early_iters and element.curr_step in ckpt_steps)
+    if save:
+        ckpt_name = f"checkpoints/ep-{ep}-st-{element.curr_step}.ckpt"
+        save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
+
 def train(config: Trainer):
     training_elements: TrainingElements
     device: torch.device 
@@ -77,48 +109,26 @@ def train(config: Trainer):
             global_step += 1
             for i, (x, y) in enumerate(batches):
                 element = training_elements[i]
-                i = i + 1
                 if element.curr_step >= element.max_steps.get_step(steps_per_epoch):
                     break
-                if element.scheduler is None:
-                    lr = element.opt.param_groups[0]["lr"]
-                else:
-                    lr = element.scheduler.get_last_lr()[-1]
-                if config.logger.use_wandb:
-                    wandb.log({f"lr/model{i}": lr})
-
-                x, y = batches[i-1]
-                element.opt.zero_grad()
-                x = x.to(device)
-                y = y.to(device)
-                out = element.model(x)
-                loss = loss_fn(out, y)
-                targs_perm = None
-                loss.backward()
-
-                element.opt.step()
-                if element.scheduler is not None:
-                    element.scheduler.step()
-
-                # update metrics
-                acc, topk = mixup_topk_accuracy(out.detach(), y.detach(), targs_perm, k=3, avg=True)
-                element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
-                element.curr_step += 1
-                save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, steps_per_epoch) == 0
-                save = save or (config.trainer.save_early_iters and element.curr_step in early_iter_ckpt_steps)
-                if save:
-                    ckpt_name = f"checkpoints/ep-{ep}-st-{element.curr_step}.ckpt"
-                    save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
+                step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, early_iter_ckpt_steps, i=i+1)
         
-        for i, element in enumerate(training_elements, start=1):
-            # save the end of epoch results
-            ckpt_name = f"checkpoints/ep-{ep}.ckpt"
-            save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
-            element.model.eval()
-            if element.curr_step > element.max_steps.get_step(steps_per_epoch):
-                continue
+        eval_epoch(config, training_elements, device, steps_per_epoch, test_loss_fn, ep, log_dct)
+        if config.logger.use_wandb:
+            wandb.log(log_dct)
+        if config.logger.print_summary and log_dct:
+            report_results(log_dct, ep, config.n_models)
+
+def eval_epoch(config, training_elements, device, steps_per_epoch, test_loss_fn, ep, log_dct):
+    for i, element in enumerate(training_elements, start=1):
+        # save the end of epoch results
+        ckpt_name = f"checkpoints/ep-{ep}.ckpt"
+        save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
+        element.model.eval()
+        if element.curr_step > element.max_steps.get_step(steps_per_epoch):
+            continue
             # logging
-            log_dct.update( {
+        log_dct.update( {
                 f"model{i}/train/cross_entropy": element.metrics.cross_entropy.get_avg(percentage=False),
                 f"model{i}/train/accuracy": element.metrics.total_acc.get_avg(percentage=False),
                 f"model{i}/train/top_3_accuracy": element.metrics.total_topk.get_avg(percentage=False),
@@ -128,32 +138,29 @@ def train(config: Trainer):
             # element.train_iterator.refresh()
 
             ### test
-            with torch.no_grad():
-                test_res = test(element.model, element.test_loader, test_loss_fn, config, element.test_iterator, device)
-                log_dct.update( {
+        with torch.no_grad():
+            test_res = test(element.model, element.test_loader, test_loss_fn, config, element.test_iterator, device)
+            log_dct.update( {
                             f"model{i}/test/accuracy": test_res["accuracy"],
                             f"model{i}/test/top_3_accuracy": test_res["top_3_accuracy"],
                             f"model{i}/test/cross_entropy": test_res["cross_entropy"],
                         })
 
-                if (test_acc := test_res["accuracy"]) > element.optimal_acc:
-                    element.optimal_acc = test_acc
-                    if config.trainer.save_best:
-                        logger.info(f"Saving best params at epoch {ep}")
-                        if element.optimal_path is not None:
-                            element.optimal_path.unlink()
-                        element.optimal_path = element.model_dir.joinpath(
+            if (test_acc := test_res["accuracy"]) > element.optimal_acc:
+                element.optimal_acc = test_acc
+                if config.trainer.save_best:
+                    logger.info(f"Saving best params at epoch {ep}")
+                    if element.optimal_path is not None:
+                        element.optimal_path.unlink()
+                    element.optimal_path = element.model_dir.joinpath(
                             "checkpoints", f"optimal_params-epoch-{ep}.ckpt"
                         )
-                        save_model_opt(element.model, element.opt, element.optimal_path, epoch=ep, scheduler=element.scheduler )
-        if config.logger.use_wandb:
-            wandb.log(log_dct)
-        if config.logger.print_summary and log_dct:
-            report_results(log_dct, ep, config.n_models)
+                    save_model_opt(element.model, element.opt, element.optimal_path, epoch=ep, scheduler=element.scheduler )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(conflict_handler="resolve")
     parser.add_argument("subcommand")
+    # cmd = maybe_get_arg()
     parser.add_argument("--level",choices=["debug", "info", "warning", "error", "critical"], default= "info", help="")
     Trainer.add_args(parser)
 

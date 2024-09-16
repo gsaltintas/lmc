@@ -31,12 +31,12 @@ def parse_bool(value):
 
 
 def maybe_get_arg(arg_name, positional=False, position=0, boolean_arg=False):
-    parser = argparse.ArgumentParser(add_help=True)
+    parser = argparse.ArgumentParser(add_help=False)
     prefix = "" if positional else "--"
     if positional:
         for i in range(position):
             parser.add_argument(f"arg{i}")
-    if boolean_arg:
+    if boolean_arg: # prob not true
         parser.add_argument(prefix + arg_name, action="store_true")
     else:
         parser.add_argument(prefix + arg_name, type=str, default=None)
@@ -131,11 +131,11 @@ def add_basic_args(
         required = field_.default is MISSING and (not defaults or default is None)
         helptext = getattr(cls, f"_{field_.name}", "")
         if required:
-            helptext = "(required: %(type)s) " + helptext
+            helptext = f"(required: {typ.__name__}) " + helptext
         elif default is not None:
             helptext = f"(default: {default}) " + helptext
         else:
-            helptext = "(optional: %(type)s) " + helptext
+            helptext = f"(optional: {typ.__name__}) " + helptext
         kwargs = dict(default=default, required=required, help=helptext)
 
         if get_origin(typ) is Literal:
@@ -201,6 +201,12 @@ class Step:
             return "st"
         return self.value[-2:]
     
+    def add(self, value) -> None:
+        #TODO: implement this
+        if str(value).isnumeric():
+            value = f"{value}st"
+        # total_steps = self.get_step()
+    
     def get_step(self, steps_per_epoch: Optional[int] = None) -> int:
         val = int(self.value[:-2])
         if self.value.endswith("st"):
@@ -225,8 +231,8 @@ class Step:
 class Config:
     """ base config class """
     _add_prefix: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
-    _name: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
-    _description: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
+    _name: str = field(init=False, default="")  # Class-level default, set to true to parse arguments as --name.arg
+    _description: str = field(init=False, default="")  # Class-level default, set to true to parse arguments as --name.arg
 
     def __post_init__(self):
         if not hasattr(self, "_name"):
@@ -276,7 +282,6 @@ class Config:
                     typ = get_origin(get_args(typ)[0])
                 else:
                     typ = _field.default_factory()
-                    # subprefix = typ._name
             arg_name = (
                 f"{_field.name}" if subprefix is None else f"{subprefix}_{_field.name}"
             )
@@ -346,8 +351,14 @@ class Config:
         for field_ in fields(self):
             if field_.name.startswith("_"):
                 continue
+            typ = field_.type
+            if get_origin(typ) is Union:
+                if type(None) in get_args(typ):
+                    typ = get_origin(get_args(typ)[0])
+                else:
+                    typ = field_.default_factory()
             val = getattr(self, field_.name)
-            if isinstance(field_.type, type) and issubclass(field_.type, Config):
+            if isinstance(typ, type) and issubclass(typ, Config):
                 val = val.wandb_dct()
             d[field_.name] = val
         return d
@@ -558,7 +569,7 @@ class MLPConfig(ModelConfig_):
     _num_hidden_layers: str = "Number of hidden layers, depth: (num_hidden_layers + 1)."
 
 def make_model_config() -> Type:
-    model_name = maybe_get_arg("model_name")
+    model_name = str(maybe_get_arg("model_name"))
     model_cls = MLPConfig
     if "mlp" in model_name:
         model_cls = MLPConfig
