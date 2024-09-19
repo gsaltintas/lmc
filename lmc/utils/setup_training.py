@@ -153,6 +153,7 @@ def load_training(training_element: TrainingElement, path: Path, load_opt: bool 
             training_element.scheduler.load_state_dict(d["scheduler_state_dict"])
         elif training_element.scheduler is None and d["scheduler_state_dict"] is not None:
             logger.warn("Scheduler saved in the checkpoint but the training element doesn't have any scheduler.")
+    training_element.curr_step = d.get("step", 0)
     
 
 def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> None:
@@ -284,7 +285,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
     dataset_cls = TORCH_DICT[dataset]
     dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=True)
 
-    batch_size = data_conf.batch_size if not eval else data_conf.test_batch_size 
+    batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 
 
     torch.manual_seed(loader_seed)
     g = torch.Generator()
@@ -479,6 +480,7 @@ def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, 
         pickle_protocol=4,
     )
 
+# something wrong with the steps
 def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int = None) -> None:
     """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
     torch.save(

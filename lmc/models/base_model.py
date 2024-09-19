@@ -1,5 +1,6 @@
 import logging
 from abc import abstractmethod
+from copy import deepcopy
 from typing import Dict, Optional, get_args
 
 import numpy as np
@@ -10,7 +11,7 @@ from lmc.models.layers import LayerNorm2d
 from lmc.models.type_declaration import Activations, Inits, Norms
 from lmc.utils.permutations import (PermSpec, PermType, get_permutation_sizes,
                                     get_random_permutation_with_fixed_points,
-                                    permute_model)
+                                    permute_model, permute_state_dct)
 from lmc.utils.utils import pattern_matched
 
 from .type_declaration import PATTERNS
@@ -90,6 +91,12 @@ class BaseModel(nn.Module):
 
     def _permute(self, perms: PermType, inplace: bool = True, **kwargs):
         """permutes the parameters of the model according to the perms dict and its permutation_spec, if inplace is True, the model is modified, otherwise a new model is returned"""
+        permuted_dct = permute_state_dct(self.model.state_dict(), self.permutation_spec(), perms=perms)
+        model_ = self
+        if not inplace:
+            model_ = deepcopy(self)
+        model_.model.load_state_dict(permuted_dct)
+        return model_
         return permute_model(self.model, self.permutation_spec(), perms, inplace)
 
     @abstractmethod
@@ -97,7 +104,7 @@ class BaseModel(nn.Module):
         raise NotImplementedError("Must be implemented by subclasses.")
 
     def get_random_permutation(
-        self, fixed_points_fraction: float = None, **permutation_spec_kwargs
+        self, fixed_points_fraction: Optional[float] = 0, **permutation_spec_kwargs
     ) -> PermType:
         """returns a random permutation for each parameter of the model according to its permutation_spec, the permutation is a dict of numpy arrays, each array is a permutation of the corresponding parameter"""
         spec = self.permutation_spec(**permutation_spec_kwargs)
