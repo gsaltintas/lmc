@@ -60,6 +60,7 @@ def test(model, loader, loss_fn, config, iterator: tqdm, device):
     return res
 
 def step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, ckpt_steps: List[int] = [], i: int =1):
+    # stop runs if nan
     if element.scheduler is None:
         lr = element.opt.param_groups[0]["lr"]
     else:
@@ -83,11 +84,13 @@ def step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, ck
     acc, topk = mixup_topk_accuracy(out.detach(), y.detach(), targs_perm, k=3, avg=True)
     element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
     element.curr_step += 1
-    save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, steps_per_epoch) == 0
+    save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, mode="st", steps_per_epoch=steps_per_epoch) == 0
     save = save or (config.trainer.save_early_iters and element.curr_step in ckpt_steps)
     if save:
         ckpt_name = f"checkpoints/ep-{ep}-st-{element.curr_step}.ckpt"
-        save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
+        save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)    
+
+    return loss.detach()
 
 def train(config: Trainer):
     training_elements: TrainingElements
@@ -98,20 +101,24 @@ def train(config: Trainer):
     loss_fn, test_loss_fn = nn.CrossEntropyLoss(label_smoothing=config.trainer.label_smoothing), nn.CrossEntropyLoss()
     global_step: int = 0
     early_iter_ckpt_steps = get_early_iter_ckpt_steps(steps_per_epoch, n_ckpts=10)
+    end_training=False
     for ep in range(1, max_epochs+1):
         ### train epoch
         log_dct = dict(epoch=ep)
         training_elements.on_epoch_start()
         train_loaders = [iter(el.train_loader) for el in training_elements]
         for ind, batches in enumerate(zip(*train_loaders)):
-            if global_step >= training_elements.max_steps.get_step(steps_per_epoch):
+            if end_training or global_step >= training_elements.max_steps.get_step(steps_per_epoch):
                 break
             global_step += 1
             for i, (x, y) in enumerate(batches):
                 element = training_elements[i]
                 if element.curr_step >= element.max_steps.get_step(steps_per_epoch):
                     break
-                step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, early_iter_ckpt_steps, i=i+1)
+                loss = step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, early_iter_ckpt_steps, i=i+1)
+                if loss.isnan():
+                    logger.warning("Found nans exiting training")
+                    end_training = True
         
         eval_epoch(config, training_elements, device, steps_per_epoch, test_loss_fn, ep, log_dct)
         if config.logger.use_wandb:

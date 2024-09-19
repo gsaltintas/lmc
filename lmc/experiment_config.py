@@ -2,9 +2,11 @@
 import argparse
 import hashlib
 import os
+import traceback
 import zipfile
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field, fields, make_dataclass
+from dataclasses import (asdict, dataclass, field, fields, is_dataclass,
+                         make_dataclass)
 from pathlib import Path
 from typing import (Any, Dict, List, Literal, Tuple, Type, Union, get_args,
                     get_origin)
@@ -31,14 +33,23 @@ def dataclass_from_dict(klass: Type, d: Dict[str, Any]) -> dataclass:
                     typ = f.default_factory()
             elif typ is USE_DEFAULT_FACTORY:
                 typ = f.default_factory()
+            elif type(typ) is type and (issubclass((typ), Experiment) or issubclass((typ), Config)):
+                try:
+                    typ = f.default_factory(**d[f.name])
+                except:
+                    #TODO: find a better way
+                    pass
             fieldtypes[f.name] = typ
             # todo: here handle better, doesn't parse the correct one yet for opt, but does it correctly for model
             # if f.name == "trainer" or f.name.startswith("opt"):
             #     print("Hello", f.type)
                 #todo: handle union
 
-        return klass(**{f:dataclass_from_dict(fieldtypes[f],d[f]) for f in d})
-    except:
+        return klass(**{f:dataclass_from_dict(fieldtypes.get(f),d[f]) for f in d})
+    except Exception as e:
+        # if is_dataclass(klass):
+        #     traceback.print_exc()
+        #     import code; code.interact(local=locals()|globals())
         return d # Not a dataclass field
     
 

@@ -70,8 +70,10 @@ def field_factory(
         ValueError: If no matching configuration is found in the `mapping` for the provided argument.
     """
 
-    def arg_fact():
+    def arg_fact(**kwargs):
         value = maybe_get_arg(maybe_arg)
+        if value is None:
+            value = kwargs.get(maybe_arg, None)
         value = default_val if value is None else value
         config = None
         for key, conf in mapping.items():
@@ -180,9 +182,16 @@ def add_basic_args(
             parser_.error(f"Invalid field type {typ} for config.")
     parser = parser_
 
+def format_step(value):
+    value = str(value)
+    if value.isnumeric():
+        value = f"{value}st"
+    value = value.lower()
+    return value
+
 @dataclass
 class Step:
-    value: Union[str, int] = None
+    value: Union[str, int, None] = None #field(init=True, default_factory=format_step)
     steps_per_epoch: Optional[int] = 1
     _name: str = None
 
@@ -568,8 +577,11 @@ class MLPConfig(ModelConfig_):
 
     _num_hidden_layers: str = "Number of hidden layers, depth: (num_hidden_layers + 1)."
 
-def make_model_config() -> Type:
-    model_name = str(maybe_get_arg("model_name"))
+def make_model_config(**kwargs) -> Type:
+    model_name = maybe_get_arg("model_name")
+    if model_name is None:
+        model_name = kwargs.get("model_name", None)
+    model_name = str(model_name)
     model_cls = MLPConfig
     if "mlp" in model_name:
         model_cls = MLPConfig

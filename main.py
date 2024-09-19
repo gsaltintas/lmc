@@ -34,8 +34,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     manager = managers.get(manager_name).create_from_args(args)
     try:
-        runner.run()
+        manager.run()
     except Exception as e:
         traceback.print_exc()
         pass
-    cleanup(runner.config)
+    cleanup(manager.config)
