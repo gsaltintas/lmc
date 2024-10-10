@@ -31,7 +31,7 @@ def parse_bool(value):
 
 
 def maybe_get_arg(arg_name, positional=False, position=0, boolean_arg=False):
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(add_help=True)
     prefix = "" if positional else "--"
     if positional:
         for i in range(position):
@@ -591,14 +591,14 @@ def make_model_config(**kwargs) -> Type:
     
     return make_dataclass("ModelConfig", fields_ , bases=(model_cls, ))
 
-    model: Union[MLPConfig, ResNetConfig] = field(
-        init=True,
-        default_factory=field_factory(
-            "model_name",
-            mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
-            default_val="mlp",
-        ),
-    )
+    # model: Union[MLPConfig, ResNetConfig] = field(
+    #     init=True,
+    #     default_factory=field_factory(
+    #         "model_name",
+    #         mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
+    #         default_val="mlp",
+    #     ),
+    # )
 @dataclass
 class ModelConfig(Config):
     pass

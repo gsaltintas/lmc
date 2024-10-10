@@ -8,9 +8,9 @@ import torch.nn as nn
 
 from lmc.config import DataConfig, LoggerConfig, ModelConfig, TrainerConfig
 from lmc.experiment_config import Trainer
-from lmc.utils.permutations import (PermSpec, PermType, get_permutation_sizes,
-                                    get_random_permutation_with_fixed_points,
-                                    permute_param)
+from lmc.permutations import (PermSpec, PermType, get_permutation_sizes,
+                              get_random_permutation_with_fixed_points,
+                              permute_param)
 
 
 class TestConfig(unittest.TestCase):

@@ -2,9 +2,10 @@
 
 import torch
 from torch import nn
+from torch.nn.modules.batchnorm import _NormBase
 
 
-class LayerNorm2d(nn.Module):
+class LayerNorm2d(_NormBase):
     """ 2d layernorm implementation for image data """
     def __init__(self, nchan, eps: float = 1e-7):
         super().__init__()
@@ -38,6 +39,9 @@ def norm_layer(norm: str, out_channels: int) -> nn.Module:
         return LayerNorm2d(out_channels)
     return nn.Sequential()
 
+def is_norm_layer(layer: nn.Module) -> bool:
+    """ checks if a layer is a norm layer """
+    return isinstance(layer, (nn.BatchNorm2d, nn.GroupNorm, LayerNorm2d))
 
 def norm_layer_1d(norm: str, out_channels: int) -> nn.Module:
     """ given a norm string, returns the corresponding 1D norm layer, pass norm=None for no norm, 

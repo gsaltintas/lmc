@@ -79,11 +79,12 @@ def step_element(config, element, x, y, device, loss_fn, ep, steps_per_epoch, ck
     element.opt.step()
     if element.scheduler is not None:
         element.scheduler.step()
+    element.curr_step += 1
 
     # update metrics
     acc, topk = mixup_topk_accuracy(out.detach(), y.detach(), targs_perm, k=3, avg=True)
     element.metrics.update(acc.item(), topk.item(), None, loss.item(), x.shape[0])
-    element.curr_step += 1
+    # TODO: sosmething wrong here, saved ckpts are not in this list?
     save: bool = element.save_freq_step and element.save_freq_step.modulo(element.curr_step, mode="st", steps_per_epoch=steps_per_epoch) == 0
     save = save or (config.trainer.save_early_iters and element.curr_step in ckpt_steps)
     if save:

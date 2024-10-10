@@ -4,15 +4,16 @@ from typing import Dict, List
 from torch import nn
 from torch.nn import functional as F
 
-from lmc.utils.permutations import PermSpec
+from lmc.permutations import PermSpec
 
 from .base_model import BaseModel
 from .layers import norm_layer
 
 plan_mapping: Dict[int, List[int]] = {
-    18: [2,2,2,2],
-    34: [3,4,6,3],
     20: [3, 3, 3],
+    18: [2, 2, 2, 2],
+    34: [3, 4, 6, 3],
+    50: [3, 4, 6, 3]
 }
 
 class ResNet(BaseModel):
@@ -116,7 +117,7 @@ class ResNet(BaseModel):
 
         return acts_to_perms
     
-    def permutation_spec(self, **kwargs) -> PermSpec:
+    def permutation_spec(self, prefix: str = "", **kwargs) -> PermSpec:
         names_to_perms = {"conv.weight": ("P_0",), "norm.weight": ("P_0", ),  "norm.bias": ("P_0", )}
         conv_block1 = lambda block_ind, ind, perm, inv_perm: {
             f"blocks.block{block_ind}.{ind}.conv1.weight": (perm, inv_perm),
@@ -154,6 +155,8 @@ class ResNet(BaseModel):
 
         names_to_perms["fc.weight"] = (None, f"P_{prev_perm}")
         names_to_perms["fc.bias"] = (None, )
+        if prefix:
+            names_to_perms = OrderedDict((f"{prefix}.{name}", val) for (name, val) in names_to_perms.items())
         return PermSpec(names_to_perms=names_to_perms, acts_to_perms=self._acts_to_perms())
 
 

@@ -7,14 +7,13 @@ import numpy as np
 import torch
 from torch import nn
 
-from lmc.models.layers import LayerNorm2d
-from lmc.models.type_declaration import Activations, Inits, Norms
-from lmc.utils.permutations import (PermSpec, PermType, get_permutation_sizes,
-                                    get_random_permutation_with_fixed_points,
-                                    permute_model, permute_state_dct)
+from lmc.permutations import (PermSpec, PermType, get_permutation_sizes,
+                              get_random_permutation_with_fixed_points,
+                              permute_model, permute_state_dct)
 from lmc.utils.utils import pattern_matched
 
-from .type_declaration import PATTERNS
+from .layers import LayerNorm2d
+from .type_declaration import PATTERNS, Activations, Inits, Norms
 
 __all__ = ["BaseModel"]
 

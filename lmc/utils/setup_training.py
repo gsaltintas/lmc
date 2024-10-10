@@ -64,7 +64,7 @@ class TrainingElement(object):
     prev_perm_wm = None
     prev_perm_am = None
     max_steps: Step = None
-    curr_step: Step = 0 # not sure if this is the best way?
+    curr_step: int = 0 # not sure if this is the best way?
     save_freq_step: Step = None
     model_dir: Path = None
     train_iterator: tqdm = Iterator()
