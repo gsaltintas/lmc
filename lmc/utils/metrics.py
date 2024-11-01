@@ -119,7 +119,7 @@ def report_results(log_dct, epoch: int, n_models: int = 1):
             accuracy_keys = [
                 "lmc/barrier_train",
                 "lmc/barrier_test",
-                "lmc/max_err_alpha_train",
+                "lmc/max_econfirr_alpha_train",
                 "lmc/max_err_alpha_test",
             ]
             accuracy_keys_weighted = [

@@ -1,0 +1,93 @@
+data:
+  batch_size: 128
+  cutmix: 0.0
+  cutout: null
+  dataset: cifar10
+  gaussian_blur: false
+  hflip: true
+  mixup: 0.0
+  num_workers: 4
+  path: !!python/object/apply:pathlib.PosixPath
+  - /
+  - home
+  - mila
+  - g
+  - gul-sena.altintas
+  - clean
+  - data
+  random_crop: false
+  random_rotation: 10.0
+  test_batch_size: 1024
+logger:
+  cleanup_after: false
+  entity: null
+  experiment_id: null
+  group: longer
+  level: info
+  log_dir: !!python/object/apply:pathlib.PosixPath
+  - /
+  - network
+  - scratch
+  - g
+  - gul-sena.altintas
+  - perm
+  - butterfly
+  notes: null
+  print_optimizers: true
+  print_summary: true
+  project: clean
+  run_name: perm-gauss@1x0.1-lr=0.1-2
+  slurm_job_id: null
+  tags: null
+  use_tqdm: true
+  use_wandb: true
+model:
+  act: relu
+  ckpt_path: null
+  depth: 20
+  initialization_strategy: kaiming_normal
+  model_name: resnet20-32
+  norm: layernorm
+  width: 16
+model_dir: !!python/object/apply:pathlib.PosixPath
+- /
+- network
+- scratch
+- g
+- gul-sena.altintas
+- perm
+- butterfly
+- perturbed-trainer_1b7a71bf1adf65138267203a64d3233b-16-09-24-16-16-589478
+n_models: 1
+norm_perturb: false
+perturb_inds:
+- 1
+perturb_mode: gaussian
+perturb_scale: 0.1
+perturb_step: 1
+resume_from: null
+rewind_lr: false
+same_steps_pperturb: true
+seeds:
+  loader_seed1: 22
+  seed1: 22
+trainer:
+  label_smoothing: 0.0
+  opt:
+    gradient_clip_algorithm: null
+    gradient_clip_val: 0.0
+    lr: 0.1
+    lr_scheduler: triangle
+    momentum: 0.9
+    optimizer: sgd
+    warmup_ratio: 0.02
+    weight_decay: 0.0
+  save_best: true
+  save_early_iters: true
+  save_freq:
+    steps_per_epoch: 1
+    value: 1ep
+  training_steps:
+    steps_per_epoch: 1
+    value: 200ep
+  use_scaler: false
