@@ -58,6 +58,7 @@ class TrainingElement(object):
     seed: int = 42
     loader_seed: int = 42
     aug_seed: int = 42
+    perturb_seed: int = 42
     optimal_acc: float = -1
     optimal_path: Path = None
     permutation = None
@@ -70,6 +71,8 @@ class TrainingElement(object):
     train_iterator: tqdm = Iterator()
     test_iterator: tqdm = Iterator()
     metrics: Metrics = field(init=True, default_factory=Metrics)
+    # TODO: later add the loss func for nlp models
+    loss_fn: callable = nn.CrossEntropyLoss()
 
     def on_epoch_start(self):
         """ call on epoch start to prepare for training the epoch """
@@ -134,6 +137,8 @@ class TrainingElements(object):
     def __getitem__(self, i: int):
         return self._elements[i]
     
+    def __len__(self):
+        return len(self._elements)
 
 def load_model_from_checkpoint(model: nn.Module, path: Union[Path, str]) -> None:
     """ given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model """
@@ -211,7 +216,9 @@ def configure_optimizer(config: Trainer, model: 'BaseModel'):
         opt = optim.Adam(model.parameters(), lr=opt_conf.lr, betas=opt_conf.betas, weight_decay=opt_conf.weight_decay)
     elif opt_conf.optimizer.lower() == "adamw":
         opt = optim.AdamW(model.parameters(), lr=opt_conf.lr, betas=opt_conf.betas, weight_decay=opt_conf.weight_decay)
-        
+    else:
+        raise NotImplementedError(f"Optimizer ({opt_conf.optimizer}) not mplemented.")
+    
     return opt
 
 def configure_lr_scheduler(
@@ -292,7 +299,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
     g.manual_seed(loader_seed)
 
     loader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, 
+        dataset, batch_size=batch_size, shuffle=train, 
         num_workers=data_conf.num_workers, 
         generator=g, worker_init_fn=seed_worker
     )
@@ -391,6 +398,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         suffix = str(i)
         seed = getattr(config.seeds, f"seed{suffix}")
         loader_seed = getattr(config.seeds, f"loader_seed{suffix}")
+        perturb_seed = None
+        if hasattr(config, f"perturb_seed{suffix}"):
+            perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
         
         train_loader = setup_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
         train_eval_loader = setup_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
@@ -447,7 +457,8 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             train_eval_loader=train_eval_loader,
             test_loader=test_loader,
             max_steps=max_steps,
-            save_freq_step=save_freq
+            save_freq_step=save_freq,
+            perturb_seed=perturb_seed
         ))
     seed_everything(first_seed)
     logger.info("Model setups complete, switching seed to %d, which is passed to the first model.", first_seed)

@@ -16,7 +16,8 @@ from rich.logging import RichHandler
 from torch import nn
 
 import train
-from lmc.butterfly.butterfly import get_gaussian_noise, perturb_model
+from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
+                                     perturb_model)
 from lmc.config import Step
 from lmc.data.data_stats import SAMPLE_DICT
 from lmc.experiment_config import Experiment, PerturbedTrainer, Trainer
@@ -129,34 +130,48 @@ class PerturbedTrainingRunner(TrainingRunner):
     config: PerturbedTrainer = field(init=True, default=PerturbedTrainer)
     noise_dct: Dict[int, Dict[str, torch.Tensor]] = None
     _name: str = "perturbed-trainer"
+    _noise_created: bool = False
 
     def __post_init__(self):
         self.noise_dct = dict()
         return super().__post_init__()
+    
     @staticmethod
     def description():
         return "Train n model(s) with perturbations."
     
-    def setup(self) -> None:
-        super().setup()
+    def create_noise_dicts(self):
+        self._noise_created = True
         for ind, el in enumerate(self.training_elements, start=1):
             if ind in self.config.perturb_inds:
                 if self.config.perturb_mode == "batch":
-                    raise NotImplementedError("Not implemented")
+                    self.noise_dct[ind] = get_batch_noise(el.model, dataloader=el.train_loader, noise_seed=el.perturb_seed, loss_fn=el.loss_fn)
                 elif self.config.perturb_mode == "gaussian":
-                    self.noise_dct[ind] = get_gaussian_noise(el.model)
-                steps = el.max_steps.get_step(self.steps_per_epoch) + self.config.perturb_step
-                el.max_steps = Step(steps, self.steps_per_epoch)
+                    self.noise_dct[ind] = get_gaussian_noise(el.model, noise_seed=el.perturb_seed)
+
+    def setup(self) -> None:
+        super().setup()
+        # TODO: create noise dicts at noise creation step
+        if self.config.sample_noise_at == "init":
+            self.create_noise_dicts()
+            self.logger.info("Noise created for models %s at initialization.", self.config.perturb_inds)
     
     def perturb_model(self):
         for ind, el in enumerate(self.training_elements, start=1):
             if ind in self.config.perturb_inds:
+                if not self._noise_created:
+                    self.create_noise_dicts()
+                    self.logger.info("Noise created for models %s at perturbance time.", self.config.perturb_inds)
+
                 if self.config.perturb_mode == "batch":
-                    raise NotImplementedError("Not implemented")
+                    perturb_model(el.model, self.noise_dct[ind], self.config.perturb_scale)
                 elif self.config.perturb_mode == "gaussian":
                     perturb_model(el.model, self.noise_dct[ind], self.config.perturb_scale)
 
-                    self.logger.info("Model %d perturbed with %f scaling.", ind, self.config.perturb_scale)
+                self.logger.info("Model %d perturbed with %f scaling.", ind, self.config.perturb_scale)
+                steps = el.max_steps.get_step(self.steps_per_epoch) + self.config.perturb_step
+                el.max_steps = Step(steps, self.steps_per_epoch)
+
         
     def run(self):
         self.setup()

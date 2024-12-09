@@ -1,5 +1,5 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Optional, Union
 
 import torch
@@ -81,10 +81,10 @@ class AverageMeter(object):
 
 @dataclass
 class Metrics:
-    total_acc = AverageMeter()
-    total_topk = AverageMeter()
-    total_loss = AverageMeter()
-    cross_entropy = AverageMeter()
+    total_acc: AverageMeter = field(default_factory=AverageMeter)
+    total_topk: AverageMeter = field(default_factory=AverageMeter)
+    total_loss: AverageMeter = field(default_factory=AverageMeter)
+    cross_entropy: AverageMeter = field(default_factory=AverageMeter)
 
     def reset(self):
         self.total_acc.reset()
@@ -97,6 +97,7 @@ class Metrics:
         self.total_topk.update(total_topk, n)
         self.total_loss.update(total_loss, n)
         self.cross_entropy.update(cross_entropy, n)
+        # print(cross_entropy, n, self.cross_entropy.count)
 
 
 def report_results(log_dct, epoch: int, n_models: int = 1):

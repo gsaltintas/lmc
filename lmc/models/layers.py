@@ -5,10 +5,11 @@ from torch import nn
 from torch.nn.modules.batchnorm import _NormBase
 
 
-class LayerNorm2d(_NormBase):
+class LayerNorm2d(nn.Module):
     """ 2d layernorm implementation for image data """
     def __init__(self, nchan, eps: float = 1e-7):
-        super().__init__()
+        # super().__init__(num_features=nchan, eps=eps)
+        super().__init__()  
         self.channels = nchan
         self.weight = nn.Parameter(torch.ones(nchan), requires_grad=True)
         self.bias = nn.Parameter(torch.zeros(nchan), requires_grad=True)

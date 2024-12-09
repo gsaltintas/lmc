@@ -239,15 +239,29 @@ class Trainer(Experiment):
     _description: str = "Run a training script."
 
 
+
+def make_perturb_seeds_class() -> Type:
+    n_models = maybe_get_arg("n_models")
+    if n_models is None:
+        n_models = 1
+    n_models = int(n_models)
+    fields_ = [(f"perturb_seed{i}", int, None) for i in range(1, 1+n_models)]
+    fields_ += [(f"_perturb_seed{i}", str, f"Seed used for perturbing model {i}, defaults to none and uses the original randomness of the model setup.") for i in range(1, 1+n_models)]
+    cls_ = make_dataclass("Seeds", fields_, bases=(Seeds,))
+    return cls_
+
 @dataclass
 class PerturbedTrainer(Trainer):
+    perturb_inds: List[int] = field(init=True, default_factory=lambda: [-1])
     perturb_step: int = 0#TODO: make step Step  = field(init=True, default_factory=lambda: Step(0))
-    perturb_inds: List[int] = (-1, ) #field(init=True, default_factory=lambda x: [-1], default=(-1, ))
+    # perturb_inds: List[int] = (-1, ) #field(init=True, default_factory=lambda x: [-1], default=(-1, ))
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
     norm_perturb: bool = False
     same_steps_pperturb: bool = True
     rewind_lr: bool = False
+    perturb_seeds: make_perturb_seeds_class() = field(init=True, default_factory=make_perturb_seeds_class)
+    sample_noise_at: Literal["init", "perturb"] = "init"
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -256,6 +270,7 @@ class PerturbedTrainer(Trainer):
     _norm_perturb: str = "If true, perturbation is normalized to have a total l2 norm of perturb_scale"
     _same_steps_pperturb: str = "If true, perturbed model is trained for `training_steps` after perturbation"
     _rewind_lr: str = "If true, learning rate is rewound back to the max learning rate"
+    _sample_noise_at: str = "Sample noise at the given step, defaults to initialization"
 
     _name_prefix: str = "perturbed-trainer"
     _description: str = "Run a butterfly experiment."
