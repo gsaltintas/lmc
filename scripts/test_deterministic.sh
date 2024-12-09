@@ -33,7 +33,7 @@ python main.py perturb  \
     --cleanup_after=false  \
     --use_wandb=true  \
     --run_name=$PERTURB_TYPE-$PERTURB_STEP-$SCALE-lr$lr-$REPLICATE  \
-    --project=clean  \
+    --project=butterfly-v2  \
     --n_models=2  \
     --seed1=$SEED  \
     --seed2=$SEED  \
