@@ -100,6 +100,9 @@ def zip_and_save_source(target_base_dir: Union[str, Path]) -> None:
 
 @dataclass
 class Seeds(Config):
+    deterministic: bool = False
+
+    _deterministic: str = "If true, make CUDA exactly deterministic."
     _name = "seeds"
     _description = "Collection of seeds used during the experiment"
 
