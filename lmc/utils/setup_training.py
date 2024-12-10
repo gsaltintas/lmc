@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
-from typing import List, Mapping, Tuple, Union
+from typing import Dict, List, Mapping, Tuple, Union
 
 import numpy as np
 import torch
@@ -55,11 +55,12 @@ class TrainingElement(object):
     train_loader: DataLoader
     train_eval_loader: DataLoader
     test_loader: DataLoader
+    element_ind: int = None
     scheduler: optim.lr_scheduler.LRScheduler = None
     seed: int = 42
     loader_seed: int = 42
     aug_seed: int = 42
-    perturb_seed: int = 42
+    perturb_seed: int = None
     optimal_acc: float = -1
     optimal_path: Path = None
     permutation = None
@@ -71,6 +72,8 @@ class TrainingElement(object):
     model_dir: Path = None
     train_iterator: tqdm = Iterator()
     test_iterator: tqdm = Iterator()
+    train_eval_iterator: tqdm = Iterator()
+    extra_iterator: tqdm = Iterator()
     metrics: Metrics = field(init=True, default_factory=Metrics)
     # TODO: later add the loss func for nlp models
     loss_fn: callable = nn.CrossEntropyLoss()
@@ -126,6 +129,8 @@ class TrainingElements(object):
     def on_epoch_start(self):
         for el in self._elements:
             el.on_epoch_start()
+            el.train_iterator.reset()
+            el.train_iterator.set_description_str(f"Training model {el.element_ind} - epoch: ")
 
     def on_epoch_end(self):
         for el in self._elements:
@@ -228,8 +233,10 @@ def configure_lr_scheduler(
     lr_scheduler: str = None,
     warmup_ratio: int = 0,
     lr_schedule: dict = None,
+    global_step: int = 0,
+    warmup_steps: int = None
 ):
-    warmup_steps = math.ceil(warmup_ratio * training_steps)
+    warmup_steps = math.ceil(warmup_ratio * training_steps) if warmup_steps is None else warmup_steps
     base_lr = optimizer.param_groups[0]["lr"]
     if lr_scheduler is None or lr_scheduler.lower() == "none":
         return None
@@ -254,22 +261,28 @@ def configure_lr_scheduler(
             pct_start=warmup_ratio,
         )
     elif lr_scheduler == "triangle":
+        # Adjust the schedule to account for continuation
+        start_ind = global_step if global_step < training_steps else 0
+        schedule = np.interp(
+            np.arange(0, training_steps + 1),
+            [0, warmup_steps, training_steps],
+            [0, 1, 0]
+        )[start_ind:]
+        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: schedule[x])
+    elif lr_scheduler == "triangleold":
         start_ind = 1 if warmup_steps else 0
         schedule = np.interp(np.arange(training_steps + 2),
                             [0, warmup_steps, training_steps+1],
                             [0, 1, 0])[start_ind:]
+        
+        schedule = np.interp(np.arange(training_steps + 1),
+                    [0, warmup_steps, training_steps],
+                    [0, 1, 0])[start_ind:]
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: schedule[x])
     else:
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
 
-def seed_worker(loader_seed):
-    def seed_worker_(worker_id):
-        worker_seed = loader_seed + worker_id
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
-        torch.manual_seed(worker_seed)
-    return seed_worker_
 
 def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
     dataset = data_conf.dataset
@@ -406,7 +419,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
 
         config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        seed_everything(seed, deterministic=config.seeds.deterministic)
+        seed_everything(seed)
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
@@ -427,7 +440,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         steps_per_epoch = len(train_loader)
         max_steps = config.trainer.training_steps
         save_freq = config.trainer.save_freq
-        seed_everything(seed, deterministic=config.seeds.deterministic)
+        seed_everything(seed)
         opt = configure_optimizer(config, model)
         scheduler = configure_lr_scheduler(opt, max_steps.get_step(steps_per_epoch), config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
@@ -444,6 +457,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         setattr(config, f"model{i}_dir", model_dir_)
         model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
         training_elements.add_element(TrainingElement(
+            element_ind=i,
             model=model,
             opt=opt,
             scheduler=scheduler,
@@ -457,7 +471,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             save_freq_step=save_freq,
             perturb_seed=perturb_seed
         ))
-    seed_everything(first_seed, deterministic=config.seeds.deterministic)
+    seed_everything(first_seed)
+    if config.logger.use_tqdm:
+        setup_iterators(training_elements, use_tqdm=True)
     logger.info("Model setups complete, switching seed to %d, which is passed to the first model.", first_seed)
 
     return training_elements, device
@@ -504,3 +520,39 @@ def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int 
         path,
         pickle_protocol=4,
     )
+
+
+COLORS = ["#75507b", "#4f42b5", "#808080"]
+
+def setup_iterators(training_elements: Dict[int, TrainingElement], use_tqdm: bool = True):
+    tqdm_cls = tqdm if use_tqdm else Iterator
+    for i, el in enumerate(training_elements):
+        color = COLORS[i % len(COLORS)]
+        train_iterator = tqdm_cls(
+            total=len(el.train_loader),
+            desc=f"Training model {i} - epoch: ",
+            position=2 * i,
+            leave=True,
+            # leave=False, disable=None,
+            colour=color,
+        )
+        train_eval_iterator = tqdm_cls(
+            total=len(el.train_loader),
+            desc=f"Evaluating model {i} on train - epoch: ",
+            position=2 + 2 * i,
+            leave=True,
+            # leave=False, disable=None,
+            colour=color,
+        )
+        test_iterator = tqdm_cls(
+            total=len(el.test_loader),
+            desc=f"Evaluating model {i} - epoch: ",
+            position=1 + 2 * i,
+            leave=True,
+            # leave=False, disable=None,
+            colour=color,
+        )
+        el.extra_iterator = tqdm_cls(position=2 + 2 * i, desc="Extra iterator used for anything", colour="white")
+        el.train_iterator = train_iterator
+        el.test_iterator = test_iterator
+        el.train_eval_iterator = train_eval_iterator

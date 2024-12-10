@@ -14,6 +14,15 @@ def seed_worker(loader_seed):
     return seed_worker_
 
 
+def seed_worker(loader_seed):
+    def seed_worker_(worker_id):
+        worker_seed = loader_seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+    return seed_worker_
+
+
 @contextmanager
 def temp_seed(seed: int):
     """
@@ -52,7 +61,7 @@ def temp_seed(seed: int):
             torch.cuda.set_rng_state_all(state_cuda)
 
 
-def seed_everything(seed: int, deterministic: bool) -> None:
+def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

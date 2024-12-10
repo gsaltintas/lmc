@@ -11,6 +11,7 @@ SCALE=$2
 REPLICATE=$3
 DETERMINISTIC=$4
 
+MODEL=resnet20-32
 DATASET="cifar10"
 NORM="layernorm"
 PERTURB_TYPE="gaussian"
@@ -22,9 +23,9 @@ source $HOME/ssetup-uv.sh $BRANCH $DATASET
 
 python main.py perturb  \
     --training_steps=50ep  \
-    --model_name resnet20-32  \
+    --model_name=$MODEL  \
     --norm=$NORM  \
-    --path=$SLURM_TMPDIR/data  \
+    --path=$SLURM_TMPDIR/data/$DATASET  \
     --dataset=cifar10  \
     --hflip=true  \
     --random_rotation=10  \

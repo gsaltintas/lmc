@@ -610,3 +610,12 @@ ModelConfig = make_model_config()
 @dataclass
 class SysConfig(Config):
     pass
+
+
+@dataclass
+class LMCConfig(Config):
+    n_points: int = 11
+    activation_matching_samples: int = 2
+
+    _n_points: str = "Number of points to interpolate models."
+    _activation_matching_samples: str = "Number of samples to match activations."
