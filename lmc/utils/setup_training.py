@@ -291,7 +291,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = TORCH_DICT[dataset]
-    dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=True)
+    dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=data_conf.download)
 
     batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 
 
