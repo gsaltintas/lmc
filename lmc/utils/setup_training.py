@@ -24,7 +24,7 @@ from lmc.experiment_config import Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import seed_everything
+from lmc.utils.seeds import seed_everything, seed_worker, make_deterministic
 
 logger = logging.getLogger("setup")
 
@@ -379,8 +379,9 @@ def setup_wandb(config: Trainer) -> None:
         if config.model_dir is not None:
             Path(config.model_dir).joinpath("wandb.txt").write_text(run.url)
 
-
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
+    if config.seeds.deterministic:
+        make_deterministic()
     """Creates all necessary elements. models, datamodules, etc."""
     device = setup_device()
     model_dir = setup_model_dir(config)
