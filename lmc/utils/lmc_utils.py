@@ -8,10 +8,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
 import pandas as pd
-import pandera as pa
 import torch
 from matplotlib import pyplot as plt
-from pandera.typing import DataFrame
 from torch import nn
 from torchmetrics import Accuracy
 from tqdm import tqdm
