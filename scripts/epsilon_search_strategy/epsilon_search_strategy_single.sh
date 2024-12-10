@@ -16,9 +16,9 @@ NORM="layernorm"
 PERTURB_TYPE="gaussian"
 
 SEED=$REPLICATE
+BRANCH=exp/epsilon_search_strategy
 
-
-source ./scripts/setup-slurm.sh $DATASET
+source $HOME/ssetup-uv.sh $BRANCH $DATASET
 
 python main.py perturb  \
     --training_steps=50ep  \
