@@ -15,9 +15,9 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LoggerConfig,
-                     Step, TrainerConfig, add_basic_args, make_model_config,
-                     maybe_get_arg)
+from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
+                     LoggerConfig, Step, TrainerConfig, add_basic_args,
+                     make_model_config, maybe_get_arg)
 
 
 def dataclass_from_dict(klass: Type, d: Dict[str, Any]) -> dataclass:
@@ -126,6 +126,7 @@ class Experiment:
     model: make_model_config() = field(init=True, default_factory=make_model_config) #None
     data: DataConfig = None
     logger: LoggerConfig = None
+    lmc: LMCConfig = None
     seeds: make_seeds_class() = field(init=True, default_factory=make_seeds_class)
     resume_from: str = None
     n_models: int = 1  

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
-from lmc.permutations.permutations import PermSpec, logger, permute_param
+from lmc.permutations.utils import PermSpec, logger, permute_param
 
 
 def outer_product(a, b) -> np.array:

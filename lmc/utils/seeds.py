@@ -5,6 +5,15 @@ import numpy as np
 import torch
 
 
+def seed_worker(loader_seed):
+    def seed_worker_(worker_id):
+        worker_seed = loader_seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+    return seed_worker_
+
+
 @contextmanager
 def temp_seed(seed: int):
     """
@@ -48,3 +57,4 @@ def seed_everything(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True

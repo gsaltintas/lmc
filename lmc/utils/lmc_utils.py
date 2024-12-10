@@ -16,6 +16,10 @@ from torch import nn
 from torchmetrics import Accuracy
 from tqdm import tqdm
 
+from lmc.config import Config
+from lmc.data.data_stats import CLASS_DICT
+from lmc.permutations.activation_alignment import activation_matching
+from lmc.permutations.alignment_methods import weight_matching
 from lmc.utils.setup_training import Iterator
 
 
@@ -90,8 +94,13 @@ def get_empty_df() -> pd.DataFrame:
     r = pd.DataFrame(columns=index)
     r["epoch"] = None
     r["alpha"] = None
-    r.set_index(["epoch", "alpha"], inplace=True)
+    r.set_index(["epoch", "alpha", ], inplace=True)
     return r
+    r["model1_ind"] = None
+    r["model2_ind"] = None
+    r.set_index(["epoch", "alpha", "model1_ind", "model2_ind"], inplace=True)
+    return r
+
 def interpolate_evaluate(ai, model1, model2, results, device, train_loader, test_loader, suffix="", n_points: int=20, inner_tqdm: tqdm=Iterator(), num_classes=10, criterion=None, interpolation_func: callable = None) -> pd.DataFrame:
     """_summary_
 
@@ -188,3 +197,86 @@ def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
         "lmc/loss/weighted/barrier_test": test_loss_barr,
         }
     return d
+
+
+
+@torch.no_grad()
+def check_lmc(training_elements, config: Config, ep, log_dct, results: Union[pd.DataFrame, None] = None, results_perm_wm: Union[pd.DataFrame, None] = None, results_perm_act_aligned: Union[pd.DataFrame, None] = None, check_perms: bool = False) -> Tuple[pd.DataFrame, Union[pd.DataFrame, None]]:
+    """
+    checks lmc between the models, also accounts for the initial perm if any 
+    
+     Args:
+        training_elements: List of elements representing training states or models.
+        config: Configuration object with relevant settings.
+        ep: Current epoch.
+        log_dct: Dictionary to log intermediate results.
+        results: DataFrame to store results; created if None.
+        results_perm_wm: DataFrame for matched permutation results; created if None.
+        results_perm_act_aligned: DataFrame for activation-aligned results; created if None.
+        check_perms: Boolean flag to indicate if permutations should be checked.
+    
+    Returns:
+        Tuple containing updated results, results_perm_wm, 
+        and results_perm_act_aligned.
+
+
+        TODO: missing stats
+    """
+    n_models = len(training_elements)
+    if results is None:
+        results = get_empty_df()
+
+    # Initialize results DataFrames if not provided
+    if results is None:
+        results = get_empty_df()
+    if check_perms and results_perm_wm is None:
+        results_perm_wm = get_empty_df()
+        results_perm_act_aligned = get_empty_df()
+    
+
+    # Iterate over previous models to evaluate LMC
+    for model_ind, el in enumerate(training_elements):
+        model = el.model
+        for other_ind in range(max(0, model_ind - n_models), model_ind):
+            prev_model = training_elements[other_ind].model
+            if prev_model is None:
+                continue
+            
+            # Evaluate LMC
+            # todo: maybe add this to basemodel or trainingelement
+            num_classes = CLASS_DICT[config.data.dataset]
+            results_ = interpolate_evaluate(ep, model, prev_model, None, model.device, el.train_eval_loader, el.test_loader, n_points=config.lmc.n_points, inner_tqdm=el.extra_iterator, num_classes=num_classes)
+            results_["model1_ind"] = model_ind
+            results_["model2_ind"] = other_ind
+            if results is None:
+                results = results_
+            else:
+                results = pd.concat([results, results_])
+            lmc_res = extract_barrier(results, ep)
+            log_dct.update({f"lmc-{other_ind}-{model_ind}/{k}": v for k, v in lmc_res.items()})
+            
+            # Check permutations if required
+            if check_perms:
+                ps = model.permutation_spec()
+                for perm_method in ["wm", "am"]:
+                    # weight_matching
+                    if perm_method == "wm":
+                        perm = weight_matching(ps, model.model.state_dict(), prev_model.model.state_dict(), init_perm=None, verbose=False)
+                        res_df = results_perm_wm
+                    # Activation matching
+                    else:
+                        # todo: rename this activation_matching_samples
+                        perm = activation_matching(ps, model, prev_model, dataloader=el.train_loader, verbose=False, num_samples=config.lmc.activation_matching_samples)
+                        res_df = results_perm_act_aligned
+                    permuted_ = prev_model._permute(perm, inplace=False)
+                    results_perm = interpolate_evaluate(ep, permuted_, model, None, model.device, el.train_eval_loader, el.test_loader, n_points=config.lmc.n_points, inner_tqdm=el.extra_iterator, num_classes=num_classes)
+                    results_perm["model1_ind"] = model_ind
+                    results_perm["model2_ind"] = other_ind
+                    if res_df is None:
+                        res_df = results_perm
+                    else:
+                        res_df = pd.concat([res_df, results_perm])
+                    log_dct.update({f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v for k, v in extract_barrier(results_perm, ep).items()})
+        
+    return results, results_perm_wm, results_perm_act_aligned
+   
