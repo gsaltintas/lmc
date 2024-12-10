@@ -464,6 +464,7 @@ class DataConfig(Config):
     batch_size: int = 128
     test_batch_size: int = 1024
     path: Path = Path("./data")
+    download: bool = False
 
     hflip: bool = True
     mixup: float = 0.0

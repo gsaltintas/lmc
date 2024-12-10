@@ -3,6 +3,15 @@ from contextlib import contextmanager
 
 import numpy as np
 import torch
+import os
+
+def seed_worker(loader_seed):
+    def seed_worker_(worker_id):
+        worker_seed = loader_seed + worker_id
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+    return seed_worker_
 
 
 def seed_worker(loader_seed):
@@ -52,9 +61,14 @@ def temp_seed(seed: int):
             torch.cuda.set_rng_state_all(state_cuda)
 
 
-def seed_everything(seed: int) -> None:
+def seed_everything(seed: int, deterministic: bool) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
+
+
+def make_deterministic():
+    # set env variable for use_deterministic_algorithms
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    torch.use_deterministic_algorithms(True)

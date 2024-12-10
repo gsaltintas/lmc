@@ -3,7 +3,7 @@ name = "lmc"
 version = "0.1.0"
 description = ""
 authors = ["Gül Sena Altıntaş <30217912+gsaltintas@users.noreply.github.com>"]
-readme = "README"
+readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"

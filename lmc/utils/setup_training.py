@@ -24,7 +24,7 @@ from lmc.experiment_config import Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import seed_everything, seed_worker
+from lmc.utils.seeds import seed_everything, seed_worker, make_deterministic
 
 logger = logging.getLogger("setup")
 
@@ -304,7 +304,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = TORCH_DICT[dataset]
-    dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=True)
+    dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=data_conf.download)
 
     batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 
 
@@ -391,9 +391,10 @@ def setup_wandb(config: Trainer) -> None:
             
         if config.model_dir is not None:
             Path(config.model_dir).joinpath("wandb.txt").write_text(run.url)
-   
 
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
+    if config.seeds.deterministic:
+        make_deterministic()
     """Creates all necessary elements. models, datamodules, etc."""
     device = setup_device()
     model_dir = setup_model_dir(config)
@@ -418,7 +419,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
 
         config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        seed_everything(seed)
+        seed_everything(seed, deterministic=config.seeds.deterministic)
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
@@ -439,7 +440,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         steps_per_epoch = len(train_loader)
         max_steps = config.trainer.training_steps
         save_freq = config.trainer.save_freq
-        seed_everything(seed)
+        seed_everything(seed, deterministic=config.seeds.deterministic)
         opt = configure_optimizer(config, model)
         scheduler = configure_lr_scheduler(opt, max_steps.get_step(steps_per_epoch), config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
@@ -477,6 +478,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
 
     return training_elements, device
 
+
 def cleanup(config: Trainer):
     """ if script is called with cleanup_after, deletes the model_dir and all checkpoints created"""
     if config.logger.cleanup_after:
@@ -488,7 +490,7 @@ def cleanup(config: Trainer):
         rmtree(config.model_dir)
 
 
-        
+
 def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, step: int = None):
     """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
     torch.save(
@@ -502,6 +504,7 @@ def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, 
         path,
         pickle_protocol=4,
     )
+
 
 # something wrong with the steps
 def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int = None) -> None:
