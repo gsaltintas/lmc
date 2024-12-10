@@ -3,16 +3,22 @@
 #SBATCH --mem-per-cpu=2G
 #SBATCH --cpus-per-gpu=4
 #SBATCH --gres=gpu:rtx8000:1
-#SBATCH --job-name=test_deterministic
+#SBATCH --job-name=epsilon_search_strategy
 #SBATCH --tmp=4G
 
+PERTURB_STEP=$1
+SCALE=$2
+REPLICATE=$3
+DETERMINISTIC=$4
 
+DATASET="cifar10"
 NORM="layernorm"
-SEED=22
-REPLICATE=1
-PERTURB_STEP=1
-SCALE=0
 PERTURB_TYPE="gaussian"
+
+SEED=$REPLICATE
+
+
+source ./scripts/setup-slurm.sh $DATASET
 
 python main.py perturb  \
     --training_steps=50ep  \
@@ -29,7 +35,7 @@ python main.py perturb  \
     --optimizer=sgd  \
     --momentum=0.9  \
     --save_early_iters=true  \
-    --log_dir=$HOME/scratch/butterfly/epsilon-search-strategy  \
+    --log_dir=$HOME/scratch/butterfly/epsilon_search_strategy  \
     --cleanup_after=false  \
     --use_wandb=true  \
     --run_name=$PERTURB_TYPE-$PERTURB_STEP-$SCALE-lr$lr-$REPLICATE  \
@@ -43,3 +49,4 @@ python main.py perturb  \
     --perturb_inds=1  \
     --perturb_mode=$PERTURB_TYPE  \
     --perturb_scale=$SCALE  \
+    --deterministic=$DETERMINISTIC  \
