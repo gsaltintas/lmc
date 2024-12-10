@@ -3,12 +3,13 @@ name = "lmc"
 version = "0.1.0"
 description = ""
 authors = ["Gül Sena Altıntaş <30217912+gsaltintas@users.noreply.github.com>"]
-readme = "README"
+readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
 torch = "2.0.1"
 torchvision = "0.15.2"
+torchmetrics = "1.6.0"
 matplotlib = "3.7.2"
 rich = "^13.8.0"
 wandb = "0.15.2"
