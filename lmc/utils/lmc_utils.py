@@ -169,33 +169,28 @@ def interpolate_evaluate(ai, model1, model2, results, device, train_loader, test
 
 
 def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
-    """ utility function to extract loss & error barriers from a dataframe """
-    train_alpha = results.loc[ep, ("train", "err")].idxmax()
-    test_alpha = results.loc[ep, ("train", "err")].idxmax()
-    train_loss_alpha = results.loc[ep, ("train", "ce")].idxmax()
-    test_loss_alpha = results.loc[ep, ("train", "ce")].idxmax()
 
-    train_barr = results.loc[ep, ("train", "err")].max() -  (
-        (1.-train_alpha) * results.loc[(ep, 0)][("train", "err")] + train_alpha * results.loc[(ep, 1)][("train", "err")]
-    )
-    test_barr = results.loc[ep, ("test", "err")].max() - (
-        (1.-test_alpha) * results.loc[(ep, 0)][("test", "err")] + test_alpha * results.loc[(ep, 1)][("test", "err")]
-    )
-    train_loss_barr = results.loc[ep, ("train", "ce")].max() - (
-        (1.-train_loss_alpha) * results.loc[(ep, 0)][("train", "ce")] + train_loss_alpha * results.loc[(ep, 1)][("train", "ce")]
-    )
-    test_loss_barr = results.loc[ep, ("test", "ce")].max() - (
-        (1.-test_loss_alpha) * results.loc[(ep, 0)][("test", "ce")] + test_loss_alpha * results.loc[(ep, 1)][("test", "ce")]
-    )
-    
-    d = {
-        "lmc/weighted/barrier_train": train_barr / 100,
-        "lmc/weighted/barrier_test": test_barr / 100,
-        "lmc/loss/weighted/barrier_train": train_loss_barr,
-        "lmc/loss/weighted/barrier_test": test_loss_barr,
+    def barrier_from_df(results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str) -> dict[str, float]:
+        """ utility function to extract loss & error barriers from a dataframe """
+        alpha = results.loc[ep, (split, metric)].idxmax()
+        max_interpolated = results.loc[ep, (split, metric)].max()
+        endpoint_0 = results.loc[(ep, 0)][(split, metric)]
+        endpoint_1 = results.loc[(ep, 1)][(split, metric)]
+        linear_path = (1.-alpha) * endpoint_0 + alpha * endpoint_1
+        barrier = max_interpolated - linear_path
+        if metric == "err":
+            barrier = barrier / 100
+            max_interpolated = max_interpolated / 100
+        return {
+            prefix + f"weighted/barrier_{split}": barrier,
+            prefix + f"weighted/maxint_{split}": max_interpolated,
         }
-    return d
-
+    return {
+        **barrier_from_df(results, ep, "train", "err", "lmc/"),
+        **barrier_from_df(results, ep, "test", "ce", "lmc/"),
+        **barrier_from_df(results, ep, "train", "err", "lmc/loss/"),
+        **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
+    }
 
 
 @torch.no_grad()

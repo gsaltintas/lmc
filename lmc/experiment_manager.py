@@ -156,8 +156,8 @@ class TrainingRunner(ExperimentManager):
             ep,
             log_dct,
         )
-        if self.config.n_models > 1:
-            check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=True)
+        if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
+            check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=self.config.lmc.lmc_check_perms)
 
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
@@ -342,7 +342,6 @@ class PerturbedTrainingRunner(TrainingRunner):
                         break
                     element.train_iterator.update()
 
-
                     # something wrong here, train errors come the same but test diff, models change why
                     loss = train.step_element(
                         self.config,
@@ -361,23 +360,25 @@ class PerturbedTrainingRunner(TrainingRunner):
             # import code; code.interact(local=locals()|globals())
             self.on_epoch_end(ep, log_dct)
             ep += 1
+        self.on_train_end(ep, log_dct)
 
+    # # check the loaders return the same batch
+    # for batch_ind, batches in enumerate(zip(*train_loaders)):
+    #     prev_x, prev_y = None, None
+    #     for element_ind, (x, y) in enumerate(batches):
+    #         if prev_x is not None:
+    #             print(batch_ind, torch.allclose(prev_x, x))
+    #             # print(torch.allclose(prev_y, y))
+    #         else:
+    #             prev_x, prev_y = x, y
 
-# # check the loaders return the same batch
-# for batch_ind, batches in enumerate(zip(*train_loaders)):
-#     prev_x, prev_y = None, None
-#     for element_ind, (x, y) in enumerate(batches):
-#         if prev_x is not None:
-#             print(batch_ind, torch.allclose(prev_x, x))
-#             # print(torch.allclose(prev_y, y))
-#         else:
-#             prev_x, prev_y = x, y
+    def on_epoch_end(self, ep: int, log_dct: dict):
+        super().on_epoch_end(ep, log_dct)
 
+    def on_train_end(self, ep: int, log_dct: dict):
+        if self.config.n_models > 1 and self.config.lmc.lmc_on_train_end:
+            check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=self.config.lmc.lmc_check_perms)
 
-def on_epoch_end(self, ep: int, log_dct: dict):
-    # TODO: add lmc stats
-
-    super().on_epoch_end(ep, log_dct)
 
 
 def same_models(training_elements):

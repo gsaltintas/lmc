@@ -616,6 +616,9 @@ class SysConfig(Config):
 class LMCConfig(Config):
     n_points: int = 11
     activation_matching_samples: int = 2
+    lmc_check_perms: bool = True
+    lmc_on_epoch_end: bool = False
+    lmc_on_train_end: bool = True
 
     _n_points: str = "Number of points to interpolate models."
     _activation_matching_samples: str = "Number of samples to match activations."
