@@ -378,6 +378,7 @@ class PerturbedTrainingRunner(TrainingRunner):
     def on_train_end(self, ep: int, log_dct: dict):
         if self.config.n_models > 1 and self.config.lmc.lmc_on_train_end:
             check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=self.config.lmc.lmc_check_perms)
+            wandb.log(log_dct)
 
 
 
