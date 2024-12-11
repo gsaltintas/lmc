@@ -360,7 +360,7 @@ class PerturbedTrainingRunner(TrainingRunner):
             # import code; code.interact(local=locals()|globals())
             self.on_epoch_end(ep, log_dct)
             ep += 1
-        self.on_train_end(ep, log_dct)
+        self.on_train_end(ep)
 
     # # check the loaders return the same batch
     # for batch_ind, batches in enumerate(zip(*train_loaders)):
@@ -375,9 +375,11 @@ class PerturbedTrainingRunner(TrainingRunner):
     def on_epoch_end(self, ep: int, log_dct: dict):
         super().on_epoch_end(ep, log_dct)
 
-    def on_train_end(self, ep: int, log_dct: dict):
-        if self.config.n_models > 1 and self.config.lmc.lmc_on_train_end:
+    def on_train_end(self, ep: int):
+        log_dct = dict(epoch=ep)
+        if self.config.n_models > 1 and self.config.lmc.lmc_on_train_end and not self.config.lmc.lmc_on_epoch_end:
             check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=self.config.lmc.lmc_check_perms)
+        if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
 

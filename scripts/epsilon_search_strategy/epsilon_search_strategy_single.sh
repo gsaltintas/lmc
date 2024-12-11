@@ -44,8 +44,8 @@ python main.py perturb  \
     --log_dir=$LOGDIR  \
     --cleanup_after=false  \
     --use_wandb=true  \
-    --run_name=$PERTURB_TYPE-$PERTURB_STEP-$SCALE-lr$lr-$DETERMINISTIC-$REPLICATE  \
-    --project=butterfly-v2  \
+    --run_name=$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC  \
+    --project=butterfly-epsilon_search_strategy  \
     --n_models=2  \
     --seed1=$SEED  \
     --seed2=$SEED  \

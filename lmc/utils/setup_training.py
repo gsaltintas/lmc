@@ -318,7 +318,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
         generator=g, worker_init_fn=seed_worker
     )
 
-    return loader        
+    return loader
 
 def setup_model_dir(config: Trainer) -> Path:
     """
