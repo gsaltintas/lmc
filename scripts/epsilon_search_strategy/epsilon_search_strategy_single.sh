@@ -21,6 +21,9 @@ DATASET="cifar10"
 NORM="layernorm"
 PERTURB_TYPE="gaussian"
 SEED=$REPLICATE
+RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC"
+
+echo $RUN_NAME
 
 source $HOME/ssetup-uv.sh $DATASET
 
@@ -44,7 +47,7 @@ python main.py perturb  \
     --log_dir=$LOGDIR  \
     --cleanup_after=false  \
     --use_wandb=true  \
-    --run_name=$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC  \
+    --run_name=$RUN_NAME  \
     --project=butterfly-epsilon_search_strategy  \
     --n_models=2  \
     --seed1=$SEED  \
