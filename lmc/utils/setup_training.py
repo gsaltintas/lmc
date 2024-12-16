@@ -24,7 +24,7 @@ from lmc.experiment_config import Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import seed_everything, seed_worker, make_deterministic
+from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
 
 logger = logging.getLogger("setup")
 
@@ -408,7 +408,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         suffix = str(i)
         seed = getattr(config.seeds, f"seed{suffix}")
         loader_seed = getattr(config.seeds, f"loader_seed{suffix}")
-        perturb_seed = None
+        perturb_seed = seed
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
         
