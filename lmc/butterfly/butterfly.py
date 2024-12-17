@@ -11,7 +11,6 @@ from torch.utils.data import DataLoader
 from lmc.utils.seeds import temp_seed
 
 
-@torch.no_grad()
 def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=None, loss_fn: callable = None) -> Dict[str, torch.Tensor]:
     """
     Get a random (based on the seed) batch from the dataloader and compute noise as the gradient 
@@ -26,30 +25,30 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
     Returns:
         Dict[str, torch.Tensor]: Dictionary containing the noise for each parameter
     """
+    model.zero_grad()
     if loss_fn is None:
         loss_fn = torch.nn.CrossEntropyLoss()
-    if noise_seed is not None:
-        with temp_seed(noise_seed):
-            # Get a random batch from the dataloader
-            batch = next(iter(dataloader))
-    else:
-        # Get a random batch from the dataloader without setting a seed
-        batch = next(iter(dataloader))
+    # if noise_seed is not None:
+    #     with temp_seed(noise_seed):
+    #         # Get a random batch from the dataloader
+    #         batch = next(iter(dataloader))
+    # else:
+    #     # Get a random batch from the dataloader without setting a seed
+    #     batch = next(iter(dataloader))
     
+    batch = next(iter(dataloader))
     # Unpack inputs and targets (adjust if your dataloader provides a different structure)
     inputs, targets = batch
 
     # Move inputs and targets to the device of the model
     inputs, targets = inputs.to(model.device), targets.to(model.device)
 
-    # Set model to evaluation mode
-    model.eval()
-
     # Perform a forward pass
     outputs = model(inputs)
 
     # Compute the cross-entropy loss
     loss = loss_fn(outputs, targets)
+    loss.backward()
 
     # Compute gradients w.r.t the model's parameters
     noise = {}
@@ -118,3 +117,8 @@ def perturb_model(model: nn.Module, noise_dct: OrderedDict, noise_multiplier: fl
         model = deepcopy(model)
         model.load_state_dict(perturb_params)
     
+def get_noise_l2(noise_dct: OrderedDict) -> float:
+    noise_l2 = 0.
+    for n, p in noise_dct.items():
+        noise_l2 += p.pow(2).sum().item()
+    return noise_l2

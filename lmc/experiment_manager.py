@@ -11,10 +11,11 @@ import torch
 import wandb
 from rich.logging import RichHandler
 from torch import nn
+from torch.nn.utils import parameters_to_vector
 
 import train
 from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
-                                     perturb_model)
+                                     get_noise_l2, perturb_model)
 from lmc.config import Step
 from lmc.data.data_stats import SAMPLE_DICT
 from lmc.experiment_config import Experiment, PerturbedTrainer, Trainer
@@ -22,7 +23,8 @@ from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.metrics import report_results
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import (TrainingElement, TrainingElements,
-                                      configure_lr_scheduler, setup_experiment)
+                                      configure_lr_scheduler, setup_experiment,
+                                      setup_loader)
 
 FORMAT = "%(name)s - %(levelname)s: %(message)s"
 
@@ -103,6 +105,9 @@ class TrainingRunner(ExperimentManager):
         self.max_epochs = self.training_elements.max_steps.get_epoch(
             self.steps_per_epoch
         )
+
+    def on_train_start(self):
+        pass
 
     def on_epoch_start(self):
         pass
@@ -209,9 +214,10 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if (
                     self.config.perturb_mode == "batch"
                 ):  # TODO: here double check if the seed messes up somethings
+                    dl = setup_loader(self.config.data, train=True, evaluate=False, loader_seed=el.perturb_seed)
                     self.noise_dct[ind] = get_batch_noise(
                         el.model,
-                        dataloader=el.train_loader,
+                        dataloader=dl,
                         noise_seed=el.perturb_seed,
                         loss_fn=el.loss_fn,
                     )
@@ -222,13 +228,23 @@ class PerturbedTrainingRunner(TrainingRunner):
 
     def setup(self) -> None:
         super().setup()
-        # TODO: create noise dicts at noise creation step
         if self.config.sample_noise_at == "init":
             self.create_noise_dicts()
             self.logger.info(
                 "Noise created for models %s at initialization.",
                 self.config.perturb_inds,
             )
+    
+    def on_train_start(self):
+        super().on_train_start()
+        self.models_at_init = [parameters_to_vector(el.model.parameters()) for el in self.training_elements]
+        log_dct = dict()
+        log_dct.update({f"static/l2_at_init/{i}": torch.norm(v).item() for i, v in enumerate(self.models_at_init, start=1)})
+        log_dct.update({f"static/l2_dist_at_init/{i}-{i+1}": torch.norm(v1 - v2).item() for i, (v1, v2) in enumerate(zip(self.models_at_init, self.models_at_init[1:]), start=1)})
+        if self.config.logger.use_wandb:
+            wandb.log(log_dct)
+    
+        
 
     def reset_lr_schedule(
         self, element: TrainingElement, prev_max_steps: int = None
@@ -268,43 +284,46 @@ class PerturbedTrainingRunner(TrainingRunner):
             reset_base_lrs(element.opt, current_lr, element.scheduler)
             # reset_base_lrs(element.opt, current_lr, element.scheduler)
 
-    def perturb_model(self):
+    def perturb_model(self, log_dct: dict):
         for ind, el in enumerate(self.training_elements, start=1):
-            if ind in self.config.perturb_inds:
-                if not self._noise_created:
-                    self.create_noise_dicts()
-                    self.logger.info(
-                        "Noise created for models %s at perturbance time.",
-                        self.config.perturb_inds,
-                    )
-
-                if self.config.perturb_mode == "batch":
-                    perturb_model(
-                        el.model, self.noise_dct[ind], self.config.perturb_scale
-                    )
-                elif self.config.perturb_mode == "gaussian":
-                    perturb_model(
-                        el.model, self.noise_dct[ind], self.config.perturb_scale
-                    )
-
+            if ind not in self.config.perturb_inds:
+                continue
+            if not self._noise_created:
+                self.create_noise_dicts()
                 self.logger.info(
-                    "Model %d perturbed with %f scaling.",
-                    ind,
-                    self.config.perturb_scale,
+                    "Noise created for models %s at perturbance time.",
+                    self.config.perturb_inds,
                 )
-                if self.config.same_steps_pperturb:
-                    if self.global_step < 1:
-                        return
-                    prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
-                    steps = prev_max_steps + self.config.perturb_step
-                    el.max_steps = Step(steps, self.steps_per_epoch)
-                    self.logger.info(
-                        "Model %d steps set to %d.",
-                        ind,
-                        steps,
-                    )
-                    self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
-                    self.logger.info("Model %d lr schedule reset.", ind)
+
+            if self.config.perturb_mode == "batch":
+                perturb_model(
+                    el.model, self.noise_dct[ind], self.config.perturb_scale
+                )
+            elif self.config.perturb_mode == "gaussian":
+                perturb_model(
+                    el.model, self.noise_dct[ind], self.config.perturb_scale
+                )
+            noise_l2 = get_noise_l2(self.noise_dct[ind])
+            self.logger.info(
+                "Model %d perturbed with %f scaling, absolute l2 %f.",
+                ind,
+                self.config.perturb_scale,
+                noise_l2
+            )
+            log_dct[f"static/noise/{ind}-l2"] = noise_l2
+            if self.config.same_steps_pperturb:
+                if self.global_step < 1:
+                    return
+                prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
+                steps = prev_max_steps + self.config.perturb_step
+                el.max_steps = Step(steps, self.steps_per_epoch)
+                self.logger.info(
+                    "Model %d steps set to %d.",
+                    ind,
+                    steps,
+                )
+                self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
+                self.logger.info("Model %d lr schedule reset.", ind)
 
     def run(self):
         self.setup()
@@ -314,16 +333,15 @@ class PerturbedTrainingRunner(TrainingRunner):
         early_iter_ckpt_steps = train.get_early_iter_ckpt_steps(
             self.steps_per_epoch, n_ckpts=10
         )
-        # [el.model.to(torch.float64) for el in self.training_elements]
         ep: int = 1
         if is_same_model(self.training_elements):
             self.logger.info("Models are the same at initialization.")
+        self.on_train_start()
         while not self.training_finished(self.training_elements):
             ### train epoch
             log_dct = dict(epoch=ep)
             self.on_epoch_start()
             self.training_elements.on_epoch_start()
-            # import code; code.interact(local=locals()|globals())
             train_loaders = [iter(el.train_loader) for el in self.training_elements]
             for batch_ind, batches in enumerate(zip(*train_loaders)):
                 if self.global_step >= self.training_elements.max_steps.get_step(
@@ -331,9 +349,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                 ):
                     break
                 if self.global_step == self.config.perturb_step:
-                    self.perturb_model()
+                    self.perturb_model(log_dct=log_dct)
                 self.global_step += 1
-                # for element_ind, element in enumerate(self.training_elements):
                 for element_ind, (x, y) in enumerate(batches):
                     element = self.training_elements[element_ind]
                     if element.curr_step >= element.max_steps.get_step(
@@ -342,7 +359,6 @@ class PerturbedTrainingRunner(TrainingRunner):
                         break
                     element.train_iterator.update()
 
-                    # something wrong here, train errors come the same but test diff, models change why
                     loss = train.step_element(
                         self.config,
                         element,
@@ -355,22 +371,10 @@ class PerturbedTrainingRunner(TrainingRunner):
                         early_iter_ckpt_steps,
                         i=element_ind + 1,
                     )
-                    # print(loss)
-                # print(is_same_model(self.training_elements))
-            # import code; code.interact(local=locals()|globals())
             self.on_epoch_end(ep, log_dct)
             ep += 1
         self.on_train_end(ep)
 
-    # # check the loaders return the same batch
-    # for batch_ind, batches in enumerate(zip(*train_loaders)):
-    #     prev_x, prev_y = None, None
-    #     for element_ind, (x, y) in enumerate(batches):
-    #         if prev_x is not None:
-    #             print(batch_ind, torch.allclose(prev_x, x))
-    #             # print(torch.allclose(prev_y, y))
-    #         else:
-    #             prev_x, prev_y = x, y
 
     def on_epoch_end(self, ep: int, log_dct: dict):
         super().on_epoch_end(ep, log_dct)
