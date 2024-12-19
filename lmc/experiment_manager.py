@@ -295,14 +295,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.config.perturb_inds,
                 )
 
-            if self.config.perturb_mode == "batch":
-                perturb_model(
-                    el.model, self.noise_dct[ind], self.config.perturb_scale
-                )
-            elif self.config.perturb_mode == "gaussian":
-                perturb_model(
-                    el.model, self.noise_dct[ind], self.config.perturb_scale
-                )
+            perturb_model(el.model, self.noise_dct[ind], self.config.perturb_scale)
+
             noise_l2 = get_noise_l2(self.noise_dct[ind])
             self.logger.info(
                 "Model %d perturbed with %f scaling, absolute l2 %f.",
@@ -356,7 +350,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                     if element.curr_step >= element.max_steps.get_step(
                         self.steps_per_epoch
                     ):
-                        break
+                        continue
                     element.train_iterator.update()
 
                     loss = train.step_element(
