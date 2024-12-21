@@ -9,13 +9,14 @@
 
 
 # example usage: ./scripts/epsilon_search_strategy/epsilon_search_strategy_single.sh 0 0 99 true
+SRC_DIR=$1
 
 LOGDIR=$HOME/scratch/butterfly/epsilon_search_strategy
 
-PERTURB_STEP=$1
-SCALE=$2
-REPLICATE=$3
-DETERMINISTIC=$4
+PERTURB_STEP=$2
+SCALE=$3
+REPLICATE=$4
+DETERMINISTIC=$5
 
 MODEL=resnet20-32
 DATASET="cifar10"
@@ -26,7 +27,7 @@ RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC-fixed
 
 echo $RUN_NAME
 
-source $HOME/ssetup-uv.sh $DATASET
+source $HOME/ssetup-uv.sh $SRC_DIR $DATASET
 
 mkdir -p $LOGDIR
 
