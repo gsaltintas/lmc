@@ -307,7 +307,7 @@ class PerturbedTrainingRunner(TrainingRunner):
             log_dct[f"static/noise/{ind}-l2"] = noise_l2
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:
-                    return
+                    continue
                 prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
                 steps = prev_max_steps + self.config.perturb_step
                 el.max_steps = Step(steps, self.steps_per_epoch)
