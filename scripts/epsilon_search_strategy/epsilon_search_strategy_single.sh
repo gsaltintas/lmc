@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --time=750
+#SBATCH --partition=long
 #SBATCH --mem-per-cpu=2G
 #SBATCH --cpus-per-gpu=4
 #SBATCH --gres=gpu:rtx8000:1
@@ -21,7 +22,7 @@ DATASET="cifar10"
 NORM="layernorm"
 PERTURB_TYPE="gaussian"
 SEED=$REPLICATE
-RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC"
+RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC-fixedperturb"
 
 echo $RUN_NAME
 
