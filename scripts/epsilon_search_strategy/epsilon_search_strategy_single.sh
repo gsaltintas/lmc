@@ -54,6 +54,7 @@ python main.py perturb  \
     --seed2=$SEED  \
     --loader_seed1=$SEED  \
     --loader_seed2=$SEED  \
+    --perturb_seed1=$SEED  \
     --perturb_step=$PERTURB_STEP  \
     --perturb_inds=1  \
     --perturb_mode=$PERTURB_TYPE  \
