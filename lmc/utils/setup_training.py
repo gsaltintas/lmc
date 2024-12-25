@@ -1,3 +1,6 @@
+import torchvision
+
+torchvision.disable_beta_transforms_warning()
 import logging
 import math
 import os
@@ -10,7 +13,6 @@ from typing import Dict, List, Mapping, Tuple, Union
 
 import numpy as np
 import torch
-import torchvision.transforms as transforms
 import wandb
 import wandb.sync
 from torch import nn, optim
@@ -25,6 +27,9 @@ from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
 from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
+
+torchvision.disable_beta_transforms_warning()
+import torchvision.transforms as transforms
 
 logger = logging.getLogger("setup")
 
@@ -122,7 +127,7 @@ class TrainingElements(object):
             if max_step is None:
                 max_step = el.max_steps
                 continue
-            if max_step.get_step(1) < el.max_steps.get_step(1):
+            if max_step.get_step() < el.max_steps.get_step():
                 max_step = el.max_steps
         return max_step
 
@@ -393,6 +398,7 @@ def setup_wandb(config: Trainer) -> None:
             Path(config.model_dir).joinpath("wandb.txt").write_text(run.url)
 
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
+    config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
     if config.seeds.deterministic:
         make_deterministic()
     """Creates all necessary elements. models, datamodules, etc."""
@@ -438,7 +444,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)
-        max_steps = config.trainer.training_steps
+        max_steps = Step(f"{config.trainer.training_steps.get_step(steps_per_epoch)}st", steps_per_epoch)
         save_freq = config.trainer.save_freq
         seed_everything(seed)
         opt = configure_optimizer(config, model)

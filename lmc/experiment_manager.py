@@ -1,5 +1,3 @@
-#
-
 import abc
 import argparse
 import logging
@@ -98,7 +96,6 @@ class TrainingRunner(ExperimentManager):
         self.training_elements: TrainingElements
         self.device: torch.device
         self.training_elements, self.device = setup_experiment(self.config)
-        # import code; code.interact(local=locals()|globals())
         self.steps_per_epoch = math.ceil(
             SAMPLE_DICT[self.config.data.dataset] / self.config.data.batch_size
         )
@@ -160,6 +157,7 @@ class TrainingRunner(ExperimentManager):
             self.test_loss_fn,
             ep,
             log_dct,
+            self.global_step
         )
         if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
             check_lmc(self.training_elements, self.config, ep, log_dct, check_perms=self.config.lmc.lmc_check_perms)
@@ -187,10 +185,6 @@ def is_same_model(training_elements):
             return False
 
     return same_models
-
-
-# is_same_model(self.training_elements)
-
 
 @dataclass
 class PerturbedTrainingRunner(TrainingRunner):
@@ -309,7 +303,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if self.global_step < 1:
                     return
                 prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
-                steps = prev_max_steps + self.config.perturb_step
+                steps = prev_max_steps + self.config.perturb_step.get_step(self.steps_per_epoch)
                 el.max_steps = Step(steps, self.steps_per_epoch)
                 self.logger.info(
                     "Model %d steps set to %d.",
@@ -342,7 +336,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.steps_per_epoch
                 ):
                     break
-                if self.global_step == self.config.perturb_step:
+                if self.global_step == self.config.perturb_step.get_step(self.steps_per_epoch):
                     self.perturb_model(log_dct=log_dct)
                 self.global_step += 1
                 for element_ind, (x, y) in enumerate(batches):
