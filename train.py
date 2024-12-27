@@ -133,7 +133,7 @@ def eval_epoch(config, training_elements, device, steps_per_epoch, test_loss_fn,
         ckpt_name = f"checkpoints/ep-{ep}.ckpt"
         save_model_opt(element.model, element.opt, element.model_dir.joinpath(ckpt_name), step=element.curr_step, epoch=ep, scheduler=element.scheduler)
         element.model.eval()
-        if element.curr_step > element.max_steps.get_step(steps_per_epoch):
+        if element.curr_step >= element.max_steps.get_step(steps_per_epoch):
             continue
             # logging
         log_dct.update( {

@@ -61,7 +61,7 @@ def temp_seed(seed: int):
             torch.cuda.set_rng_state_all(state_cuda)
 
 
-def seed_everything(seed: int, deterministic: bool) -> None:
+def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

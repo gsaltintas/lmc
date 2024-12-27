@@ -24,7 +24,7 @@ from lmc.experiment_config import Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import seed_everything, seed_worker, make_deterministic
+from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
 
 logger = logging.getLogger("setup")
 
@@ -318,7 +318,7 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
         generator=g, worker_init_fn=seed_worker
     )
 
-    return loader        
+    return loader
 
 def setup_model_dir(config: Trainer) -> Path:
     """
@@ -408,7 +408,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         suffix = str(i)
         seed = getattr(config.seeds, f"seed{suffix}")
         loader_seed = getattr(config.seeds, f"loader_seed{suffix}")
-        perturb_seed = None
+        perturb_seed = seed
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
         
@@ -419,7 +419,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
 
         config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        seed_everything(seed, deterministic=config.seeds.deterministic)
+        seed_everything(seed)
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
@@ -440,7 +440,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         steps_per_epoch = len(train_loader)
         max_steps = config.trainer.training_steps
         save_freq = config.trainer.save_freq
-        seed_everything(seed, deterministic=config.seeds.deterministic)
+        seed_everything(seed)
         opt = configure_optimizer(config, model)
         scheduler = configure_lr_scheduler(opt, max_steps.get_step(steps_per_epoch), config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):

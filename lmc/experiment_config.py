@@ -258,7 +258,6 @@ def make_perturb_seeds_class() -> Type:
 class PerturbedTrainer(Trainer):
     perturb_inds: List[int] = field(init=True, default_factory=lambda: [-1])
     perturb_step: int = 0#TODO: make step Step  = field(init=True, default_factory=lambda: Step(0))
-    # perturb_inds: List[int] = (-1, ) #field(init=True, default_factory=lambda x: [-1], default=(-1, ))
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
     norm_perturb: bool = False
