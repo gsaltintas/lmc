@@ -242,6 +242,9 @@ class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
+    zip_and_save_source: bool = True
+    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
+
 
 
 def make_perturb_seeds_class() -> Type:
