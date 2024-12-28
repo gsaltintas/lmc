@@ -305,6 +305,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 noise_l2
             )
             log_dct[f"static/noise/{ind}-l2"] = noise_l2
+            log_dct[f"static/noise/{ind}-l2-scaled"] = noise_l2 * (self.config.perturb_scale**2)
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:
                     continue
