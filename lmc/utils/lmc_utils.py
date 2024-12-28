@@ -173,7 +173,9 @@ def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
     def barrier_from_df(results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str) -> dict[str, float]:
         """ utility function to extract loss & error barriers from a dataframe """
         alpha = results.loc[ep, (split, metric)].idxmax()
+        minalpha = results.loc[ep, (split, metric)].idxmin()
         max_interpolated = results.loc[ep, (split, metric)].max()
+        min_interpolated = results.loc[ep, (split, metric)].min()
         endpoint_0 = results.loc[(ep, 0)][(split, metric)]
         endpoint_1 = results.loc[(ep, 1)][(split, metric)]
         linear_path = (1.-alpha) * endpoint_0 + alpha * endpoint_1
@@ -184,6 +186,15 @@ def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
         return {
             prefix + f"weighted/barrier_{split}": barrier,
             prefix + f"weighted/maxint_{split}": max_interpolated,
+            prefix + f"weighted/minint_{split}": min_interpolated,
+            prefix + f"weighted/maxalpha_{split}": alpha,
+            prefix + f"weighted/minalpha_{split}": minalpha,
+            prefix + f"weighted/increase_{split}": max_interpolated - min(endpoint_0, endpoint_1),
+            prefix + f"weighted/increase_end0_{split}": max_interpolated - endpoint_0,
+            prefix + f"weighted/increase_end1_{split}": max_interpolated - endpoint_1,
+            prefix + f"weighted/decrease_{split}": min_interpolated - endpoint_0 - min(endpoint_0, endpoint_1),
+            prefix + f"weighted/decrease_end0_{split}": min_interpolated - endpoint_0,
+            prefix + f"weighted/decrease_end1_{split}": min_interpolated - endpoint_1,
         }
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
