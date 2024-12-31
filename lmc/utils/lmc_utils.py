@@ -170,19 +170,20 @@ def interpolate_evaluate(ai, model1, model2, results, device, train_loader, test
 
 def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
 
+    """ utility function to extract loss & error barriers from a dataframe """
     def barrier_from_df(results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str) -> dict[str, float]:
-        """ utility function to extract loss & error barriers from a dataframe """
         alpha = results.loc[ep, (split, metric)].idxmax()
         minalpha = results.loc[ep, (split, metric)].idxmin()
-        max_interpolated = results.loc[ep, (split, metric)].max()
-        min_interpolated = results.loc[ep, (split, metric)].min()
-        endpoint_0 = results.loc[(ep, 0)][(split, metric)]
-        endpoint_1 = results.loc[(ep, 1)][(split, metric)]
+
+        scale = 1 / 100 if metric == "err" else 1
+
+        max_interpolated = results.loc[ep, (split, metric)].max() * scale
+        min_interpolated = results.loc[ep, (split, metric)].min() * scale
+        endpoint_0 = results.loc[(ep, 0)][(split, metric)] * scale
+        endpoint_1 = results.loc[(ep, 1)][(split, metric)] * scale
+
         linear_path = (1.-alpha) * endpoint_0 + alpha * endpoint_1
         barrier = max_interpolated - linear_path
-        if metric == "err":
-            barrier = barrier / 100
-            max_interpolated = max_interpolated / 100
         return {
             prefix + f"weighted/barrier_{split}": barrier,
             prefix + f"weighted/maxint_{split}": max_interpolated,
@@ -196,6 +197,7 @@ def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
             prefix + f"weighted/decrease_end0_{split}": min_interpolated - endpoint_0,
             prefix + f"weighted/decrease_end1_{split}": min_interpolated - endpoint_1,
         }
+
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
         **barrier_from_df(results, ep, "test", "ce", "lmc/"),
