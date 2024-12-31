@@ -200,8 +200,8 @@ def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
 
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
-        **barrier_from_df(results, ep, "test", "ce", "lmc/"),
-        **barrier_from_df(results, ep, "train", "err", "lmc/loss/"),
+        **barrier_from_df(results, ep, "test", "err", "lmc/"),
+        **barrier_from_df(results, ep, "train", "ce", "lmc/loss/"),
         **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
     }
 
