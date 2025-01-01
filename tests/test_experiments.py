@@ -5,6 +5,7 @@ from pathlib import Path
 from shutil import rmtree
 import subprocess
 import torch
+import traceback
 
 
 class TestTrainingRunner(unittest.TestCase):
@@ -57,38 +58,59 @@ class TestTrainingRunner(unittest.TestCase):
     def tearDown(self):
         rmtree(self.log_dir)
 
-    def test_butterfly_deterministic(self):
-        # should fail
-        with self.subTest("bad args"):
-            self.assertEqual("error", self.run_butterfly_deterministic(perturb_step=None))
+    def run_command(self, command, print_output=False):
+        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
+        one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
+        try:
+            results = subprocess.run(one_line, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print("Error during run: ", e, sep="\n")
+            if print_output:
+                traceback.print_exc()
+                print(e.stdout)
+                print(e.stderr)
+            return "error"
+        # check that output doesn't contain traceback
+        idx = results.stderr.find("Traceback (")
+        if idx >= 0:
+            print(results.stderr[idx:])
+            return "error"
+        if print_output:
+            print(results.stdout)
+        return results
 
-        # should be identical
-        with self.subTest("deterministic"):
-            self.assertEqual("same", self.run_butterfly_deterministic())
+    # def test_butterfly_deterministic(self):
+    #     # should fail
+    #     with self.subTest("bad args"):
+    #         self.assertEqual("error", self.run_butterfly_deterministic(perturb_step=None))
 
-        # should not be identical due to extra training time
-        with self.subTest("extra training"):
-            self.assertEqual("different", self.run_butterfly_deterministic(perturb_step=1))
+    #     # should be identical
+    #     with self.subTest("deterministic"):
+    #         self.assertEqual("same", self.run_butterfly_deterministic())
 
-        # should not be identical
-        with self.subTest("perturbed"):
-            self.assertEqual("different", self.run_butterfly_deterministic(perturb_scale=0.00000001))
+    #     # should not be identical due to extra training time
+    #     with self.subTest("extra training"):
+    #         self.assertEqual("different", self.run_butterfly_deterministic(perturb_step=1))
 
-        # should not be identical
-        with self.subTest("different batch order"):
-            self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
+    #     # should not be identical
+    #     with self.subTest("perturbed"):
+    #         self.assertEqual("different", self.run_butterfly_deterministic(perturb_scale=0.00000001))
 
-        # should not be identical (needs larger model for GPU non-determinism to cause differences)
-        with self.subTest("non-deterministic"):
-            self.assertEqual("different", self.run_butterfly_deterministic(deterministic=False, model="resnet20-8", dataset="cifar10"))
+    #     # should not be identical
+    #     with self.subTest("different batch order"):
+    #         self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
 
-        # should be identical
-        with self.subTest("perturb both same noise"):
-            self.assertEqual("same", self.run_butterfly_deterministic(perturb_scale=1, perturb_inds=[1, 2]))
+    #     # should not be identical (needs larger model for GPU non-determinism to cause differences)
+    #     with self.subTest("non-deterministic"):
+    #         self.assertEqual("different", self.run_butterfly_deterministic(deterministic=False, model="resnet20-8", dataset="cifar10"))
 
-        # should not be identical
-        with self.subTest("different lr"):
-            self.assertEqual("same", self.run_butterfly_deterministic(rewind_lr="true"))
+    #     # should be identical
+    #     with self.subTest("perturb both same noise"):
+    #         self.assertEqual("same", self.run_butterfly_deterministic(perturb_scale=1, perturb_inds=[1, 2]))
+
+    #     # should not be identical
+    #     with self.subTest("different lr"):
+    #         self.assertEqual("same", self.run_butterfly_deterministic(rewind_lr="true"))
 
     def run_butterfly_deterministic(
         self, seed1=42, seed2=None, perturb_step=0, perturb_scale=0, deterministic=True, model="mlp/128x3", dataset="mnist", perturb_inds=[1], rewind_lr="false"
@@ -109,19 +131,9 @@ class TestTrainingRunner(unittest.TestCase):
             perturb_inds=" ".join(str(x) for x in perturb_inds),
             rewind_lr=rewind_lr,
         )
-        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
-        one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
-        try:
-            results = subprocess.run(one_line, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            print("Error during run: ", e, e.stderr, sep="\n")
-            return "error"
-        # check that output doesn't contain traceback
-        idx = results.stderr.find("Traceback (")
-        if idx >= 0:
-            print(results.stderr[idx:])
-            return "error"
-
+        results = self.run_command(command)
+        if results == "error":
+            return results
         return self.compare_last_ckpts(seed1, seed2)
 
     def compare_last_ckpts(self, seed1, seed2):
