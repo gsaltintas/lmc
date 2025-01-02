@@ -37,14 +37,15 @@ python main.py perturb  \
     --n_models=2  \
         --perturb_mode="gaussian"  \
         --perturb_scale=$SCALE  \
+        --perturb_step=$PERTURB_STEP  \
         --perturb_inds=1  \
+        --same_steps_pperturb=false  \
     --deterministic=true  \
         --seed1=$SEED  \
         --seed2=$SEED  \
         --loader_seed1=$SEED  \
         --loader_seed2=$SEED  \
         --perturb_seed1=$SEED  \
-        --perturb_step=$PERTURB_STEP  \
     --lmc_check_perms=false  \
         --lmc_on_epoch_end=true  \
         --lmc_on_train_end=false  \

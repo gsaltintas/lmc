@@ -40,11 +40,12 @@ python main.py perturb  \
     --n_models=2  \
         --perturb_mode=$PERTURB_TYPE  \
         --perturb_scale=$SCALE  \
+        --perturb_step=$PERTURB_STEP  \
         --perturb_inds=1  \
+        --same_steps_pperturb=false  \
     --deterministic=$DETERMINISTIC  \
         --seed1=$SEED  \
         --seed2=$SEED  \
         --loader_seed1=$SEED  \
         --loader_seed2=$SEED  \
         --perturb_seed1=$SEED  \
-        --perturb_step=$PERTURB_STEP  \
