@@ -21,10 +21,10 @@ python main.py perturb  \
         --run_name=$RUN_NAME  \
         --path=$SLURM_TMPDIR/data/$DATASET  \
         --log_dir=$SSETUP_OUTPUT_DIR  \
-        --save_early_iters=true  \
-        --cleanup_after=false  \
-        --use_wandb=true  \
+        --save_early_iters=false  \
+        --cleanup_after=true  \
         --zip_and_save_source=false  \
+        --use_wandb=true  \
     --model_name=$MODEL  \
         --norm=$NORM  \
     --dataset=cifar10  \
