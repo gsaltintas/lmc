@@ -303,11 +303,9 @@ class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    zip_and_save_source: bool = True
+    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
-@dataclass
-class PerturbSeeds(Config):
 
     _name = "perturb-seeds"
     _description = "Collection of seeds used during the perturbation of the models"

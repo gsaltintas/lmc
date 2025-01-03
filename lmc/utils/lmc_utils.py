@@ -170,25 +170,38 @@ def interpolate_evaluate(ai, model1, model2, results, device, train_loader, test
 
 def extract_barrier(results: pd.DataFrame, ep: int) -> Dict[str, float]:
 
+    """ utility function to extract loss & error barriers from a dataframe """
     def barrier_from_df(results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str) -> dict[str, float]:
-        """ utility function to extract loss & error barriers from a dataframe """
         alpha = results.loc[ep, (split, metric)].idxmax()
-        max_interpolated = results.loc[ep, (split, metric)].max()
-        endpoint_0 = results.loc[(ep, 0)][(split, metric)]
-        endpoint_1 = results.loc[(ep, 1)][(split, metric)]
+        minalpha = results.loc[ep, (split, metric)].idxmin()
+
+        scale = 1 / 100 if metric == "err" else 1
+
+        max_interpolated = results.loc[ep, (split, metric)].max() * scale
+        min_interpolated = results.loc[ep, (split, metric)].min() * scale
+        endpoint_0 = results.loc[(ep, 0)][(split, metric)] * scale
+        endpoint_1 = results.loc[(ep, 1)][(split, metric)] * scale
+
         linear_path = (1.-alpha) * endpoint_0 + alpha * endpoint_1
         barrier = max_interpolated - linear_path
-        if metric == "err":
-            barrier = barrier / 100
-            max_interpolated = max_interpolated / 100
         return {
             prefix + f"weighted/barrier_{split}": barrier,
             prefix + f"weighted/maxint_{split}": max_interpolated,
+            prefix + f"weighted/minint_{split}": min_interpolated,
+            prefix + f"weighted/maxalpha_{split}": alpha,
+            prefix + f"weighted/minalpha_{split}": minalpha,
+            prefix + f"weighted/increase_{split}": max_interpolated - min(endpoint_0, endpoint_1),
+            prefix + f"weighted/increase_end0_{split}": max_interpolated - endpoint_0,
+            prefix + f"weighted/increase_end1_{split}": max_interpolated - endpoint_1,
+            prefix + f"weighted/decrease_{split}": min_interpolated - endpoint_0 - min(endpoint_0, endpoint_1),
+            prefix + f"weighted/decrease_end0_{split}": min_interpolated - endpoint_0,
+            prefix + f"weighted/decrease_end1_{split}": min_interpolated - endpoint_1,
         }
+
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
-        **barrier_from_df(results, ep, "test", "ce", "lmc/"),
-        **barrier_from_df(results, ep, "train", "err", "lmc/loss/"),
+        **barrier_from_df(results, ep, "test", "err", "lmc/"),
+        **barrier_from_df(results, ep, "train", "ce", "lmc/loss/"),
         **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
     }
 

@@ -3,15 +3,12 @@
 PERTURB_STEP=$1
 SCALE=$2
 REPLICATE=$3
-DETERMINISTIC=$4
 
 MODEL=resnet20-32
 DATASET="cifar10"
 NORM="layernorm"
-PERTURB_TYPE="gaussian"
-
 SEED=$REPLICATE
-RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC"
+RUN_NAME="p$PERTURB_STEP-s$SCALE-r$REPLICATE"
 echo $RUN_NAME
 
 source $HOME/ssetup-uv.sh $DATASET
@@ -38,13 +35,16 @@ python main.py perturb  \
         --warmup_ratio=0.02  \
         --momentum=0.9  \
     --n_models=2  \
-        --perturb_mode=$PERTURB_TYPE  \
+        --perturb_mode="gaussian"  \
         --perturb_scale=$SCALE  \
         --perturb_inds=1  \
-    --deterministic=$DETERMINISTIC  \
+    --deterministic=true  \
         --seed1=$SEED  \
         --seed2=$SEED  \
         --loader_seed1=$SEED  \
         --loader_seed2=$SEED  \
         --perturb_seed1=$SEED  \
         --perturb_step=$PERTURB_STEP  \
+    --lmc_check_perms=false  \
+        --lmc_on_epoch_end=true  \
+        --lmc_on_train_end=false  \

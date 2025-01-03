@@ -42,21 +42,41 @@ class TestTrainingRunner(unittest.TestCase):
     )
 
     PerturbedTrainingRunnerCommand = """python main.py perturb  \
-            --model_name={model}  \
-            --path={data_dir}/{dataset}  \
-            --dataset={dataset}  \
-            --seed1={seed1}  \
-            --seed2={seed2}  \
-            --loader_seed1={seed1}  \
-            --loader_seed2={seed2}  \
-            --perturb_step={perturb_step}  \
-            --perturb_scale={perturb_scale}  \
-            --deterministic={deterministic}  \
-            --log_dir={log_dir}  \
-    """ + " ".join(
-[f"--{k}={' '.join(map(str, v)) if isinstance(v, list) else str(v)}"
- for k, v in PerturbedTrainingKwargs.items()]
-    )
+            --training_steps 2ep  \
+            --model_name {model}  \
+            --norm layernorm  \
+            --path {data_dir}/{dataset}  \
+            --dataset {dataset}  \
+            --hflip true  \
+            --random_rotation 10  \
+            --random_crop false  \
+            --lr_scheduler triangle  \
+            --lr 0.1  \
+            --warmup_ratio 0.02  \
+            --optimizer sgd  \
+            --momentum 0.9  \
+            --save_early_iters true  \
+            --cleanup_after false  \
+            --use_wandb false  \
+            --run_name test_butterfly_deterministic  \
+            --project tests  \
+            --n_models 2  \
+            --seed1 {seed1}  \
+            --seed2 {seed2}  \
+            --loader_seed1 {seed1}  \
+            --loader_seed2 {seed2}  \
+            --perturb_seed1 {seed1}  \
+            --perturb_seed2 {seed2}  \
+            --perturb_step {perturb_step}  \
+            --perturb_inds {perturb_inds}  \
+            --perturb_mode gaussian  \
+            --perturb_scale {perturb_scale}  \
+            --deterministic {deterministic}  \
+            --n_points 3  \
+            --lmc_check_perms false  \
+            --rewind_lr {rewind_lr}  \
+            --log_dir {log_dir}  \
+    """
 
     def setUp(self):
         test_dir = Path(os.path.dirname(os.path.realpath(__file__)))
@@ -74,38 +94,39 @@ class TestTrainingRunner(unittest.TestCase):
 
     def test_butterfly_deterministic(self):
         # should fail
-        self.assertEqual("error", self.run_butterfly_deterministic(perturb_step=None))
+        with self.subTest("bad args"):
+            self.assertEqual("error", self.run_butterfly_deterministic(perturb_step=None))
+
         # should be identical
-        self.assertEqual("same", self.run_butterfly_deterministic())
+        with self.subTest("deterministic"):
+            self.assertEqual("same", self.run_butterfly_deterministic())
 
         # should not be identical due to extra training time
-        self.assertEqual("different", self.run_butterfly_deterministic(perturb_step=1))
+        with self.subTest("extra training"):
+            self.assertEqual("different", self.run_butterfly_deterministic(perturb_step=1))
 
         # should not be identical
-        self.assertEqual(
-            "different", self.run_butterfly_deterministic(perturb_scale=0.00000001)
-        )
+        with self.subTest("perturbed"):
+            self.assertEqual("different", self.run_butterfly_deterministic(perturb_scale=0.00000001))
 
         # should not be identical
-        self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
+        with self.subTest("different batch order"):
+            self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
+
+        # should not be identical (needs larger model for GPU non-determinism to cause differences)
+        with self.subTest("non-deterministic"):
+            self.assertEqual("different", self.run_butterfly_deterministic(deterministic=False, model="resnet20-8", dataset="cifar10"))
+
+        # should be identical
+        with self.subTest("perturb both same noise"):
+            self.assertEqual("same", self.run_butterfly_deterministic(perturb_scale=1, perturb_inds=[1, 2]))
 
         # should not be identical
-        self.assertEqual(
-            "different",
-            self.run_butterfly_deterministic(
-                deterministic=False, model="resnet20-8", dataset="cifar10"
-            ),
-        )
+        with self.subTest("different lr"):
+            self.assertEqual("same", self.run_butterfly_deterministic(rewind_lr="true"))
 
     def run_butterfly_deterministic(
-        self,
-        seed1=42,
-        seed2=None,
-        perturb_step=0,
-        perturb_scale=0,
-        deterministic=True,
-        model="mlp/128x3",
-        dataset="mnist",
+        self, seed1=42, seed2=None, perturb_step=0, perturb_scale=0, deterministic=True, model="mlp/128x3", dataset="mnist", perturb_inds=[1], rewind_lr="false"
     ):
         if seed2 is None:
             seed2 = seed1
@@ -120,7 +141,10 @@ class TestTrainingRunner(unittest.TestCase):
             data_dir=self.data_dir,
             model=model,
             dataset=dataset,
+            perturb_inds=" ".join(str(x) for x in perturb_inds),
+            rewind_lr=rewind_lr,
         )
+        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
         one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
         try:
             results = subprocess.run(

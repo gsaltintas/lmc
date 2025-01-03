@@ -346,7 +346,7 @@ def setup_model_dir(config: Trainer) -> Path:
     
     config.model_dir = model_dir
     # Save code as zip and config as yaml into the model directory.
-    config.save(model_dir)
+    config.save(model_dir, zip_code_base=config.zip_and_save_source)
 
     logger.info(f"Created model dir: {model_dir}")
     return model_dir
