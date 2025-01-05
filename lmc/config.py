@@ -178,6 +178,8 @@ def add_basic_args(
                 ),
                 create_group=create_group,
             )
+        elif callable(typ):
+            parser.add_argument(arg_name, type=typ, **kwargs)
         else:
             parser_.error(f"Invalid field type {typ} for config.")
     parser = parser_
@@ -198,7 +200,7 @@ class Step:
     def __post_init__(self):
         if str(self.value).isnumeric():
             self.value = f"{self.value}st"
-        self.value = self.value.lower()
+        self.value = str(self.value).lower()
         if not self.value.endswith("ep") and not self.value.endswith(
             "st"
         ):
@@ -303,7 +305,10 @@ class Config:
                     raise ValueError(f"Missing argument: {arg_name}.")
                 d[_field.name] = getattr(args, arg_name)
             elif typ == Step:
-                d[_field.name] = Step(getattr(args, arg_name))
+                arg_val = getattr(args, arg_name)
+                if type(arg_val) is str:
+                    arg_val = Step(arg_val)
+                d[_field.name] = arg_val
             # Nested hparams.
             elif isinstance(typ, type) and issubclass(typ, Config):
                 subprefix = typ._name if typ._add_prefix else None
@@ -314,7 +319,7 @@ class Config:
         return cls(**d)
 
     @property
-    def display(self, only_modified: bool = True):
+    def display(self, only_modified: bool = False):
         console = Console()
 
         # Create a rich Table
@@ -425,7 +430,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = "1ep"
+    save_freq: Step = Step("1ep")
     # save_freq: str = "1ep"
     save_early_iters: bool = False
     save_best: bool = True

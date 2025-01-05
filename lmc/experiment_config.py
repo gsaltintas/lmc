@@ -2,14 +2,13 @@
 import argparse
 import hashlib
 import os
-import traceback
 import zipfile
 from collections import defaultdict
 from dataclasses import (asdict, dataclass, field, fields, is_dataclass,
                          make_dataclass)
 from pathlib import Path
-from typing import (Any, Dict, List, Literal, Tuple, Type, Union, get_args,
-                    get_origin)
+from typing import (Any, Dict, List, Literal, Optional, Tuple, Type, Union,
+                    get_args, get_origin)
 
 import yaml
 from rich.console import Console
@@ -20,38 +19,82 @@ from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
                      make_model_config, maybe_get_arg)
 
 
-def dataclass_from_dict(klass: Type, d: Dict[str, Any]) -> dataclass:
-    """ recursively creates a dataclass from dictionary """
-    try:
-        fieldtypes = dict()#{f.name: f.type for f in fields(klass)}
-        for f in fields(klass):
-            typ = f.type
-            if get_origin(typ) is Union:
-                if type(None) in get_args(typ):
-                    typ = get_args(typ)[0]
-                else:
-                    typ = f.default_factory()
-            elif typ is USE_DEFAULT_FACTORY:
-                typ = f.default_factory()
-            elif type(typ) is type and (issubclass((typ), Experiment) or issubclass((typ), Config)):
-                try:
-                    typ = f.default_factory(**d[f.name])
-                except:
-                    #TODO: find a better way
-                    pass
-            fieldtypes[f.name] = typ
-            # todo: here handle better, doesn't parse the correct one yet for opt, but does it correctly for model
-            # if f.name == "trainer" or f.name.startswith("opt"):
-            #     print("Hello", f.type)
-                #todo: handle union
+def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Flatten a nested dictionary."""
+    items = []
+    for k, v in d.items():
+        if isinstance(v, dict):
+            items.extend([(f"{k2}", v2) for k2, v2 in flatten_dict(v).items()])
+        else:
+            items.append((k, v))
+    return dict(items)
 
-        return klass(**{f:dataclass_from_dict(fieldtypes.get(f),d[f]) for f in d})
-    except Exception as e:
-        # if is_dataclass(klass):
-        #     traceback.print_exc()
-        #     import code; code.interact(local=locals()|globals())
-        return d # Not a dataclass field
-    
+
+def extract_candidate_keys(klass, d):
+    """Recursively collect only the keys corresponding to `klass` (which may be a Union or Dataclass)."""
+    if not isinstance(d, dict):
+        return {}
+
+    # If klass is a Union, accumulate keys from any matching candidate
+    if get_origin(klass) is Union:
+        merged = {}
+        for candidate_type in get_args(klass):
+            merged.update(extract_candidate_keys(candidate_type, d))
+        return merged
+
+    result = {}
+    if is_dataclass(klass):
+        for fld in fields(klass):
+            if isinstance(fld.type, type) and issubclass(fld.type, Step):
+                if fld.name in d:
+                    result[fld.name] = d[fld.name]
+            # If the field type is itself a Union or a dataclass, recurse
+            elif (get_origin(fld.type) is Union or is_dataclass(fld.type)):
+                result[fld.name] = extract_candidate_keys(fld.type, d)
+            elif fld.name in d:
+                result[fld.name] = d[fld.name]
+    return result
+
+def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
+    """ recursively populates a dataclass from a dictionary """
+    vals = {}
+    n_models = d.get("n_models", 1)
+    for field_ in fields(klass):
+        name, typ = field_.name, field_.type
+        # Pull sub-dict if it exists, else gather relevant keys from the dict
+        sub = d.get(name)
+        if  isinstance(typ, type) and issubclass(typ, Seeds) and (sub is None or len(sub) == 0):
+            typ = make_seeds_class(n_models)
+        elif  isinstance(typ, type) and issubclass(typ, PerturbSeeds) and (sub is None or len(sub) == 0):
+            typ = make_perturb_seeds_class(n_models)
+
+        # Check if the field type is a union
+        if get_origin(typ) is Union and (sub is None or (isinstance(sub, dict) and len(sub) == 0)):
+            sub = extract_candidate_keys(typ, d)
+        elif sub is not None and isinstance(typ, type) and issubclass(typ, Step):
+            if isinstance(sub, dict):
+                sub = Step(**sub)
+            else:
+                sub = Step(sub)
+        elif is_dataclass(typ) and issubclass(typ, (Experiment, Config)) and (sub is None or len(sub) == 0):
+            sub = extract_candidate_keys(typ, d)
+
+        # Recursively build dataclass if needed
+        if sub is None or (isinstance(sub, dict) and len(sub) == 0):
+            continue
+        elif get_origin(typ) is Union:
+            if type(None) in get_args(typ):
+                typ = get_args(typ)[0]
+                vals[name] = sub
+            else:
+                typ = field_.default_factory(**sub)
+                cls_ = dataclass_from_dict(typ, sub)
+                vals[name] = cls_
+        elif is_dataclass(typ) and isinstance(sub, dict):
+            vals[name] = dataclass_from_dict(typ, sub)
+        else:
+            vals[name] = sub
+    return klass(**vals)
 
 def zip_and_save_source(target_base_dir: Union[str, Path]) -> None:
     """Write cached config file contents to target directory. Create a summary.md under configs for easy description of the experiment. Creates a zip of the source code.
@@ -106,8 +149,8 @@ class Seeds(Config):
     _name = "seeds"
     _description = "Collection of seeds used during the experiment"
 
-def make_seeds_class() -> Type:
-    n_models = maybe_get_arg("n_models")
+def make_seeds_class(n_models: int = None) -> Type:
+    n_models = maybe_get_arg("n_models") if n_models is None else n_models
     if n_models is None:
         n_models = 1
     n_models = int(n_models)
@@ -118,7 +161,7 @@ def make_seeds_class() -> Type:
     cls_ = make_dataclass("Seeds", fields_, bases=(Seeds,))
     return cls_
 
-@dataclass 
+@dataclass(init=False)
 class Experiment:
 
     """The bundle of hyperparameters necessary for a particular kind of job. Contains many config objects.
@@ -130,16 +173,34 @@ class Experiment:
     data: DataConfig = None
     logger: LoggerConfig = None
     lmc: LMCConfig = None
-    seeds: make_seeds_class() = field(init=True, default_factory=make_seeds_class)
-    resume_from: str = None
     n_models: int = 1  
+
+    seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
+    resume_from: str = None
     model_dir: Path = None
     _resume_from: str = "Pass the model_dir or wandb run (wandb:project/username/run_id) to continue training from, the following model dir must exist in the current file system."
-    _name_prefix: str = field(init=False, default="")
+    _name_prefix: str = field(init=True, default="")
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
-    _description: str = field(init=False, default="")
+    _description: str = field(init=True, default="")
 
-    
+    def __init__(self, *args, **kwargs):
+        # Call Trainer's constructor so that 'model', 'data' etc. are set up
+        self.trainer = kwargs.get("trainer") or dataclass_from_dict(TrainerConfig, kwargs)
+        self.model = kwargs.get("model") or  make_model_config(**kwargs)
+        self.data = kwargs.get("data") or dataclass_from_dict(DataConfig, kwargs)
+        self.logger = kwargs.get("logger") or dataclass_from_dict(LoggerConfig, kwargs)  
+        self.lmc = kwargs.get("lmc") or dataclass_from_dict(LMCConfig, kwargs)
+        self.n_models = kwargs.get("n_models", 1)
+        self.model_dir = kwargs.get("model_dir", None)
+        self.resume_from = kwargs.get("resume_from", None)
+
+        # Dynamically build the Seeds class
+
+        seeds_cls = make_seeds_class(self.n_models)
+        seeds_kwargs = {k: kwargs.get(k) for k in seeds_cls.__annotations__}
+        self.seeds = kwargs.get("seeds") or seeds_cls(**seeds_kwargs)
+        self.__post_init__()
+
     @property
     def command(self) -> str:
         return maybe_get_arg("command", positional=True, position=0)
@@ -174,6 +235,9 @@ class Experiment:
         # Create the desc.
         return cls(**confs)
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "Experiment":
+        return dataclass_from_dict(cls, d)
 
     def save(self, output_dir: Union[Path, str], zip_code_base: bool = True) -> None:
         """ saves the configuration as a yaml file at output_dir """
@@ -237,7 +301,7 @@ class Experiment:
             d[field_.name] = val
         return d
 
-@dataclass
+@dataclass(init=False)
 class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
@@ -246,47 +310,78 @@ class Trainer(Experiment):
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
 
+@dataclass
+class PerturbSeeds(Config):
+    _name = "perturb-seeds"
+    _description = "Collection of seeds used during the perturbation of the models"
 
-def make_perturb_seeds_class() -> Type:
-    n_models = maybe_get_arg("n_models")
+
+def make_perturb_seeds_class(n_models: int = None) -> Type:
+    n_models = maybe_get_arg("n_models") if n_models is None else n_models
     if n_models is None:
         n_models = 1
     n_models = int(n_models)
     fields_ = [(f"perturb_seed{i}", int, None) for i in range(1, 1+n_models)]
     fields_ += [(f"_perturb_seed{i}", str, f"Seed used for perturbing model {i}, defaults to none and uses the original randomness of the model setup.") for i in range(1, 1+n_models)]
-    cls_ = make_dataclass("Seeds", fields_, bases=(Seeds,))
+    cls_ = make_dataclass("PerturbSeeds", fields_, bases=(PerturbSeeds,))
     return cls_
 
-@dataclass
+@dataclass(init=False)
+# @dataclass
 class PerturbedTrainer(Trainer):
     perturb_inds: List[int] = field(init=True, default_factory=lambda: [-1])
-    perturb_step: int = 0#TODO: make step Step  = field(init=True, default_factory=lambda: Step(0))
+    perturb_step: Optional[int] = None
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
     norm_perturb: bool = False
     same_steps_pperturb: bool = True
     rewind_lr: bool = False
-    perturb_seeds: make_perturb_seeds_class() = field(init=True, default_factory=make_perturb_seeds_class)
+    perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
     sample_noise_at: Literal["init", "perturb"] = "init"
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
-    _perturb_mode: str = "Determines the perturbation mode,\n\tif gaussian, ϵ∼N(0,σ2)\n\tif batch, ϵ=∇L(x,y;θ_0​ ),where (x,y)∼D"
+    _perturb_mode: str = (
+        "Determines the perturbation mode,\n\tif gaussian, ϵ∼N(0,σ²)\n\tif batch, ϵ=∇L(x,y;θ₀), (x,y)∼D"
+    )
     _perturb_scale: str = "Scale to multiply the perturbation with"
-    _norm_perturb: str = "If true, perturbation is normalized to have a total l2 norm of perturb_scale"
-    _same_steps_pperturb: str = "If true, perturbed model is trained for `training_steps` after perturbation"
+    _norm_perturb: str = "If true, perturbation is normalized to have an l₂ norm of perturb_scale"
+    _same_steps_pperturb: str = "If true, perturbed model is trained for 'training_steps' after perturbation"
     _rewind_lr: str = "If true, learning rate is rewound back to the max learning rate"
     _sample_noise_at: str = "Sample noise at the given step, defaults to initialization"
-
     _name_prefix: str = "perturbed-trainer"
     _description: str = "Run a butterfly experiment."
 
+    def __init__(self, *args, **kwargs):
+        self.perturb_inds = kwargs.get("perturb_inds", [-1])
+        self.perturb_step = kwargs.get("perturb_step", 0)
+        self.perturb_mode = kwargs.get("perturb_mode", "gaussian")
+        self.perturb_scale = kwargs.get("perturb_scale", 0)
+        self.norm_perturb = kwargs.get("norm_perturb", False)
+        self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
+        self.rewind_lr = kwargs.get("rewind_lr", False)
+        self.sample_noise_at = kwargs.get("sample_noise_at", "init")
+
+        n_models = kwargs.get("n_models", 1)
+        # Dynamically build the Seeds class
+        seeds_cls = make_perturb_seeds_class(n_models)
+        seeds_kwargs = {k: kwargs.get(k) for k in seeds_cls.__annotations__}
+        self.perturb_seeds = kwargs.get("perturb_seeds") or seeds_cls(**seeds_kwargs)
+        super().__init__(*args, **kwargs)
+        self.__post_init__()
+
     def __post_init__(self):
+        # Convert negative indexes to 1-based from the end
         for i, p in enumerate(self.perturb_inds):
             p = int(p)
             if p < 0:
-                # todo: make sure that the indexing is the same 0 or 1 based
-                p = self.n_models + p + 1 # here it is 1-based
+                p = self.n_models + p + 1  # 1-based indexing
             self.perturb_inds[i] = p
 
+        if isinstance(self.perturb_step, int):
+            self.perturb_step = Step(f"{self.perturb_step}st")
+        elif isinstance(self.perturb_step, str):
+            self.perturb_step = Step(self.perturb_step)
+
         return super().__post_init__()
+

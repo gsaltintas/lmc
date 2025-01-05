@@ -94,6 +94,7 @@ class TrainingRunner(ExperimentManager):
             self.test_loss_fn,
             ep,
             log_dct,
+            self.steps_per_epoch * ep,
         )
         if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
             check_lmc(

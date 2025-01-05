@@ -174,7 +174,9 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if self.global_step < 1:
                     continue
                 prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
-                steps = prev_max_steps + self.config.perturb_step
+                steps = prev_max_steps + self.config.perturb_step.get_step(
+                    self.steps_per_epoch
+                )
                 el.max_steps = Step(steps, self.steps_per_epoch)
                 self.logger.info(
                     "Model %d steps set to %d.",
@@ -207,7 +209,9 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.steps_per_epoch
                 ):
                     break
-                if self.global_step == self.config.perturb_step:
+                if self.global_step == self.config.perturb_step.get_step(
+                    self.steps_per_epoch
+                ):
                     self.perturb_model(log_dct=log_dct)
                 self.global_step += 1
                 for element_ind, (x, y) in enumerate(batches):

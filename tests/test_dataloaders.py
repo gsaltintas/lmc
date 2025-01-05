@@ -1,3 +1,4 @@
+import os
 import unittest
 from pathlib import Path
 from shutil import rmtree
@@ -24,18 +25,24 @@ class DummyDataset(Dataset):
 class TestDataLoaderConsistency(unittest.TestCase):
     @classmethod
     def setUp(cls):
-        cls.conf = DataConfig(dataset="cifar10", path=Path(__file__).resolve().absolute().parent.joinpath("data"), hflip=True, random_rotation=10)
+        DATA_PATH_ENV_VAR = "DATASET_DIR"
+        data_dir = os.environ.get(DATA_PATH_ENV_VAR)
+        if data_dir is None:
+            raise ValueError(
+                f"Need to set the environment variable {DATA_PATH_ENV_VAR}"
+            )
+        cls.conf = DataConfig(dataset="cifar10", path=data_dir + "/cifar10", hflip=True, random_rotation=10)
         cls.loader_seed = 43
 
-    @classmethod
-    def tearDown(cls) -> None:
-        rmtree(cls.conf.path)
+    # @classmethod
+    # def tearDown(cls) -> None:
+    #     rmtree(cls.conf.path)
 
     def test_dataloader_consistency(self):
         self.conf.num_workers = 1
-        dataloader1 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
-        dataloader2 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
-        dataloader3 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
+        dataloader1 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
+        dataloader2 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
+        dataloader3 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
         
         # Compare the data from all DataLoader instances
         for ind, ((x1, y1), (x2, y2), (x3, y3)) in enumerate(zip(dataloader1, dataloader2, dataloader3)):
@@ -49,9 +56,9 @@ class TestDataLoaderConsistency(unittest.TestCase):
 
     def test_dataloader_consistency_num_workers(self):
         self.conf.num_workers = 4
-        dataloader1 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
-        dataloader2 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
-        dataloader3 = setup_loader(self.conf, train=True, eval=False, loader_seed=self.loader_seed)
+        dataloader1 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
+        dataloader2 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
+        dataloader3 = setup_loader(self.conf, train=True, evaluate=False, loader_seed=self.loader_seed)
         
         # Compare the data from all DataLoader instances
         for ind, ((x1, y1), (x2, y2), (x3, y3)) in enumerate(zip(dataloader1, dataloader2, dataloader3)):
