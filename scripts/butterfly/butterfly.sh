@@ -12,12 +12,14 @@ scale=0.1; lr=0.1
 
 repetition=2
 cnt=0
-start=2
-end=1000
+# runs job no-start until and including job-end
+start=4
+end=3000
 
-for lr in 0.1 0.01; do
+for lr in 0.1 ; do
+# for lr in 0.1 0.01; do
 for perturb_step in 0 1 2 3 4 5 390 1950; do
-for scale in 0.01 0.1; do
+for scale in 0.1 0.01 0.5; do
 ((cnt++))
 if [[ $cnt -lt $start ]]; then echo Skipping job-$cnt; continue; fi
 if [[ $cnt -gt $end ]]; then echo Skipping job-$cnt; continue; fi
@@ -27,10 +29,21 @@ sbatch --time=120 --mem-per-cpu=2G --cpus-per-gpu=4 --tmp=4G --job-name="$cnt" -
 --lr_scheduler triangle --lr $lr  --warmup_ratio=0.02 \
 --optimizer=sgd --momentum=0.9 \
 --save_early_iters=true --log_dir=/network/scratch/g/gul-sena.altintas/perm/butterfly \
---cleanup_after=false --use_wandb true --run_name=gauss@${perturb_step}x$scale-lr=$lr-$repetition --project=clean --n_models=1 --seed1=$seed1 --loader_seed1=$seed1 \
+--cleanup_after=false --use_wandb true --group=longer --run_name=perm-gauss@${perturb_step}x$scale-lr=$lr-$repetition --project=Perm-Stability --n_models=1 --seed1=$seed1 --loader_seed1=$seed1 \
 --perturb_step=$perturb_step --perturb_inds 1 --perturb_mode=gaussian --perturb_scale=$scale "
 
 echo Submitted job-$cnt
 done 
 done 
 done
+
+
+# # ## baseline
+# norm="layernorm"; lr=0.1; seed1=22
+# python main.py train --training_steps=50ep \
+# --model_name resnet20-32 --norm=$norm \
+# --dataset cifar10 --hflip true --random_rotation=10 --random_crop=false \
+# --lr_scheduler triangle --lr $lr  --warmup_ratio=0.02 \
+# --optimizer=sgd --momentum=0.9 \
+# --save_early_iters=true --log_dir=/network/scratch/g/gul-sena.altintas/perm/butterfly \
+# --cleanup_after=false --use_wandb true --group=longer --run_name=baseline-lr=$lr-$repetition --project=Perm-Stability --n_models=1 --seed1=$seed1 --loader_seed1=$seed1
