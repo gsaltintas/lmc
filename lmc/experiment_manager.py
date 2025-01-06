@@ -311,8 +311,10 @@ class PerturbedTrainingRunner(TrainingRunner):
                     ind,
                     steps,
                 )
-                self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
-                self.logger.info("Model %d lr schedule reset.", ind)
+                if el.scheduler is not None:
+                
+                    self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
+                    self.logger.info("Model %d lr schedule reset.", ind)
 
     def run(self):
         self.setup()
