@@ -42,7 +42,7 @@ class TestConfig(unittest.TestCase):
         self.trainer_config = TrainerConfig(training_steps="10ep", opt=self.opt_config)
         self.model_config = ModelConfig(model_name="resnet20-16")
         self.data_config = DataConfig(dataset="cifar10")
-        self.logger_config = LoggerConfig()
+        self.logger_config = LoggerConfig(run_id="runidtest")
         self.lmc_config = LMCConfig()
         self.seeds_config = make_seeds_class(2)
 

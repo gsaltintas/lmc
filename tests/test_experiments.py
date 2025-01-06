@@ -58,7 +58,7 @@ class TestTrainingRunner(unittest.TestCase):
             --cleanup_after false  \
             --use_wandb false  \
             --run_name test_butterfly_deterministic  \
-            --project tests  \
+            --project test-project  \
             --n_models 2  \
             --seed1 {seed1}  \
             --seed2 {seed2}  \
@@ -99,8 +99,8 @@ class TestTrainingRunner(unittest.TestCase):
                 one_line, check=True, capture_output=True, text=True
             )
         except subprocess.CalledProcessError as e:
-            print("Error during run: ", e, sep="\n")
             if print_output:
+                print("Error during run: ", e, sep="\n")
                 traceback.print_exc()
                 print(e.stdout)
                 print(e.stderr)
