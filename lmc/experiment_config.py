@@ -316,6 +316,14 @@ class PerturbSeeds(Config):
     _description = "Collection of seeds used during the perturbation of the models"
 
 
+@dataclass
+class PerturbSeeds(Config):
+
+    _name = "perturb-seeds"
+    _description = "Collection of seeds used during the perturbation of the models"
+    
+    
+
 def make_perturb_seeds_class(n_models: int = None) -> Type:
     n_models = maybe_get_arg("n_models") if n_models is None else n_models
     if n_models is None:

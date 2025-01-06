@@ -231,13 +231,15 @@ class TestTrainingRunner(unittest.TestCase):
         seed1=42,
         seed2=None,
         perturb_step: int = 1,
-        perturb_scale=0,
+        perturb_scale=0.1,
         deterministic=True,
         model="mlp/128x3",
         dataset="mnist",
     ):
         if seed2 is None:
             seed2 = seed1
+        perturb_ind = 1
+        non_perturbed = 0
         config = PerturbedTrainer.from_dict(
             dict(
                 **self.PerturbedTrainingKwargs,
@@ -250,7 +252,7 @@ class TestTrainingRunner(unittest.TestCase):
                 path=self.data_dir + "/" + dataset,
                 model_name=model,
                 dataset=dataset,
-            )
+            ) | {"perturb_inds": [perturb_ind+1]}
         )
         exp_manager = PerturbedTrainingRunner(config)
         exp_manager.setup()
@@ -263,6 +265,15 @@ class TestTrainingRunner(unittest.TestCase):
             exp_manager.global_step,
             steps,
             f"Expected {steps} steps, got {exp_manager.global_step}",
+        )
+        perturbed_steps = exp_manager.training_elements[perturb_ind].curr_step
+        unperturbed_steps = exp_manager.training_elements[non_perturbed].curr_step
+        self.assertEqual(
+            perturbed_steps, steps, f"Expected {steps} steps for the perturbed model, got {perturbed_steps}"
+        )
+        orig_steps = config.trainer.training_steps.get_step(steps_per_epoch)
+        self.assertEqual(
+            unperturbed_steps, orig_steps, f"Expected {orig_steps} steps for the non perturbed model, got {unperturbed_steps}"
         )
 
 
