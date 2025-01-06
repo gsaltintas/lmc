@@ -35,23 +35,27 @@ if __name__ == "__main__":
     helptext += "\n" + "=" * 82
 
     manager_name = maybe_get_arg("subcommand", positional=True, position=0)
+    config_file = maybe_get_arg("--config_file")
     if manager_name not in managers:
         print(helptext)
         sys.exit(1)
 
     # Add the arguments for that command.
     experiment = get_experiment(manager_name)
-    usage = "main.py {} [...] => {}".format(manager_name, experiment.description)
-    usage += "\n" + "=" * 82 + "\n"
 
-    parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
-    parser.add_argument("subcommand")
+    if config_file is None:
+        usage = "main.py {} [...] => {}".format(manager_name, experiment.description)
+        usage += "\n" + "=" * 82 + "\n"
+        parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
+        parser.add_argument("subcommand")
+        # Add arguments for the various managers.
+        experiment.add_args(parser)
 
-    # Add arguments for the various managers.
-    experiment.add_args(parser)
+        args = parser.parse_args()
+        experiment_manager = experiment.create_from_args(args)
+    else:
+        experiment.create_from_file(config_file)
 
-    args = parser.parse_args()
-    experiment_manager = experiment.create_from_args(args)
     try:
         experiment_manager.run()
     except Exception:
