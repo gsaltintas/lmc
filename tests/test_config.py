@@ -34,7 +34,7 @@ class TestConfig(unittest.TestCase):
         perturb_seed1=4,
         perturb_seed2=5,
         seed1=1,
-        seed2=2
+        seed2=2,
     )
 
     def setUp(self):
@@ -42,7 +42,7 @@ class TestConfig(unittest.TestCase):
         self.trainer_config = TrainerConfig(training_steps="10ep", opt=self.opt_config)
         self.model_config = ModelConfig(model_name="resnet20-16")
         self.data_config = DataConfig(dataset="cifar10")
-        self.logger_config = LoggerConfig()
+        self.logger_config = LoggerConfig(run_id="runidtest")
         self.lmc_config = LMCConfig()
         self.seeds_config = make_seeds_class(2)
 
@@ -108,7 +108,9 @@ class TestConfig(unittest.TestCase):
         experiment = Trainer.create_from_args(args)
 
         self.assertIsInstance(experiment, Trainer)
-        self.assertEqual(f"{experiment.trainer.training_steps.get_epoch()}ep", args.training_steps)
+        self.assertEqual(
+            f"{experiment.trainer.training_steps.get_epoch()}ep", args.training_steps
+        )
         self.assertEqual(experiment.trainer.opt.lr, args.lr)
         self.assertEqual(experiment.trainer.opt.optimizer, args.optimizer)
 
@@ -121,27 +123,49 @@ class TestConfig(unittest.TestCase):
 
     def test_init(self):
         config = PerturbedTrainer(
-                **self.PerturbedTrainingKwargs,
-                perturb_step=1,
-                deterministic=False,
-                model_name="mlp/128x3",
-                dataset="mnist",
+            **self.PerturbedTrainingKwargs,
+            perturb_step=1,
+            deterministic=False,
+            model_name="mlp/128x3",
+            dataset="mnist",
         )
         self.common(config)
-    
+
     def common(self, config):
-        self.assertEqual(f"{config.trainer.training_steps.get_epoch()}ep", self.PerturbedTrainingKwargs["training_steps"])
+        self.assertEqual(
+            f"{config.trainer.training_steps.get_epoch()}ep",
+            self.PerturbedTrainingKwargs["training_steps"],
+        )
         self.assertEqual(config.trainer.opt.lr, self.PerturbedTrainingKwargs["lr"])
-        self.assertEqual(config.trainer.opt.momentum, self.PerturbedTrainingKwargs["momentum"])
-        self.assertEqual(config.trainer.opt.optimizer, self.PerturbedTrainingKwargs["optimizer"])
-        self.assertEqual(config.trainer.opt.lr_scheduler, self.PerturbedTrainingKwargs["lr_scheduler"])
-        self.assertEqual(config.trainer.opt.optimizer, self.PerturbedTrainingKwargs["optimizer"])
+        self.assertEqual(
+            config.trainer.opt.momentum, self.PerturbedTrainingKwargs["momentum"]
+        )
+        self.assertEqual(
+            config.trainer.opt.optimizer, self.PerturbedTrainingKwargs["optimizer"]
+        )
+        self.assertEqual(
+            config.trainer.opt.lr_scheduler,
+            self.PerturbedTrainingKwargs["lr_scheduler"],
+        )
+        self.assertEqual(
+            config.trainer.opt.optimizer, self.PerturbedTrainingKwargs["optimizer"]
+        )
         self.assertEqual(config.seeds.seed1, self.PerturbedTrainingKwargs["seed1"])
         self.assertEqual(config.seeds.seed2, self.PerturbedTrainingKwargs["seed2"])
-        self.assertEqual(config.perturb_seeds.perturb_seed1, self.PerturbedTrainingKwargs["perturb_seed1"])
-        self.assertEqual(config.perturb_seeds.perturb_seed2, self.PerturbedTrainingKwargs["perturb_seed2"])
-        self.assertEqual(config.model.initialization_strategy, "kaiming_normal", "Default argument not set correctly")
-        
+        self.assertEqual(
+            config.perturb_seeds.perturb_seed1,
+            self.PerturbedTrainingKwargs["perturb_seed1"],
+        )
+        self.assertEqual(
+            config.perturb_seeds.perturb_seed2,
+            self.PerturbedTrainingKwargs["perturb_seed2"],
+        )
+        self.assertEqual(
+            config.model.initialization_strategy,
+            "kaiming_normal",
+            "Default argument not set correctly",
+        )
+
     def test_from_dict(self):
         config = PerturbedTrainer.from_dict(
             dict(
@@ -153,6 +177,7 @@ class TestConfig(unittest.TestCase):
             )
         )
         self.common(config)
-        
+
+
 if __name__ == "__main__":
     unittest.main()

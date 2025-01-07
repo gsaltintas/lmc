@@ -43,6 +43,7 @@ logger:
   print_optimizers: true
   print_summary: true
   project: clean
+  run_id: null
   run_name: perm-gauss@1x0.1-lr=0.1-2
   slurm_job_id: null
   tags: null

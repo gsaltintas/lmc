@@ -502,6 +502,7 @@ class LoggerConfig(Config):
     project: str = None
     entity: str = None
     run_name: str = None
+    run_id: str = None
     group: str = None
     tags: Optional[List[str]] = None
     notes: str = None
