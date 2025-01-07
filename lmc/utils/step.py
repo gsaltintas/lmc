@@ -81,3 +81,8 @@ class Step:
         steps_per_epoch = int(match.group(2))
         
         return cls(value=value, steps_per_epoch=steps_per_epoch)
+    
+    def wandb_dct(self):
+        # TODO: not sure about this design choice
+        # logging string format preserves all info but hard for plots
+        return {"value": self.value, "steps_per_epoch": self.steps_per_epoch, "step": self.get_step(), "epoch": self.get_epoch()}

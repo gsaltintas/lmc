@@ -43,6 +43,7 @@ logger:
   print_optimizers: true
   print_summary: true
   project: clean
+  run_id: null
   run_name: perm-gauss@1x0.1-lr=0.1-2
   slurm_job_id: null
   tags: null
@@ -65,7 +66,7 @@ model_dir: !!python/object/apply:pathlib.PosixPath
 - perm
 - butterfly
 - perturbed-trainer_1b7a71bf1adf65138267203a64d3233b-16-09-24-16-16-589478
-n_models: 1
+n_models: 2
 norm_perturb: false
 perturb_inds:
 - 1
@@ -73,6 +74,7 @@ perturb_mode: gaussian
 perturb_scale: 0.1
 perturb_seeds:
   perturb_seed1: null
+  perturb_seed2: null
 perturb_step:
   steps_per_epoch: 1
   value: 1st
@@ -82,8 +84,10 @@ same_steps_pperturb: true
 sample_noise_at: init
 seeds:
   deterministic: false
-  loader_seed1: 22
-  seed1: 22
+  loader_seed1: 42
+  loader_seed2: 41
+  seed1: 42
+  seed2: 41
 trainer:
   label_smoothing: 0.0
   opt:

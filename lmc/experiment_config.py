@@ -21,17 +21,6 @@ from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
                      make_model_config, maybe_get_arg)
 
 
-def flatten_dict(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Flatten a nested dictionary."""
-    items = []
-    for k, v in d.items():
-        if isinstance(v, dict):
-            items.extend([(f"{k2}", v2) for k2, v2 in flatten_dict(v).items()])
-        else:
-            items.append((k, v))
-    return dict(items)
-
-
 def extract_candidate_keys(klass, d):
     """Recursively collect only the keys corresponding to `klass` (which may be a Union or Dataclass)."""
     if not isinstance(d, dict):
@@ -61,6 +50,9 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
     """ recursively populates a dataclass from a dictionary """
     vals = {}
     n_models = d.get("n_models", 1)
+    if n_models == 1 and hasattr(klass, "n_models"):
+        n_models = getattr(klass, n_models)
+        
     for field_ in fields(klass):
         name, typ = field_.name, field_.type
         # Pull sub-dict if it exists, else gather relevant keys from the dict
@@ -261,6 +253,7 @@ class Experiment:
         
         with open(file_path) as stream:
             dct = yaml.load(stream, Loader=yaml.Loader)
+            
         # # Create the desc.
         return dataclass_from_dict(cls, dct)
 
@@ -298,6 +291,9 @@ class Experiment:
             if field_.name.startswith("_"):
                 continue
             val = getattr(self, field_.name)
+            if isinstance(field_.type, type) and issubclass(field_.type, Step):
+                # for steps only log step int
+                val = val.get_step()
             if isinstance(field_.type, type) and issubclass(field_.type, Config):
                 val = val.wandb_dct()
             d[field_.name] = val

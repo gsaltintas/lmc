@@ -1,9 +1,9 @@
-import os
 import argparse
+import os
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
 from shutil import rmtree
+from unittest.mock import MagicMock
 
 import numpy as np
 import torch
@@ -38,6 +38,7 @@ class TestConfig(unittest.TestCase):
             with open(new_yaml , 'r') as f2:
                 for l1, l2 in zip(f1, f2):
                     self.assertEqual(l1, l2)
+                    print(l1, l2)
         conf2 = PerturbedTrainer.load_from_file(new_yaml)
 
 
