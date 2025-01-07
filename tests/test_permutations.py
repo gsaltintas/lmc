@@ -1,13 +1,15 @@
-
 import unittest
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from lmc.permutations import (PermSpec, PermType, get_permutation_sizes,
-                              get_random_permutation_with_fixed_points,
-                              permute_param)
+from lmc.permutations import (
+    PermSpec,
+    get_permutation_sizes,
+    get_random_permutation_with_fixed_points,
+    permute_param,
+)
 
 
 class TestPermuteParam(unittest.TestCase):
@@ -122,10 +124,12 @@ class TestPermuteParam(unittest.TestCase):
             permute_param(perm_spec, perms, "weight", param)
 
     def test_get_permutation_with_fixed_points(self):
-        n = 1000; fixed_points_fraction = 0.2
+        n = 1000
+        fixed_points_fraction = 0.2
         perm = get_random_permutation_with_fixed_points(n, fixed_points_fraction)
-        fixeds = np.round(n*fixed_points_fraction)
+        fixeds = np.round(n * fixed_points_fraction)
         self.assertGreaterEqual((perm == np.arange(n)).sum(), fixeds)
+
 
 if __name__ == "__main__":
     unittest.main()

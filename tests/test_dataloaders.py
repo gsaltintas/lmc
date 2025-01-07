@@ -1,13 +1,10 @@
 import os
 import unittest
-from pathlib import Path
-from shutil import rmtree
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from lmc.config import DataConfig
-from lmc.experiment_config import Trainer
 from lmc.utils.setup_training import setup_loader
 
 
@@ -33,10 +30,6 @@ class TestDataLoaderConsistency(unittest.TestCase):
             )
         cls.conf = DataConfig(dataset="cifar10", path=data_dir + "/cifar10", hflip=True, random_rotation=10)
         cls.loader_seed = 43
-
-    # @classmethod
-    # def tearDown(cls) -> None:
-    #     rmtree(cls.conf.path)
 
     def test_dataloader_consistency(self):
         self.conf.num_workers = 1

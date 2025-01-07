@@ -2,6 +2,7 @@ import argparse
 import logging
 import sys
 import traceback
+from typing import Type
 
 from lmc.config import maybe_get_arg
 from lmc.utils.setup_training import cleanup
@@ -19,11 +20,20 @@ managers = dict(
 )
 
 
-def get_experiment(manager_name: str) -> ExperimentManager:
+def get_experiment(manager_name: str) -> Type[ExperimentManager]:
     if manager_name not in managers:
         raise ValueError("No such runner: {}".format(manager_name))
     else:
         return managers[manager_name]
+
+
+def run_experiment(experiment_manager: ExperimentManager):
+    try:
+        experiment_manager.run()
+    except Exception:
+        traceback.print_exc()
+        pass
+    cleanup(experiment_manager.config)
 
 
 if __name__ == "__main__":
@@ -41,24 +51,18 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Add the arguments for that command.
-    experiment = get_experiment(manager_name)
+    experiment_class = get_experiment(manager_name)
 
     if config_file is None:
-        usage = "main.py {} [...] => {}".format(manager_name, experiment.description)
+        usage = "main.py {} [...] => {}".format(manager_name, experiment_class.description)
         usage += "\n" + "=" * 82 + "\n"
         parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
         parser.add_argument("subcommand")
         # Add arguments for the various managers.
-        experiment.add_args(parser)
+        experiment_class.add_args(parser)
 
         args = parser.parse_args()
-        experiment_manager = experiment.create_from_args(args)
+        experiment_manager = experiment_class.create_from_args(args)
     else:
-        experiment.create_from_file(config_file)
-
-    try:
-        experiment_manager.run()
-    except Exception:
-        traceback.print_exc()
-        pass
-    cleanup(experiment_manager.config)
+        experiment_manager = experiment_class.create_from_file(config_file)
+    run_experiment(experiment_manager)
