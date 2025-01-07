@@ -2,6 +2,8 @@ import abc
 import argparse
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Union
 
 from rich.logging import RichHandler
 from torch import nn
@@ -48,6 +50,12 @@ class ExperimentManager(abc.ABC):
     def create_from_args(cls, args: argparse.Namespace) -> "ExperimentManager":
         """Create a manager from command line arguments."""
         config = cls.config.create_from_args(args)
+        return cls(config)
+
+    @classmethod
+    def create_from_file(cls, file: Union[Path, str]) -> "ExperimentManager":
+        """Create a manager from config file."""
+        config = cls.config.load_from_file(file)
         return cls(config)
 
     @abc.abstractmethod

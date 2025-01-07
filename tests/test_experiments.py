@@ -1,21 +1,82 @@
-import torchvision
 
-torchvision.disable_beta_transforms_warning()
-import glob
-import os
-import subprocess
 import unittest
-from pathlib import Path
-from shutil import rmtree
-
-import torch
-import traceback
+from glob import glob
+import torchvision
 
 from lmc.experiment_config import PerturbedTrainer
 from lmc.experiment.perturb import PerturbedTrainingRunner
+from tests.base import BaseTest
+
+torchvision.disable_beta_transforms_warning()
 
 
-class TestTrainingRunner(unittest.TestCase):
+class TestTrainingRunner(BaseTest):
+    def test_butterfly_deterministic(self):
+        # should fail
+        with self.subTest("bad args"):
+            self.assertEqual(
+                "error", self.run_butterfly_deterministic(perturb_step=None)
+            )
+
+        # should be identical
+        with self.subTest("deterministic"):
+            self.assertEqual("same", self.run_butterfly_deterministic())
+
+        # should not be identical due to extra training time
+        with self.subTest("extra training"):
+            self.assertEqual(
+                "different",
+                self.run_butterfly_deterministic(
+                    perturb_step=1, same_steps_pperturb="true"
+                ),
+            )
+
+        # should not be identical
+        with self.subTest("perturbed"):
+            self.assertEqual(
+                "different", self.run_butterfly_deterministic(perturb_scale=0.00000001)
+            )
+
+        # should not be identical
+        with self.subTest("different batch order"):
+            self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
+
+        # should not be identical (needs larger model for GPU non-determinism to cause differences)
+        with self.subTest("non-deterministic"):
+            self.assertEqual(
+                "different",
+                self.run_butterfly_deterministic(
+                    deterministic=False, model_name="resnet20-8", dataset="cifar10"
+                ),
+            )
+
+        # should be identical
+        with self.subTest("perturb both same noise"):
+            self.assertEqual(
+                "same",
+                self.run_butterfly_deterministic(perturb_scale=1, perturb_inds=[1, 2]),
+            )
+
+        # should not be identical
+        with self.subTest("different lr"):
+            self.assertEqual("same", self.run_butterfly_deterministic(rewind_lr="true"))
+
+    def run_butterfly_deterministic(self, seed1=42, seed2=None, **kwargs):
+        seed2 = seed1 if seed2 is None else seed2
+        command = self.get_test_command(seed1=seed1, seed2=seed2, **kwargs)
+        results = self.run_command(command)
+        if results == "error":
+            return results
+
+        # check if training models 1 and 2 gives the same result
+        last_run = self.get_last_created_in_dir(self.log_dir / "*")
+        ckpt_1, ckpt_2 = self.get_last_ckpts(last_run, seed1, seed2)
+        # check there is more than 1 saved ckpt per model
+        self.assertGreater(len(glob(str(ckpt_1.parent / "*.ckpt"))), 1)
+        self.assertGreater(len(glob(str(ckpt_2.parent / "*.ckpt"))), 1)
+        # check if last ckpts are exactly identical
+        return "same" if self.ckpts_match(ckpt_1, ckpt_2) else "different"
+
     PerturbedTrainingKwargs = dict(
         training_steps="2ep",
         norm="layernorm",
@@ -40,192 +101,6 @@ class TestTrainingRunner(unittest.TestCase):
         batch_size=128,
     )
 
-    PerturbedTrainingRunnerCommand = """python main.py perturb  \
-            --training_steps 2ep  \
-            --model_name {model}  \
-            --norm layernorm  \
-            --path {data_dir}/{dataset}  \
-            --dataset {dataset}  \
-            --hflip true  \
-            --random_rotation 10  \
-            --random_crop false  \
-            --lr_scheduler triangle  \
-            --lr 0.1  \
-            --warmup_ratio 0.02  \
-            --optimizer sgd  \
-            --momentum 0.9  \
-            --save_early_iters true  \
-            --cleanup_after false  \
-            --use_wandb false  \
-            --run_name test_butterfly_deterministic  \
-            --project tests  \
-            --n_models 2  \
-            --seed1 {seed1}  \
-            --seed2 {seed2}  \
-            --loader_seed1 {seed1}  \
-            --loader_seed2 {seed2}  \
-            --perturb_seed1 {seed1}  \
-            --perturb_seed2 {seed2}  \
-            --perturb_step {perturb_step}  \
-            --perturb_inds {perturb_inds}  \
-            --perturb_mode gaussian  \
-            --perturb_scale {perturb_scale}  \
-            --deterministic {deterministic}  \
-            --n_points 3  \
-            --lmc_check_perms false  \
-            --rewind_lr {rewind_lr}  \
-            --log_dir {log_dir}  \
-    """
-
-    def setUp(self):
-        test_dir = Path(os.path.dirname(os.path.realpath(__file__)))
-        self.log_dir = test_dir / "tmp"
-        self.log_dir.mkdir(exist_ok=True)
-        DATA_PATH_ENV_VAR = "DATASET_DIR"
-        self.data_dir = os.environ.get(DATA_PATH_ENV_VAR)
-        if self.data_dir is None:
-            raise ValueError(
-                f"Need to set the environment variable {DATA_PATH_ENV_VAR}"
-            )
-
-    def tearDown(self):
-        rmtree(self.log_dir)
-
-    def run_command(self, command, print_output=False):
-        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
-        one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
-        try:
-            results = subprocess.run(
-                one_line, check=True, capture_output=True, text=True
-            )
-        except subprocess.CalledProcessError as e:
-            print("Error during run: ", e, sep="\n")
-            if print_output:
-                traceback.print_exc()
-                print(e.stdout)
-                print(e.stderr)
-            return "error"
-        # check that output doesn't contain traceback
-        idx = results.stderr.find("Traceback (")
-        if idx >= 0:
-            print(results.stderr[idx:])
-            return "error"
-        if print_output:
-            print(results.stdout)
-        return results
-
-    def test_butterfly_deterministic(self):
-        # should fail
-        with self.subTest("bad args"):
-            self.assertEqual(
-                "error", self.run_butterfly_deterministic(perturb_step=None)
-            )
-
-        # should be identical
-        with self.subTest("deterministic"):
-            self.assertEqual("same", self.run_butterfly_deterministic())
-
-        # should not be identical due to extra training time
-        with self.subTest("extra training"):
-            self.assertEqual(
-                "different", self.run_butterfly_deterministic(perturb_step=1)
-            )
-
-        # should not be identical
-        with self.subTest("perturbed"):
-            self.assertEqual(
-                "different", self.run_butterfly_deterministic(perturb_scale=0.00000001)
-            )
-
-        # should not be identical
-        with self.subTest("different batch order"):
-            self.assertEqual("different", self.run_butterfly_deterministic(seed2=999))
-
-        # should not be identical (needs larger model for GPU non-determinism to cause differences)
-        with self.subTest("non-deterministic"):
-            self.assertEqual(
-                "different",
-                self.run_butterfly_deterministic(
-                    deterministic=False, model="resnet20-8", dataset="cifar10"
-                ),
-            )
-
-        # should be identical
-        with self.subTest("perturb both same noise"):
-            self.assertEqual(
-                "same",
-                self.run_butterfly_deterministic(perturb_scale=1, perturb_inds=[1, 2]),
-            )
-
-        # should not be identical
-        with self.subTest("different lr"):
-            self.assertEqual("same", self.run_butterfly_deterministic(rewind_lr="true"))
-
-    def run_butterfly_deterministic(
-        self,
-        seed1=42,
-        seed2=None,
-        perturb_step=0,
-        perturb_scale=0,
-        deterministic=True,
-        model="mlp/128x3",
-        dataset="mnist",
-        perturb_inds=[1],
-        rewind_lr="false",
-    ):
-        if seed2 is None:
-            seed2 = seed1
-        command = str.format(
-            self.PerturbedTrainingRunnerCommand,
-            seed1=seed1,
-            seed2=seed2,
-            perturb_step=perturb_step,
-            perturb_scale=perturb_scale,
-            deterministic=deterministic,
-            log_dir=self.log_dir,
-            data_dir=self.data_dir,
-            model=model,
-            dataset=dataset,
-            perturb_inds=" ".join(str(x) for x in perturb_inds),
-            rewind_lr=rewind_lr,
-        )
-        results = self.run_command(command)
-        if results == "error":
-            return results
-        return self.compare_last_ckpts(seed1, seed2)
-
-    def compare_last_ckpts(self, seed1, seed2):
-        last_run = self.get_last_created_in_dir(self.log_dir / "*")
-        ckpt_1 = self.get_last_created_in_dir(
-            last_run / f"model1-seed_{seed1}-ls_{seed1}" / "checkpoints" / "ep-*.ckpt"
-        )
-        ckpt_2 = self.get_last_created_in_dir(
-            last_run / f"model2-seed_{seed2}-ls_{seed2}" / "checkpoints" / "ep-*.ckpt"
-        )
-        # check there is more than 1 saved ckpt per model
-        self.assertGreater(len(self.glob(ckpt_1.parent / "*.ckpt")), 1)
-        self.assertGreater(len(self.glob(ckpt_2.parent / "*.ckpt")), 1)
-        # check if last ckpts are exactly identical
-        return self.ckpts_match(ckpt_1, ckpt_2)
-
-    def glob(self, path):
-        return glob.glob(str(path))
-
-    def get_last_created_in_dir(self, path):
-        children = self.glob(path)
-        if len(children):
-            return Path(max(children, key=os.path.getctime))
-        return None
-
-    def ckpts_match(self, ckpt_1, ckpt_2):
-        sd_1 = torch.load(ckpt_1)["state_dict"]
-        sd_2 = torch.load(ckpt_2)["state_dict"]
-        self.assertSetEqual(set(sd_1.keys()), set(sd_2.keys()))
-        for k, v in sd_1.items():
-            if not torch.equal(v, sd_2[k]):
-                return "different"
-        return "same"
-
     def test_post_perturb_steps(
         self,
         seed1=42,
@@ -233,7 +108,7 @@ class TestTrainingRunner(unittest.TestCase):
         perturb_step: int = 1,
         perturb_scale=0.1,
         deterministic=True,
-        model="mlp/128x3",
+        model_name="mlp/128x3",
         dataset="mnist",
     ):
         if seed2 is None:
@@ -249,10 +124,11 @@ class TestTrainingRunner(unittest.TestCase):
                 perturb_scale=perturb_scale,
                 deterministic=deterministic,
                 log_dir=self.log_dir,
-                path=self.data_dir + "/" + dataset,
-                model_name=model,
+                path=self.data_dir / dataset,
+                model_name=model_name,
                 dataset=dataset,
-            ) | {"perturb_inds": [perturb_ind+1]}
+            )
+            | {"perturb_inds": [perturb_ind + 1]}
         )
         exp_manager = PerturbedTrainingRunner(config)
         exp_manager.setup()
@@ -269,12 +145,16 @@ class TestTrainingRunner(unittest.TestCase):
         perturbed_steps = exp_manager.training_elements[perturb_ind].curr_step
         unperturbed_steps = exp_manager.training_elements[non_perturbed].curr_step
         self.assertEqual(
-            perturbed_steps, steps, f"Expected {steps} steps for the perturbed model, got {perturbed_steps}"
+            perturbed_steps,
+            steps,
+            f"Expected {steps} steps for the perturbed model, got {perturbed_steps}",
         )
         orig_steps = config.trainer.training_steps.get_step(steps_per_epoch)
         self.assertEqual(
-            unperturbed_steps, orig_steps, f"Expected {orig_steps} steps for the non perturbed model, got {unperturbed_steps}"
-        )
+            unperturbed_steps,
+            orig_steps,
+            f"Expected {orig_steps} steps for the non perturbed model, got {unperturbed_steps}",
+    )
 
 
 if __name__ == "__main__":

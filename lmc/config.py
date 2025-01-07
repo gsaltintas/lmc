@@ -393,23 +393,6 @@ class TrainerConfig(Config):
     _name = "trainer"
     _description = "Training hyper-parameters"
 
-    # @classmethod
-    # def create_from_args(cls, args: argparse.Namespace, prefix: str = None) -> Config:
-    #     if args.training_steps.isnumeric():
-    #         args.training_steps = f"{args.training_steps}st"
-    #     if args.save_freq.isnumeric():
-    #         args.save_freq = f"{args.save_freq}st"
-    #     if not args.training_steps.endswith("ep") and not args.training_steps.endswith(
-    #         "st"
-    #     ):
-    #         raise ValueError("Please specify training steps as either X | Xst or Xep.")
-    #     if not args.save_freq.endswith("ep") and not args.save_freq.endswith(
-    #         "st"
-    #     ):
-    #         raise ValueError("Please specify save frequency as either X | Xst or Xep.")
-    #     return super().create_from_args(args, prefix)
-
-
 @dataclass
 class DataConfig(Config):
     dataset: Literal["cifar10", "mnist", "cifar100", "tiny-imagenet"]
@@ -450,6 +433,7 @@ class LoggerConfig(Config):
     project: str = None
     entity: str = None
     run_name: str = None
+    run_id: str = None
     group: str = None
     tags: Optional[List[str]] = None
     notes: str = None

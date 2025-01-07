@@ -50,8 +50,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-# temporary dir for test logs
+# temporary dirs for testing
 tests/tmp
+tests/data
 
 # Translations
 *.mo

@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from lmc.utils import Step
+from lmc.utils.utils import flatten_dict
 
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
                      LoggerConfig, TrainerConfig, add_basic_args,
@@ -52,14 +53,15 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
     n_models = d.get("n_models", 1)
     if n_models == 1 and hasattr(klass, "n_models"):
         n_models = getattr(klass, n_models)
-        
+    
     for field_ in fields(klass):
         name, typ = field_.name, field_.type
+        
         # Pull sub-dict if it exists, else gather relevant keys from the dict
         sub = d.get(name)
-        if  isinstance(typ, type) and issubclass(typ, Seeds) and (sub is None or len(sub) == 0):
+        if  isinstance(typ, type) and issubclass(typ, Seeds): # and (sub is None or len(sub) == 0):
             typ = make_seeds_class(n_models)
-        elif  isinstance(typ, type) and issubclass(typ, PerturbSeeds) and (sub is None or len(sub) == 0):
+        elif  isinstance(typ, type) and issubclass(typ, PerturbSeeds): # and (sub is None or len(sub) == 0):
             typ = make_perturb_seeds_class(n_models)
 
         # Check if the field type is a union
@@ -254,7 +256,7 @@ class Experiment:
         with open(file_path) as stream:
             dct = yaml.load(stream, Loader=yaml.Loader)
             
-        # # Create the desc.
+        # # Create the data class from loaded dict
         return dataclass_from_dict(cls, dct)
 
     @property
@@ -333,10 +335,9 @@ def make_perturb_seeds_class(n_models: int = None) -> Type:
     return cls_
 
 @dataclass(init=False)
-# @dataclass
 class PerturbedTrainer(Trainer):
     perturb_inds: List[int] = field(init=True, default_factory=lambda: [-1])
-    perturb_step: Optional[int] = None
+    perturb_step: Step
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
     norm_perturb: bool = False

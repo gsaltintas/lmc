@@ -382,7 +382,7 @@ def setup_device() -> torch.device:
     return device
 
 
-def setup_wandb(config: Trainer) -> None:
+def setup_wandb(config: Experiment) -> None:
     """ given the configuration, sets up the wandb project"""
     if config.logger.use_wandb:
         conf_dct = config.wandb_dct()
@@ -411,7 +411,8 @@ def setup_wandb(config: Trainer) -> None:
                 project=config.logger.project,
                 notes=config.logger.notes,
                 config=conf_dct,
-                dir=WANDB_DIR
+                dir=WANDB_DIR,
+                id=config.logger.run_id,
             )
             
         if config.model_dir is not None:
