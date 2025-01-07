@@ -232,6 +232,7 @@ def configure_optimizer(config: Trainer, model: 'BaseModel'):
     
     return opt
 
+
 def configure_lr_scheduler(
     optimizer: optim.Optimizer,
     training_steps: int,
@@ -239,9 +240,13 @@ def configure_lr_scheduler(
     warmup_ratio: int = 0,
     lr_schedule: dict = None,
     global_step: int = 0,
-    warmup_steps: int = None
+    warmup_steps: int = None,
 ):
-    warmup_steps = math.ceil(warmup_ratio * training_steps) if warmup_steps is None else warmup_steps
+    warmup_steps = (
+        math.ceil(warmup_ratio * training_steps)
+        if warmup_steps is None
+        else warmup_steps
+    )
     base_lr = optimizer.param_groups[0]["lr"]
     if lr_scheduler is None or lr_scheduler.lower() == "none":
         return None
@@ -257,7 +262,7 @@ def configure_lr_scheduler(
         scheduler = optim.lr_scheduler.ExponentialLR(
             optimizer=optimizer, gamma=lr_schedule.get("gamma", 0.90)
         )
-    elif lr_scheduler == "onecycle": #cosine annealing with warmup
+    elif lr_scheduler == "onecycle":  # cosine annealing with warmup
         scheduler = optim.lr_scheduler.OneCycleLR(
             optimizer=optimizer,
             max_lr=base_lr,
@@ -268,22 +273,36 @@ def configure_lr_scheduler(
     elif lr_scheduler == "triangle":
         # Adjust the schedule to account for continuation
         start_ind = global_step if global_step < training_steps else 0
-        schedule = np.interp(
-            np.arange(0, training_steps + 1),
-            [0, warmup_steps, training_steps],
-            [0, 1, 0]
-        )[start_ind:]
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: schedule[x])
+        # resetting lr scheduler, needs to be followed by reset_base_lrs
+        if global_step > 0:
+            schedule = np.interp(
+                np.arange(0, training_steps + 1),
+                [0, warmup_steps, global_step, training_steps],
+                [0, 1, 1, 0],
+            )[start_ind:]
+        else:
+            schedule = np.interp(
+                np.arange(0, training_steps + 1),
+                [0, warmup_steps, training_steps],
+                [0, 1, 0],
+            )[start_ind:]
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=lambda x: schedule[x]
+        )
     elif lr_scheduler == "triangleold":
         start_ind = 1 if warmup_steps else 0
-        schedule = np.interp(np.arange(training_steps + 2),
-                            [0, warmup_steps, training_steps+1],
-                            [0, 1, 0])[start_ind:]
-        
-        schedule = np.interp(np.arange(training_steps + 1),
-                    [0, warmup_steps, training_steps],
-                    [0, 1, 0])[start_ind:]
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: schedule[x])
+        schedule = np.interp(
+            np.arange(training_steps + 2),
+            [0, warmup_steps, training_steps + 1],
+            [0, 1, 0],
+        )[start_ind:]
+
+        schedule = np.interp(
+            np.arange(training_steps + 1), [0, warmup_steps, training_steps], [0, 1, 0]
+        )[start_ind:]
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=lambda x: schedule[x]
+        )
     else:
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
