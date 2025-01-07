@@ -16,6 +16,7 @@ from rich.table import Table
 
 from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
                                          Inits, Norms)
+from lmc.utils.step import Step
 from lmc.utils.utils import pattern_matched
 
 """ TODO: maybe omit defaults in the future versions """
@@ -184,59 +185,6 @@ def add_basic_args(
             parser_.error(f"Invalid field type {typ} for config.")
     parser = parser_
 
-def format_step(value):
-    value = str(value)
-    if value.isnumeric():
-        value = f"{value}st"
-    value = value.lower()
-    return value
-
-@dataclass
-class Step:
-    value: Union[str, int, None] = None #field(init=True, default_factory=format_step)
-    steps_per_epoch: Optional[int] = 1
-    _name: str = None
-
-    def __post_init__(self):
-        if str(self.value).isnumeric():
-            self.value = f"{self.value}st"
-        self.value = str(self.value).lower()
-        if not self.value.endswith("ep") and not self.value.endswith(
-            "st"
-        ):
-            raise ValueError(f"Please specify {self._name} steps as either X | Xst or Xep.")
-
-    @property
-    def suffix(self):
-        if str(self.value).isnumeric():
-            return "st"
-        return self.value[-2:]
-    
-    def add(self, value) -> None:
-        #TODO: implement this
-        if str(value).isnumeric():
-            value = f"{value}st"
-        # total_steps = self.get_step()
-    
-    def get_step(self, steps_per_epoch: Optional[int] = None) -> int:
-        val = int(self.value[:-2])
-        if self.value.endswith("st"):
-            return val
-        steps_per_epoch = steps_per_epoch if steps_per_epoch is not None else self.steps_per_epoch
-        return val * steps_per_epoch
-
-    def get_epoch(self, steps_per_epoch: Optional[int] = None) -> int:
-        val = int(self.value[:-2])
-        if self.value.endswith("ep"):
-            return val
-        steps_per_epoch = steps_per_epoch if steps_per_epoch is not None else self.steps_per_epoch
-        return math.ceil(val / steps_per_epoch)
-    
-    def modulo(self, val: int, mode: Literal["st", "ep"], steps_per_epoch: Optional[int] = None) -> int:
-        if mode == "st":
-            return val % self.get_step(steps_per_epoch)
-        return val % self.get_epoch(steps_per_epoch)
-    
 
 @dataclass
 class Config:

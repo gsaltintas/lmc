@@ -19,12 +19,13 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from lmc.config import DataConfig, Step
+from lmc.config import DataConfig
 from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
                                  MEAN_DICT, STD_DICT, TORCH_DICT)
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
+from lmc.utils import Step
 from lmc.utils.metrics import Metrics
 from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
 

@@ -14,8 +14,10 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from lmc.utils import Step
+
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
-                     LoggerConfig, Step, TrainerConfig, add_basic_args,
+                     LoggerConfig, TrainerConfig, add_basic_args,
                      make_model_config, maybe_get_arg)
 
 
