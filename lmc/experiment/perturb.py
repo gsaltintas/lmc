@@ -6,22 +6,15 @@ import wandb
 from torch.nn.utils import parameters_to_vector
 
 import train
-from lmc.butterfly.butterfly import (
-    get_batch_noise,
-    get_gaussian_noise,
-    get_noise_l2,
-    perturb_model,
-)
+from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
+                                     get_noise_l2, perturb_model)
 from lmc.config import Step
+from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.setup_training import (
-    TrainingElement,
-    configure_lr_scheduler,
-    setup_loader,
-)
-from lmc.experiment.train import TrainingRunner
+from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
+                                      setup_loader)
 
 
 def is_same_model(training_elements):
@@ -184,7 +177,6 @@ class PerturbedTrainingRunner(TrainingRunner):
                     steps,
                 )
                 if el.scheduler is not None:
-                
                     self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
                     self.logger.info("Model %d lr schedule reset.", ind)
 
