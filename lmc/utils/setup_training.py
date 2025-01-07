@@ -22,7 +22,7 @@ from tqdm import tqdm
 from lmc.config import DataConfig, Step
 from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
                                  MEAN_DICT, STD_DICT, TORCH_DICT)
-from lmc.experiment_config import Trainer
+from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
@@ -504,7 +504,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     return training_elements, device
 
 
-def cleanup(config: Trainer):
+def cleanup(config: Experiment):
     """ if script is called with cleanup_after, deletes the model_dir and all checkpoints created"""
     if config.logger.cleanup_after:
         if not config.hashname in config.model_dir.as_posix():

@@ -4,8 +4,8 @@ torchvision.disable_beta_transforms_warning()
 import argparse
 import unittest
 
-from lmc.config import DataConfig, LoggerConfig, ModelConfig, TrainerConfig
-from lmc.experiment_config import PerturbedTrainer, Trainer
+from lmc.config import DataConfig, LoggerConfig, ModelConfig, TrainerConfig, _SGDConfig
+from lmc.experiment_config import PerturbedTrainer, Trainer, LMCConfig, make_seeds_class
 
 
 class TestConfig(unittest.TestCase):
@@ -38,16 +38,20 @@ class TestConfig(unittest.TestCase):
     )
 
     def setUp(self):
-        self.trainer_config = TrainerConfig(training_steps="10ep")
+        self.opt_config = _SGDConfig()
+        self.trainer_config = TrainerConfig(training_steps="10ep", opt=self.opt_config)
         self.model_config = ModelConfig(model_name="resnet20-16")
         self.data_config = DataConfig(dataset="cifar10")
         self.logger_config = LoggerConfig()
+        self.lmc_config = LMCConfig()
+        self.seeds_config = make_seeds_class(2)
 
         self.trainer = Trainer(
             trainer=self.trainer_config,
             model=self.model_config,
             data=self.data_config,
             logger=self.logger_config,
+            lmc=self.lmc_config,
         )
 
     def test_instantiation(self):
@@ -57,6 +61,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(self.trainer.model, self.model_config)
         self.assertEqual(self.trainer.data, self.data_config)
         self.assertEqual(self.trainer.logger, self.logger_config)
+        self.assertEqual(self.trainer.lmc, self.lmc_config)
+        self.assertEqual(self.trainer.trainer.opt, self.opt_config)
 
     def test_hashname(self):
         # Test that the hashname is generated correctly.

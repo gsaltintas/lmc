@@ -72,7 +72,10 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
         if get_origin(typ) is Union and (sub is None or (isinstance(sub, dict) and len(sub) == 0)):
             sub = extract_candidate_keys(typ, d)
         elif sub is not None and isinstance(typ, type) and issubclass(typ, Step):
-            sub = Step(sub)
+            if isinstance(sub, dict):
+                sub = Step(**sub)
+            else:
+                sub = Step(sub)
         elif is_dataclass(typ) and issubclass(typ, (Experiment, Config)) and (sub is None or len(sub) == 0):
             sub = extract_candidate_keys(typ, d)
 
@@ -307,6 +310,8 @@ class Trainer(Experiment):
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
 
+@dataclass
+class PerturbSeeds(Config):
     _name = "perturb-seeds"
     _description = "Collection of seeds used during the perturbation of the models"
 
@@ -318,6 +323,7 @@ class PerturbSeeds(Config):
     _description = "Collection of seeds used during the perturbation of the models"
     
     
+
 def make_perturb_seeds_class(n_models: int = None) -> Type:
     n_models = maybe_get_arg("n_models") if n_models is None else n_models
     if n_models is None:

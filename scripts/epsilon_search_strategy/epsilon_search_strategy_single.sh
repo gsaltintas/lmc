@@ -21,10 +21,10 @@ python main.py perturb  \
         --run_name=$RUN_NAME  \
         --path=$SLURM_TMPDIR/data/$DATASET  \
         --log_dir=$SSETUP_OUTPUT_DIR  \
-        --save_early_iters=true  \
-        --cleanup_after=false  \
-        --use_wandb=true  \
+        --save_early_iters=false  \
+        --cleanup_after=true  \
         --zip_and_save_source=false  \
+        --use_wandb=true  \
     --model_name=$MODEL  \
         --norm=$NORM  \
     --dataset=cifar10  \
@@ -40,11 +40,12 @@ python main.py perturb  \
     --n_models=2  \
         --perturb_mode=$PERTURB_TYPE  \
         --perturb_scale=$SCALE  \
+        --perturb_step=$PERTURB_STEP  \
         --perturb_inds=1  \
+        --same_steps_pperturb=false  \
     --deterministic=$DETERMINISTIC  \
         --seed1=$SEED  \
         --seed2=$SEED  \
         --loader_seed1=$SEED  \
         --loader_seed2=$SEED  \
         --perturb_seed1=$SEED  \
-        --perturb_step=$PERTURB_STEP  \
