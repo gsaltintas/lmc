@@ -31,9 +31,6 @@ class TestConfig(BaseTest):
             else:
                 self.assertEqual(v, conf_val, f"mismatch at {k}")
             
-    def tearDown(self):
-        pass
-    
     def test_build(self):
         conf = PerturbedTrainer.load_from_file(self.CONFIG_YAML)
         with open(self.CONFIG_YAML) as stream:

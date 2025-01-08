@@ -7,23 +7,16 @@ data:
   gaussian_blur: false
   hflip: true
   mixup: 0.0
-  num_workers: 4
-  path: !!python/object/apply:pathlib.PosixPath
-  - /
-  - home
-  - mila
-  - g
-  - gul-sena.altintas
-  - clean
-  - data
+  num_workers: 1
+  path: data
   random_crop: false
   random_rotation: 10.0
   test_batch_size: 1024
 lmc:
   activation_matching_samples: 2
-  lmc_check_perms: true
+  lmc_check_perms: false
   lmc_on_epoch_end: false
-  lmc_on_train_end: true
+  lmc_on_train_end: false
   n_points: 11
 logger:
   cleanup_after: false
@@ -31,14 +24,7 @@ logger:
   experiment_id: null
   group: longer
   level: info
-  log_dir: !!python/object/apply:pathlib.PosixPath
-  - /
-  - network
-  - scratch
-  - g
-  - gul-sena.altintas
-  - perm
-  - butterfly
+  log_dir: tests/tmp
   notes: null
   print_optimizers: true
   print_summary: true
@@ -48,24 +34,16 @@ logger:
   slurm_job_id: null
   tags: null
   use_tqdm: true
-  use_wandb: true
+  use_wandb: false
 model:
   act: relu
   ckpt_path: null
   initialization_strategy: kaiming_normal
-  model_name: resnet20-32
+  model_name: mlp/64x2
   norm: layernorm
-  num_hidden_layers: 4
+  num_hidden_layers: 2
   width: 16
-model_dir: !!python/object/apply:pathlib.PosixPath
-- /
-- network
-- scratch
-- g
-- gul-sena.altintas
-- perm
-- butterfly
-- perturbed-trainer_1b7a71bf1adf65138267203a64d3233b-16-09-24-16-16-589478
+model_dir: tests/tmp/model1234
 n_models: 2
 norm_perturb: false
 perturb_inds:
@@ -77,7 +55,7 @@ perturb_seeds:
   perturb_seed2: null
 perturb_step:
   steps_per_epoch: 1
-  value: 1st
+  value: 0st
 resume_from: null
 rewind_lr: false
 same_steps_pperturb: true
@@ -102,10 +80,10 @@ trainer:
   save_best: true
   save_early_iters: true
   save_freq:
-    steps_per_epoch: 1
+    steps_per_epoch: 469
     value: 1ep
   training_steps:
     steps_per_epoch: 1
-    value: 200ep
+    value: 1ep
   use_scaler: false
 zip_and_save_source: true
