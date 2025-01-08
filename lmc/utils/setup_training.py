@@ -27,7 +27,7 @@ from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.step import Step
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
+from lmc.utils.seeds import seed_everything, seed_worker
 
 torchvision.disable_beta_transforms_warning()
 import torchvision.transforms as transforms
@@ -371,10 +371,14 @@ def setup_model_dir(config: Trainer) -> Path:
     logger.info(f"Created model dir: {model_dir}")
     return model_dir
 
-def setup_device() -> torch.device:
+def setup_device(config: Experiment) -> torch.device:
     """
     Configure and initialize the computing device for PyTorch operations.
     """
+    if config.seeds.deterministic:
+        # set env variable for use_deterministic_algorithms
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.use_deterministic_algorithms(True)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -420,10 +424,8 @@ def setup_wandb(config: Experiment) -> None:
 
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
-    if config.seeds.deterministic:
-        make_deterministic()
     """Creates all necessary elements. models, datamodules, etc."""
-    device = setup_device()
+    device = setup_device(config)
     model_dir = setup_model_dir(config)
     # config.model_dir.joinpath("barriers").mkdir(exist_ok=True)
 
