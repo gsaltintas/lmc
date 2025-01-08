@@ -70,6 +70,7 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(hashname.startswith(self.trainer._name_prefix))
 
     def test_add_args(self):
+        #TODO this still fails due to make_seeds_class defaulting to n_models=None
         # Test the add_args method adds arguments to the parser correctly.
         parser = argparse.ArgumentParser()
         Trainer.add_args(parser)
@@ -80,6 +81,9 @@ class TestConfig(unittest.TestCase):
                 "--optimizer=sgd",
                 "--model_name=resnet20-16",
                 "--dataset=mnist",
+                "--n_models=2",
+                "--seed1=42",
+                "--seed2=41",
             ]
         )
 

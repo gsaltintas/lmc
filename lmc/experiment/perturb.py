@@ -10,7 +10,7 @@ from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
                                      get_noise_l2, perturb_model)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from lmc.utils import Step
+from lmc.utils.step import Step
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,

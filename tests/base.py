@@ -48,7 +48,7 @@ class BaseTest(unittest.TestCase):
                 --perturb_seed2 {seed2}  \
             --lmc_check_perms false  \
                 --lmc_on_epoch_end false  \
-                --lmc_on_train_end true  \
+                --lmc_on_train_end {lmc_on_train_end}  \
                 --n_points 3  \
     {args}"""
 
@@ -64,6 +64,8 @@ class BaseTest(unittest.TestCase):
 
         self.data_dir = test_path / "data"
         data_dir_env_var = os.environ.get("DATASET_DIR")
+        if data_dir_env_var is None:
+            raise ValueError("DATASET_DIR environment variable not set")
         if not self.data_dir.exists() and data_dir_env_var is not None:
             os.symlink(data_dir_env_var, self.data_dir, target_is_directory=True)
 
@@ -84,6 +86,7 @@ class BaseTest(unittest.TestCase):
         rewind_lr="false",
         use_wandb="false",
         same_steps_pperturb="false",
+        lmc_on_train_end="false",
         args=[],
     ):
         command = str.format(
@@ -102,6 +105,7 @@ class BaseTest(unittest.TestCase):
             rewind_lr=rewind_lr,
             use_wandb=use_wandb,
             same_steps_pperturb=same_steps_pperturb,
+            lmc_on_train_end=lmc_on_train_end,
             args=args if isinstance(args, str) else " ".join(args),
         )
         return command

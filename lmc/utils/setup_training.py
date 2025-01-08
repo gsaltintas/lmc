@@ -25,7 +25,7 @@ from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
-from lmc.utils import Step
+from lmc.utils.step import Step
 from lmc.utils.metrics import Metrics
 from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
 

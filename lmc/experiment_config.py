@@ -14,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from lmc.utils import Step
+from lmc.utils.step import Step
 from lmc.utils.utils import flatten_dict
 
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,

@@ -30,10 +30,12 @@ def get_experiment(manager_name: str) -> Type[ExperimentManager]:
 def run_experiment(experiment_manager: ExperimentManager):
     try:
         experiment_manager.run()
+        return True
     except Exception:
         traceback.print_exc()
-        pass
-    cleanup(experiment_manager.config)
+        return False
+    finally:
+        cleanup(experiment_manager.config)
 
 
 if __name__ == "__main__":
@@ -45,7 +47,7 @@ if __name__ == "__main__":
     helptext += "\n" + "=" * 82
 
     manager_name = maybe_get_arg("subcommand", positional=True, position=0)
-    config_file = maybe_get_arg("--config_file")
+    config_file = maybe_get_arg("config_file")
     if manager_name not in managers:
         print(helptext)
         sys.exit(1)

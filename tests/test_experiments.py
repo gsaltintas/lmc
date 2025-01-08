@@ -46,7 +46,7 @@ class TestTrainingRunner(BaseTest):
             self.assertEqual(
                 "different",
                 self.run_butterfly_deterministic(
-                    deterministic=False, model_name="resnet20-8", dataset="cifar10"
+                    deterministic=False, model_name="resnet20-8", dataset="cifar10", lmc_on_train_end="true",
                 ),
             )
 
