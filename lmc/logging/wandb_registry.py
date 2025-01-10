@@ -295,6 +295,14 @@ class WandbMetricsRegistry(MetricsRegistry):
                     f"noise{model_idx}"
                 )
             )
+            self.add_metric(
+                f"noise_l2_scaled_{model_idx}",
+                WandbMetric(
+                    f"static/noise/{model_idx}-l2-scaled",
+                    f"Effective Noise L2 for Model {model_idx}",
+                    f"noise_scaled{model_idx}"
+                )
+            )
    
     def get_model_metrics(self, model_idx: int) -> MetricsRegistry:
         """Get all metrics associated with a specific model."""

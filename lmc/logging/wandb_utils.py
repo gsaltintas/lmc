@@ -72,25 +72,25 @@ def parse_steps(row):
     return row
 
 def get_merged_df(runs, performance_aware: bool = False, scale_barriers: bool = True, find_missing: bool = False, return_registry: bool = False) -> Tuple[pd.DataFrame, Optional[WandbMetricsRegistry]]:
-   """Merge wandb runs into a single DataFrame with optional metric processing.
+    """Merge wandb runs into a single DataFrame with optional metric processing.
 
-   Args:
-       runs: List/WandbRuns of wandb runs to process
-       performance_aware: Whether to normalize LMC accuracy metrics by models test performance
-       scale_barriers: Whether to scale barrier metrics to percentages
-       find_missing: Whether to search run histories for missing metrics
-       return_registry: Whether to return the metrics registry alongside DataFrame
+    Args:
+        runs: List/WandbRuns of wandb runs to process
+        performance_aware: Whether to normalize LMC accuracy metrics by models test performance
+        scale_barriers: Whether to scale barrier metrics to percentages
+        find_missing: Whether to search run histories for missing metrics
+        return_registry: Whether to return the metrics registry alongside DataFrame
 
-   Returns:
-       DataFrame with merged runs data and optionally the metrics registry
-       
-   The function:
-   - Combines run configs and metrics into single DataFrame 
-   - Handles missing values and metric scaling
-   - Processes model architecture info
-   - Optionally normalizes LMC metrics by model performance
-   """
-   results_df = pd.DataFrame(
+    Returns:
+        DataFrame with merged runs data and optionally the metrics registry
+        
+    The function:
+    - Combines run configs and metrics into single DataFrame 
+    - Handles missing values and metric scaling
+    - Processes model architecture info
+    - Optionally normalizes LMC metrics by model performance
+    """
+    results_df = pd.DataFrame(
         [{"project": run.project, "run_id": run.id} | run.summary._json_dict for run in runs]
     )
     n_models = max([run.config.get("n_models", 1) for run in runs])
@@ -132,9 +132,9 @@ def get_merged_df(runs, performance_aware: bool = False, scale_barriers: bool = 
         merged_df[lmc_ce_cols] = merged_df[lmc_ce_cols].div(avg_loss, axis=0)
     
     if scale_barriers:
-        lmc_acc_cols = wandb_keys.get_lmc_metrics(metric_type=MetricCategory.LMC_ACCURACY).get_flat_names()
-        print(lmc_acc_cols)
+        lmc_acc_cols = wandb_keys.get_metrics_by_category(category=MetricCategory.LMC_ACCURACY).get_flat_names()
         merged_df[lmc_acc_cols] *= 100
+        assert (merged_df[lmc_acc_cols] <= 100).all().all()
         
     # will depreceate
     if "trainer.opt.warmup_ratio" in merged_df.columns:
