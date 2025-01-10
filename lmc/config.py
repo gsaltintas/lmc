@@ -320,7 +320,12 @@ class Config:
                 else:
                     typ = field_.default_factory()
             val = getattr(self, field_.name)
-            if isinstance(typ, type) and issubclass(typ, Config):
+            if isinstance(field_.type, type) and issubclass(field_.type, Step):
+                # for steps only log step int
+                if "st" in val.value:
+                    val = int(val.value.replace("st", ""))
+                else: val = val.value
+            elif isinstance(typ, type) and issubclass(typ, Config):
                 val = val.wandb_dct()
             d[field_.name] = val
         return d
