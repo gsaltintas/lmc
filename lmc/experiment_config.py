@@ -295,7 +295,9 @@ class Experiment:
             val = getattr(self, field_.name)
             if isinstance(field_.type, type) and issubclass(field_.type, Step):
                 # for steps only log step int
-                val = val.get_step()
+                if "st" in val.value:
+                    val = int(val.value.replace("st", ""))
+                else: val = val.value
             if isinstance(field_.type, type) and issubclass(field_.type, Config):
                 val = val.wandb_dct()
             d[field_.name] = val
@@ -315,14 +317,6 @@ class PerturbSeeds(Config):
     _name = "perturb-seeds"
     _description = "Collection of seeds used during the perturbation of the models"
 
-
-@dataclass
-class PerturbSeeds(Config):
-
-    _name = "perturb-seeds"
-    _description = "Collection of seeds used during the perturbation of the models"
-    
-    
 
 def make_perturb_seeds_class(n_models: int = None) -> Type:
     n_models = maybe_get_arg("n_models") if n_models is None else n_models
@@ -345,6 +339,8 @@ class PerturbedTrainer(Trainer):
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
     sample_noise_at: Literal["init", "perturb"] = "init"
+    dont_perturb_module_patterns: List[str] = field(init=True, default_factory=list)
+
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -358,6 +354,7 @@ class PerturbedTrainer(Trainer):
     _sample_noise_at: str = "Sample noise at the given step, defaults to initialization"
     _name_prefix: str = "perturbed-trainer"
     _description: str = "Run a butterfly experiment."
+    _dont_perturb_module_patterns: str = "List of regex patterns that match parameter names which should not be perturbed.\n If a parameter's name matches any pattern, it will receive zero noise instead of perturbation.\n Examples: ['.*\.bias$'] to skip bias terms, ['layer1\..*'] to skip layer1, ['.*\.norm2\..*'] for norm layers."
 
     def __init__(self, *args, **kwargs):
         self.perturb_inds = kwargs.get("perturb_inds", [-1])
@@ -368,6 +365,7 @@ class PerturbedTrainer(Trainer):
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
+        self.dont_perturb_module_patterns = kwargs.get("dont_perturb_module_patterns", [])
 
         n_models = kwargs.get("n_models", 1)
         # Dynamically build the Seeds class

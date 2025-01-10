@@ -10,11 +10,11 @@ from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
                                      get_noise_l2, perturb_model)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from lmc.utils.step import Step
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
                                       setup_loader)
+from lmc.utils.step import Step
 
 
 def is_same_model(training_elements):
@@ -63,10 +63,11 @@ class PerturbedTrainingRunner(TrainingRunner):
                         dataloader=dl,
                         noise_seed=el.perturb_seed,
                         loss_fn=el.loss_fn,
+                        dont_perturb_patterns=self.config.dont_perturb_module_patterns
                     )
                 elif self.config.perturb_mode == "gaussian":
                     self.noise_dct[ind] = get_gaussian_noise(
-                        el.model, noise_seed=el.perturb_seed
+                        el.model, noise_seed=el.perturb_seed, dont_perturb_patterns=self.config.dont_perturb_module_patterns
                     )
 
     def setup(self) -> None:
