@@ -63,6 +63,11 @@ class WandbMetric:
                     self.split = split
                     break
         
+        if self.general_ylabel is None:
+            replaces = ["train", "Tr", "Te", "test"]
+            for sub in replaces:
+                self.general_ylabel = self.ylabel.replace(sub, "")
+        
 
 @dataclass
 class MetricTemplate:
@@ -144,7 +149,7 @@ class WandbMetricsRegistry(MetricsRegistry):
         self._initialize_base_metrics()
         self._initialize_model_metrics()
         self._initialize_lmc_metrics()
-        
+    
     def _initialize_templates(self):
         """Initialize metric templates for different categories."""
         self._templates.update({
@@ -304,6 +309,11 @@ class WandbMetricsRegistry(MetricsRegistry):
                 )
             )
    
+    def has_metric(self, metric_name: str) -> bool:
+        if metric_name in self.metrics.keys():
+           return True
+        return False
+    
     def get_model_metrics(self, model_idx: int) -> MetricsRegistry:
         """Get all metrics associated with a specific model."""
         return MetricsRegistry(dict((name, metric) for (name, metric) in self.metrics.items() if f"model{model_idx}" in metric.log_name))

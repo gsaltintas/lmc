@@ -21,6 +21,16 @@ TITLE_SCALE=1.2
 MILA_PURPLE = (109/255, 0/255, 109/255)  # Normalize the RGB values to [0, 1]
 
 
+NON_METRIC_LABEL_MAP = {
+    "perturb_step": "Perturbed at step",
+    "perturb_scale": "Perturb scale"
+}
+
+NON_METRIC_LEGEND_MAP = {
+    "perturb_step": "$t={{}}$",
+    "perturb_scale": "$\lambda={{}}"
+}
+
 def get_hues(nalphas=2, ncolors=4, palette="magma", equidistant:bool=False):
     """Generate a list of colors with varying alpha values.
     
@@ -55,8 +65,7 @@ def get_hues(nalphas=2, ncolors=4, palette="magma", equidistant:bool=False):
 
     return hue_colors
 
-
-def modify_confidence_alphas(ax, alpha:float=0.05):
+def modify_confidence_alphas(ax, alpha: float = 0.05):
     """Modify the alpha (transparency) of confidence interval regions in a plot.
     
     Args:
@@ -64,8 +73,10 @@ def modify_confidence_alphas(ax, alpha:float=0.05):
         alpha: float, desired alpha value for confidence intervals (0-1)
     """
     for shaded_region in ax.collections:
+        # # Check if the collection is not a scatterplot
+        # if not isinstance(shaded_region, plt.collections.PathCollection):
         shaded_region.set_alpha(alpha)  # Set desired alpha for the shaded region
-
+            
 def setup_styles(n_figs:int=1, document_font_size:int=FONTSIZE, legend_scale:float=1, use_pgf:bool=False):
     """Sets up the styles for the figures, note that this script uses pdflatex to render the plots so that different custom LaTeX commands can be used in figure titles/labels/ etc.
 
