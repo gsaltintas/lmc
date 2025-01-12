@@ -5,9 +5,7 @@ import torch
 from transformers import (BertConfig, BertForSequenceClassification,
                           BertTokenizer)
 
-from lmc.permutations import (PermSpec, PermType, get_permutation_sizes,
-                              get_random_permutation_with_fixed_points,
-                              permute_model, permute_state_dct)
+from lmc.permutations import PermSpec, PermType, permute_state_dct
 
 from .base_model import BaseModel
 from .type_declaration import PATTERNS
@@ -15,7 +13,6 @@ from .type_declaration import PATTERNS
 
 class Bert(BaseModel):
     _name = "BERT"
-
     def __init__(
         self,
         model_name: str = "bert-base-uncased",
@@ -33,6 +30,9 @@ class Bert(BaseModel):
             self.model = BertForSequenceClassification(config)
         self.num_layers = self.model.config.num_hidden_layers
 
+        self.num_heads = self.model.config.num_attention_heads
+        self.d_head = self.model.config.hidden_size // self.model.config.num_attention_heads
+        
     @classmethod
     def is_valid_model_code(cls, model_code: str) -> bool:
         return model_code.lower() in PATTERNS[cls._name]
@@ -122,14 +122,12 @@ class Bert(BaseModel):
             )
 
         acts_to_perms = None  # Handle activation permutations if needed
-        return PermSpec(names_to_perms=names_to_perms, acts_to_perms=acts_to_perms, model_name="Bert")
+        return PermSpec(names_to_perms=names_to_perms, acts_to_perms=acts_to_perms, model_name="Bert", num_heads=self.num_heads, d_head=self.d_head)
 
     def _permute(
         self, 
         perms: PermType, 
         inplace: bool = True, 
-        num_heads: int = None,
-        d_head: int = None,
         **kwargs
     ) -> "BaseModel":
         """
@@ -138,18 +136,12 @@ class Bert(BaseModel):
         Args:
             perms: Dictionary of permutations
             inplace: If True, modify the model in place; if False, return a new model
-            num_heads: Number of attention heads (defaults to model config)
-            d_head: Size of each attention head (defaults to model config)
             **kwargs: Additional arguments passed to permute_state_dct
             
         Returns:
             Permuted model
         """
         # Get head dimensions from model config if not provided
-        if num_heads is None:
-            num_heads = self.model.config.num_attention_heads
-        if d_head is None:
-            d_head = self.model.config.hidden_size // self.model.config.num_attention_heads
             
         # Get permutation spec
         perm_spec = self.permutation_spec()
@@ -160,8 +152,6 @@ class Bert(BaseModel):
             perm_spec=perm_spec,
             perms=perms,
             inplace=inplace,
-            num_heads=num_heads,
-            d_head=d_head,
             **kwargs
         )
         

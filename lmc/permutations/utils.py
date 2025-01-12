@@ -17,11 +17,9 @@ from rich.console import Console
 from rich.table import Table
 from torch import nn
 
-from .attention_perms import AttentionLayerPermType
-
 logger = logging.getLogger("Permutations")
 
-PermType = Dict[str, Union[AttentionLayerPermType, npt.ArrayLike]]
+PermType = Dict[str, npt.ArrayLike]
 
 @dataclass
 class PermSpec:
@@ -43,6 +41,8 @@ class PermSpec:
     acts_to_perms: Dict[str, str] = None
     perms_to_acts: Dict[str, List[str]] = None
     model_name: Optional[str] = None
+    num_heads: Optional[int] = None
+    d_head: Optional[int] = None
 
     def __post_init__(self):
         if self.perms_to_names is None:
@@ -72,7 +72,8 @@ class PermSpec:
                     perms_to_acts[perm_name] = []
                 perms_to_acts[perm_name].append(layer_name)
             self.perms_to_acts = perms_to_acts
-
+        self.set_head_info(self.num_heads, self.d_head)
+        
     @property
     def perm_names(self):
         return list(self.perms_to_names.keys())
@@ -196,8 +197,6 @@ def permute_state_dct(
     perm_spec: PermSpec,
     perms: PermType,
     inplace: bool = False,
-    num_heads: int = 12,
-    d_head: int = 64,
 ) -> Union["BaseModel", nn.Module]:
     """Given a pytorch model, permutes it with respect to the given permutations
     Returns a new model if inplace is false
@@ -207,7 +206,7 @@ def permute_state_dct(
         permuted_dct = model_state_dct
     for name, param in model_state_dct.items():
         if name in perm_spec.names_to_perms:
-            permuted_dct[name] = permute_param(perm_spec, perms, name, param, num_heads=num_heads, d_head=d_head)
+            permuted_dct[name] = permute_param(perm_spec, perms, name, param)
         else:
             permuted_dct[name] = param
     return permuted_dct
@@ -218,14 +217,12 @@ def permute_param(
     param_name: str,
     param: torch.Tensor,
     except_axis: int = None,
-    num_heads: int = 12,
-    d_head: int = 64,
 ):
     """Permute a parameter according to the permutation spec except for the except axis"""
     if param_name not in perm_spec.names_to_perms:
         return param
-
-    permuted_param = param
+    num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
+    permuted_param = param.clone()
     for axis, perm_name in enumerate(perm_spec.names_to_perms[param_name]):
         if axis == except_axis:
             continue
@@ -273,8 +270,6 @@ def permute_param(
 def get_permutation_sizes(
     model_dct: Dict[str, torch.Tensor], 
     perm_spec: PermSpec,
-    num_heads: int = 12,
-    d_head: int = 64,
 ) -> Dict[str, int]:
     """
     calculates the permutation sizes for a given state_dict
@@ -282,6 +277,7 @@ def get_permutation_sizes(
     """
     perm_sizes = {}
     perm_sizes = {}
+    num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
     for perm_name, params in perm_spec.perms_to_names.items():
         for param_name, axis, *ptype in params:
             if ptype:  # This is a head permutation
@@ -296,11 +292,12 @@ def get_permutation_sizes(
 
 
 def generate_random_permutations(perm_spec: PermSpec, model_dct: Dict[str, torch.Tensor] = None, 
-                               fixed_points_fraction: float = 0.0,
-                               num_heads: int = 12, d_head: int = 64) -> Dict[str, np.ndarray]:
+                               fixed_points_fraction: float = 0.0) -> Dict[str, np.ndarray]:
     """Generate random permutations according to the permutation spec"""
+    num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
+
     if model_dct is not None:
-        perm_sizes = get_permutation_sizes(model_dct, perm_spec, num_heads, d_head)
+        perm_sizes = get_permutation_sizes(model_dct, perm_spec)
     else:
         # If no model_dct provided, use default sizes for attention
         perm_sizes = {}
@@ -335,32 +332,9 @@ def permute_attention(attn_layer, perm):
     attn_layer.o.weight.data = attn_layer.o.weight.data.view(d_model, num_heads, head_dim).index_select(1, perm).view(d_model, d_model)
 
 
-def get_permutation_sizes_old(
-    model_dct: Dict[str, torch.Tensor], perm_spec: PermSpec
-) -> Dict[str, int]:
-    """
-    calculates the permutation sizes for a given state_dict
-    e.g. {P_0: size of the parameter along axis 0, ...}"
-    """
-    pn = perm_spec.perms_to_names
-    perm_sizes = dict()
-    for perm_name, axes in pn.items():
-        # axes: [(param_name, axis), (in_head, name, ax, AttentionLayerPermType)])
-        first_ax = axes[0]
-        
-        if first_ax[0] == "across_head":
-            perm_sizes[perm_name] = first_ax[-1].n_head
-        elif first_ax[0] == "in_head":
-            perm_sizes[perm_name] = first_ax[-1].d_head
-        else:
-            perm_sizes[perm_name] = model_dct[first_ax[0]].shape[first_ax[1]]
-    return perm_sizes
-
 def get_non_permuted_sizes(
     model_dct: Dict[str, torch.Tensor], 
     perm_spec: PermSpec,
-    num_heads: int = 12,
-    d_head: int = 64
 ) -> Dict[str, int]:
     """
     For each permutation in perm_spec, sum up the non-permuted axes of the related parameters.
@@ -376,6 +350,7 @@ def get_non_permuted_sizes(
         Dictionary mapping permutation names to their non-permuted sizes
     """
     non_permuted_sizes = {}
+    num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
     
     def compute_non_permuted_size(param_shape: Tuple[int, ...], permuted_dim: int, 
                                 is_head_dim: bool = False) -> int:

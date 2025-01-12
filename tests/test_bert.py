@@ -1,18 +1,15 @@
 import unittest
-from collections import OrderedDict
 
 import numpy as np
 import torch
 from transformers import BertTokenizer
 
-from lmc.config import ModelConfig
 from lmc.models.bert import Bert
 
 
 class TestBertPermutationFunctionality(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # model_conf = ModelConfig()
         # Set random seed for reproducibility
         torch.manual_seed(42)
         np.random.seed(42)
@@ -29,9 +26,12 @@ class TestBertPermutationFunctionality(unittest.TestCase):
         # Convert to double precision for numerical stability
         cls.model = cls.model.to(torch.float64)
         cls.model.eval()
+        
 
-    def generate_sample_input(self, batch_size=4, seq_length=128):
+    def generate_sample_input(self, batch_size=4, seq_length=128, tokenizer=None):
         """Generate sample input for BERT model"""
+        if tokenizer is None:
+            tokenizer = self.tokenizer
         # Create random token IDs
         input_ids = torch.randint(
             low=0,
@@ -159,6 +159,58 @@ class TestBertPermutationFunctionality(unittest.TestCase):
                     ),
                     f"Outputs differ for sequence length {seq_length}"
                 )
+
+    
+    def test_permutation_in_different_sized_berts(self):
+        """Test that permuted model produces same output as original model"""
+        
+        model_name = "bert-large-uncased"
+        model_name = "bert-base-cased"
+        
+        # Initialize model
+        model = Bert(
+            model_name=model_name,
+            output_dim=2,
+            initialization_strategy="pretrained",
+            norm="layernorm"
+        )
+        tokenizer = BertTokenizer.from_pretrained(model_name)
+        
+        # Convert to double precision for numerical stability
+        model = model.to(torch.float64)
+        model.eval()
+        
+
+        # Get permutation spec
+        perm_spec = model.permutation_spec()
+        
+        # Generate random permutations
+        perms = model.get_random_permutation()
+
+        
+        # Create permuted model
+        model_ = model._permute(perms, inplace=False)
+        model_.eval()
+        
+        # Generate sample input
+        input_ids, attention_mask = self.generate_sample_input(tokenizer=tokenizer)
+        
+        # Run both models
+        with torch.no_grad():
+            output = model(input_ids=input_ids, attention_mask=attention_mask)
+            output_ = model_(input_ids=input_ids, attention_mask=attention_mask)
+            
+            # Check if outputs are equal
+            # Note: We check logits output for sequence classification
+            self.assertTrue(
+                torch.allclose(
+                    output.logits,
+                    output_.logits,
+                    rtol=1e-5,
+                    atol=1e-5
+                ),
+                "Permuted model output differs from original model output"
+            )
 
 if __name__ == '__main__':
     unittest.main()

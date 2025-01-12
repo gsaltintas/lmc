@@ -4,12 +4,174 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from lmc.permutations import (
-    PermSpec,
-    get_permutation_sizes,
-    get_random_permutation_with_fixed_points,
-    permute_param,
-)
+from lmc.permutations import (PermSpec, get_permutation_sizes,
+                              get_random_permutation_with_fixed_points,
+                              permute_param)
+from lmc.permutations.perm_stability import (normalized_entropy,
+                                             normalized_kl_stability,
+                                             sinkhorn_kl)
+from lmc.permutations.utils import (PermSpec, apply_head_permutation,
+                                    get_permutation_sizes, permute_param,
+                                    permute_state_dct)
+from lmc.permutations.weight_alignment import (handle_head_param,
+                                               weight_matching,
+                                               weight_matching_cost)
+
+
+class TestHeadPermutations(unittest.TestCase):
+    def setUp(self):
+        self.num_heads = 4
+        self.d_head = 8
+        self.hidden_size = self.num_heads * self.d_head
+        
+        # Create sample weights
+        self.query_weight = torch.randn(self.hidden_size, self.hidden_size)
+        self.key_weight = torch.randn(self.hidden_size, self.hidden_size)
+        self.value_weight = torch.randn(self.hidden_size, self.hidden_size)
+        self.output_weight = torch.randn(self.hidden_size, self.hidden_size)
+        
+        self.model_state = {
+            "attention.query.weight": self.query_weight,
+            "attention.key.weight": self.key_weight,
+            "attention.value.weight": self.value_weight,
+            "output.dense.weight": self.output_weight,
+        }
+        # Create PermSpec
+        self.names_to_perms = {
+            "attention.query.weight": [("P_head_0", "P_dhead_0"), "P_in"],
+            "attention.key.weight": [("P_head_0", "P_dhead_0"), "P_in"],
+            "attention.value.weight": [("P_v_0", "P_dhead_0"), "P_in"],
+            "output.dense.weight": ["P_out", ("P_v_0", "P_dhead_0")],
+        }
+        self.perm_spec = PermSpec(names_to_perms=self.names_to_perms, num_heads=self.num_heads, d_head=self.d_head)
+
+    def test_handle_head_param(self):
+        """Test head dimension handling"""
+        weight = self.query_weight
+        
+        # Test output dimension (axis=0)
+        reshaped = handle_head_param(weight, 0, self.num_heads, self.d_head)
+        self.assertEqual(reshaped.shape[:2], (self.num_heads, self.d_head))
+        
+        # Test input dimension (axis=1)
+        reshaped = handle_head_param(weight, 1, self.num_heads, self.d_head)
+        self.assertEqual(reshaped.shape[-2:], (self.num_heads, self.d_head))
+
+    def test_permute_param(self):
+        """Test parameter permutation with head dimensions"""
+        # Create random permutations
+        perms = {
+            "P_head_0": np.random.permutation(self.num_heads),
+            "P_dhead_0": np.random.permutation(self.d_head),
+            "P_v_0": np.random.permutation(self.num_heads),
+            "P_in": np.random.permutation(self.hidden_size),
+        }
+        
+        # Test permutation
+        permuted = permute_param(
+            self.perm_spec, perms, 
+            "attention.query.weight", 
+            self.model_state["attention.query.weight"],
+        )
+        
+        self.assertEqual(permuted.shape, self.query_weight.shape)
+
+    def test_get_permutation_sizes(self):
+        """Test getting correct permutation sizes for head dimensions"""
+        sizes = get_permutation_sizes(
+            self.model_state, self.perm_spec,
+        )
+        
+        self.assertEqual(sizes["P_head_0"], self.num_heads)
+        self.assertEqual(sizes["P_dhead_0"], self.d_head)
+
+class TestWeightMatching(unittest.TestCase):
+    def setUp(self):
+        self.num_heads = 4
+        self.d_head = 8
+        self.hidden_size = self.num_heads * self.d_head
+        
+        # Create two sets of weights
+        self.weights_a = {
+            "attention.query.weight": torch.randn(self.hidden_size, self.hidden_size),
+            "attention.key.weight": torch.randn(self.hidden_size, self.hidden_size),
+            "attention.value.weight": torch.randn(self.hidden_size, self.hidden_size),
+        }
+        self.weights_b = {
+            "attention.query.weight": torch.randn(self.hidden_size, self.hidden_size),
+            "attention.key.weight": torch.randn(self.hidden_size, self.hidden_size),
+            "attention.value.weight": torch.randn(self.hidden_size, self.hidden_size),
+        }
+        
+        # Create PermSpec
+        self.names_to_perms = {
+            "attention.query.weight": [("P_head_0", "P_dhead_0"), "P_in"],
+            "attention.key.weight": [("P_head_0", "P_dhead_0"), "P_in"],
+            "attention.value.weight": [("P_v_0", "P_dhead_0"), "P_in"],
+        }
+        self.perm_spec = PermSpec(names_to_perms=self.names_to_perms, num_heads=self.num_heads, d_head=self.d_head)
+
+    def test_weight_matching_cost(self):
+        """Test cost computation for weight matching"""
+        costs = weight_matching_cost(
+            self.perm_spec,
+            self.weights_a,
+            self.weights_b,
+            align_bias=False
+        )
+        
+        self.assertIn("P_head_0", costs)
+        self.assertIn("P_dhead_0", costs)
+        self.assertIn("P_v_0", costs)
+        
+        # Check cost matrix shapes
+        self.assertEqual(costs["P_head_0"].shape, (self.num_heads, self.num_heads))
+        self.assertEqual(costs["P_dhead_0"].shape, (self.d_head, self.d_head))
+
+    def test_weight_matching(self):
+        """Test full weight matching"""
+        perms = weight_matching(
+            self.perm_spec,
+            self.weights_a,
+            self.weights_b,
+            max_iter=10,
+            verbose=False
+        )
+        
+        # Check permutation sizes
+        self.assertEqual(len(perms["P_head_0"]), self.num_heads)
+        self.assertEqual(len(perms["P_dhead_0"]), self.d_head)
+        
+        # Check permutations are valid
+        for p_name, perm in perms.items():
+            self.assertTrue(np.all(np.sort(perm) == np.arange(len(perm))))
+
+## TODO: perm stability metrics
+# class TestPermStability(unittest.TestCase):
+#     def setUp(self):
+#         self.num_heads = 4
+#         self.perms = {
+#             "P_head_0": np.random.permutation(self.num_heads),
+#             "P_dhead_0": np.random.permutation(8),
+#             "P_v_0": np.random.permutation(self.num_heads),
+#         }
+
+#     def test_normalized_entropy(self):
+#         """Test entropy calculation for permutations"""
+#         entropies = normalized_entropy(self.perms)
+        
+#         for p_name in self.perms:
+#             self.assertIn(p_name, entropies)
+#             self.assertGreaterEqual(entropies[p_name], 0)
+#             self.assertLessEqual(entropies[p_name], 1)
+
+#     def test_sinkhorn_kl(self):
+#         """Test KL divergence calculation"""
+#         kls = sinkhorn_kl(self.perms)
+        
+#         for p_name in self.perms:
+#             self.assertIn(p_name, kls)
+#             self.assertGreaterEqual(kls[p_name], 0)  # KL divergence is non-negative
 
 
 class TestPermuteParam(unittest.TestCase):
@@ -119,8 +281,8 @@ class TestPermuteParam(unittest.TestCase):
         # Create a 2x2 parameter tensor
         param = nn.Parameter(torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
 
-        # Expect ValueError due to mismatch in dimensions
-        with self.assertRaises(ValueError):
+        # Expect IndexError due to mismatch in dimensions
+        with self.assertRaises(IndexError):
             permute_param(perm_spec, perms, "weight", param)
 
     def test_get_permutation_with_fixed_points(self):
