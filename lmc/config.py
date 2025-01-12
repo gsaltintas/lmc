@@ -127,8 +127,17 @@ def add_basic_args(
 
         arg_name = f"--{field_.name}" if prefix is None else f"--{prefix}_{field_.name}"
 
-        default = getattr(defaults, field_.name, None) if defaults else field_.default
-        required = (field_.default is MISSING and field_.default_factory is MISSING) and (not defaults or default is None)
+        if defaults:
+            default = getattr(defaults, field_.name, None)
+        elif field_.default is not MISSING:
+            default = field_.default
+        elif field_.default_factory is not MISSING:
+            default = field_.default_factory()
+        else:
+            default = None
+
+        required = field_.default is MISSING and field_.default_factory is MISSING and (not defaults or default is None)
+        
         helptext = getattr(cls, f"_{field_.name}", "")
         if required:
             helptext = f"(required: {typ.__name__}) " + helptext
