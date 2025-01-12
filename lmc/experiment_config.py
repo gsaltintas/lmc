@@ -339,7 +339,7 @@ class PerturbedTrainer(Trainer):
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
     sample_noise_at: Literal["init", "perturb"] = "init"
-    dont_perturb_module_patterns: List[str] = field(init=True, default_factory=list)
+    dont_perturb_module_patterns: List[str] = field(init=True, default_factory=lambda: [])
 
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"

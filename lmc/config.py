@@ -1,11 +1,7 @@
 import argparse
 import logging
-import math
 import os
-import re
-from copy import deepcopy
-from dataclasses import (MISSING, asdict, dataclass, field, fields,
-                         make_dataclass)
+from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
 from pprint import pformat
 from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
@@ -127,11 +123,12 @@ def add_basic_args(
                 typ = field_.default_factory()
         elif typ is USE_DEFAULT_FACTORY:
             typ = field_.default_factory()
+            
 
         arg_name = f"--{field_.name}" if prefix is None else f"--{prefix}_{field_.name}"
 
         default = getattr(defaults, field_.name, None) if defaults else field_.default
-        required = field_.default is MISSING and (not defaults or default is None)
+        required = (field_.default is MISSING and field_.default_factory is MISSING) and (not defaults or default is None)
         helptext = getattr(cls, f"_{field_.name}", "")
         if required:
             helptext = f"(required: {typ.__name__}) " + helptext
@@ -383,7 +380,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = field(default_factory=lambda x: Step("1ep"))
+    save_freq: Step = Step("1ep") #field(init=True, default_factory=lambda: Step("1ep"))
     # save_freq: str = "1ep"
     save_early_iters: bool = False
     save_best: bool = True
