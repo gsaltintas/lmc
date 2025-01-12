@@ -21,7 +21,7 @@ class TestBertPermutationFunctionality(unittest.TestCase):
             initialization_strategy="pretrained",
             norm="layernorm"
         )
-        cls.tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+        cls.tokenizer = cls.model.tokenizer
         
         # Convert to double precision for numerical stability
         cls.model = cls.model.to(torch.float64)
@@ -35,7 +35,7 @@ class TestBertPermutationFunctionality(unittest.TestCase):
         # Create random token IDs
         input_ids = torch.randint(
             low=0,
-            high=self.tokenizer.vocab_size,
+            high=tokenizer.vocab_size,
             size=(batch_size, seq_length),
             dtype=torch.long
         )
@@ -164,8 +164,7 @@ class TestBertPermutationFunctionality(unittest.TestCase):
     def test_permutation_in_different_sized_berts(self):
         """Test that permuted model produces same output as original model"""
         
-        model_name = "bert-large-uncased"
-        model_name = "bert-base-cased"
+        model_name = "bert-large-cased"
         
         # Initialize model
         model = Bert(
@@ -174,7 +173,7 @@ class TestBertPermutationFunctionality(unittest.TestCase):
             initialization_strategy="pretrained",
             norm="layernorm"
         )
-        tokenizer = BertTokenizer.from_pretrained(model_name)
+        tokenizer = model.tokenizer
         
         # Convert to double precision for numerical stability
         model = model.to(torch.float64)
