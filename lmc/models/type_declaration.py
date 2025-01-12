@@ -22,6 +22,8 @@ PATTERNS = {
         r"resnet[a-zA-Z]*(\d+)-(\d+)",
         r"wideresnet[a-zA-Z]*/(\d+)xk=(\d+)-s=(\d+)-d=(\d+)-fc=(\d+)",
     ],
+    "t5": ["t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"],
+    "bert": ["bert-base-uncased", "bert-base-cased", "bert-large-uncased", "bert-large-cased"],
 }
 MODEL_NAME_PATTERNS = np.concatenate(list(PATTERNS.values()))
 Inits = Optional[
@@ -34,6 +36,7 @@ Inits = Optional[
         "he_uniform",
         "kaiming_normal",
         "he_normal",
+        "pretrained"
     ]
 ]
 Norms = Optional[Literal["layernorm", "batchnorm", "groupnorm"]]

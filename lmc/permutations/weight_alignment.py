@@ -13,6 +13,7 @@ from .utils import (PermSpec, PermType, get_kernel_function,
                     get_permutation_sizes, outer_product, permute_param)
 
 logger = logging.getLogger("w-matching")
+
 def weight_matching_cost(
     ps: PermSpec,
     params_a: Union[Dict[str, torch.Tensor], nn.Module],

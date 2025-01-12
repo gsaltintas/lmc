@@ -383,7 +383,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = Step("1ep")
+    save_freq: Step = field(default_factory=lambda x: Step("1ep"))
     # save_freq: str = "1ep"
     save_early_iters: bool = False
     save_best: bool = True
@@ -508,6 +508,9 @@ class ResNetConfig(ModelConfig_):
 
     _width: str = "Output channels of the first convolution"
 
+@dataclass
+class BertConfig(ModelConfig_):
+    pass
 
 @dataclass
 class MLPConfig(ModelConfig_):
