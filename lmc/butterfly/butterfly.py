@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
 
 from lmc.utils.seeds import temp_seed
@@ -49,8 +50,7 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
     model.zero_grad()
     if loss_fn is None:
         loss_fn = torch.nn.CrossEntropyLoss()
-    print(dont_perturb_patterns)
-    import code; code.interact(local=locals()|globals())
+
     batch = next(iter(dataloader))
     # Unpack inputs and targets (adjust if your dataloader provides a different structure)
     inputs, targets = batch
@@ -143,3 +143,14 @@ def get_noise_l2(noise_dct: OrderedDict) -> float:
     for n, p in noise_dct.items():
         noise_l2 += p.pow(2).sum().item()
     return noise_l2
+
+def normalize_noise(noise_dct: OrderedDict[str, torch.Tensor], l2: float):
+    """ Normalize the noise dict to have a total l2 length """
+    total_norm = torch.linalg.norm(parameters_to_vector(noise_dct.values()))
+    norm_factor = l2 / total_norm
+    for name, n in noise_dct.items():
+        noise_dct[name] = n * norm_factor
+
+    act_norm = torch.linalg.norm(parameters_to_vector(noise_dct.values()))
+    assert torch.allclose(act_norm, torch.tensor(l2)), f"Noise norm ({act_norm}) and desired {l2}."
+    return noise_dct

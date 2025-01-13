@@ -334,7 +334,7 @@ class PerturbedTrainer(Trainer):
     perturb_step: Step
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
-    norm_perturb: bool = False
+    normalize_perturb: bool = False
     same_steps_pperturb: bool = True
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
@@ -348,7 +348,7 @@ class PerturbedTrainer(Trainer):
         "Determines the perturbation mode,\n\tif gaussian, ϵ∼N(0,σ²)\n\tif batch, ϵ=∇L(x,y;θ₀), (x,y)∼D"
     )
     _perturb_scale: str = "Scale to multiply the perturbation with"
-    _norm_perturb: str = "If true, perturbation is normalized to have an l₂ norm of perturb_scale"
+    _normalize_perturb: str = "If true, perturbation is normalized to have an l₂ norm of perturb_scale"
     _same_steps_pperturb: str = "If true, perturbed model is trained for 'training_steps' after perturbation"
     _rewind_lr: str = "If true, learning rate is rewound back to the max learning rate"
     _sample_noise_at: str = "Sample noise at the given step, defaults to initialization"

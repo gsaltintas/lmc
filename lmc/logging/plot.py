@@ -105,7 +105,7 @@ def plot_perturb_barrier(
 
     # Plot
     fig, ax = plt.subplots()
-    tmp = tmp.sort_values(x)
+    tmp = tmp.sort_values(x, ascending=True)
     masks = get_labels(tmp, labels, format_labels=False)
     hues = get_hues(1, len(masks), "plasma")
 
