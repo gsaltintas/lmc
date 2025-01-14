@@ -20,7 +20,7 @@ python main.py logreg  \
         --logreg_x="perturb_scale"  \
         --logreg_y="lmc-0-1/lmc/loss/weighted/increase_end0_train"  \
         --logreg_threshold=$THRESHOLD  \
-        --logreg_max_step_ratio=float=10  \
+        --logreg_max_step_ratio=10  \
         --logreg_reseed_every_run=true  \
     --project="$SSETUP_PROJECT_NAME-$SSETUP_EXP_NAME"  \
         --run_name=$RUN_NAME  \
@@ -38,7 +38,7 @@ python main.py logreg  \
         --random_rotation=10  \
         --random_crop=false  \
     --optimizer=sgd  \
-        --training_steps=$TRAINING_STEPS  \
+        --training_steps=50ep  \
         --lr=0.1   \
         --lr_scheduler=triangle  \
         --warmup_ratio=0.02  \
