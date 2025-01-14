@@ -1,48 +1,45 @@
 import unittest
 from pathlib import Path
 from typing import Any, Dict
-
 import yaml
-
-from lmc.experiment_config import PerturbedTrainer
-
-config_yaml = Path(__file__).parent.joinpath("perturb.yaml").resolve().absolute()
-import unittest
-from pathlib import Path
 
 from lmc.experiment.perturb import PerturbedTrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from main import run_experiment
+from lmc.utils.run import command_result_is_error, run_command
 from tests.base import BaseTest
 
 PERTURB_SCALE = 0.1
 
+
 class TestConfig(BaseTest):
     CONFIG_YAML = Path(__file__).parent.joinpath("perturb.yaml").resolve().absolute()
 
-    
     def _check_nested_dict(self, d: Dict[str, Any], conf):
         for k, v in d.items():
             conf_val = getattr(conf, k)
             if hasattr(conf, k) and isinstance(v, dict):
                 self._check_nested_dict(v, conf_val)
             elif isinstance(conf_val, Path):
-                self.assertEqual(Path(v).name, conf_val.name, f"Path names don't match {Path(v).name}, {conf_val.name}")
+                self.assertEqual(
+                    Path(v).name,
+                    conf_val.name,
+                    f"Path names don't match {Path(v).name}, {conf_val.name}",
+                )
             else:
                 self.assertEqual(v, conf_val, f"mismatch at {k}")
-            
+
     def tearDown(self):
         pass
-    
+
     def test_build(self):
         conf = PerturbedTrainer.load_from_file(self.CONFIG_YAML)
         with open(self.CONFIG_YAML) as stream:
             file_dct = yaml.load(stream, Loader=yaml.Loader)
-        
+
         self.assertIsInstance(conf, PerturbedTrainer)
         conf.save(self.log_dir, zip_code_base=False)
         new_yaml = self.log_dir / "config.yaml"
-        
+
         with self.subTest("load from yaml"):
             self._check_nested_dict(file_dct, conf)
         with self.subTest("reload experiment"):
@@ -55,8 +52,8 @@ class TestConfig(BaseTest):
         # check that loading from the config to file gives the same config
         # run from command line to generate config file first
         command = self.get_test_command()
-        result = self.run_command(command, print_output=True)
-        self.assertNotEqual(result, "error")
+        result = run_command(command, print_output=True)
+        self.assertFalse(command_result_is_error(result))
         cmd_run = self.get_last_created_in_dir(self.log_dir / "*")
         cmd_config = cmd_run / "config.yaml"
         cmd_ckpt_1, cmd_ckpt_2 = self.get_last_ckpts(cmd_run)
@@ -65,7 +62,7 @@ class TestConfig(BaseTest):
         with self.subTest("programmatic run"):
             exp = PerturbedTrainingRunner.create_from_file(cmd_config)
             config = exp.config  # compare all runs against this config
-            self.assertTrue(run_experiment(exp))
+            self.assertTrue(exp.run_experiment())
             code_run = self.get_last_created_in_dir(self.log_dir / "*")
             code_ckpt_1, code_ckpt_2 = self.get_last_ckpts(code_run)
 
@@ -76,8 +73,10 @@ class TestConfig(BaseTest):
 
         # use config file from command line
         with self.subTest("command line config file"):
-            result = self.run_command(f"python main.py perturb --config_file {cmd_config}", print_output=True)
-            self.assertNotEqual(result, "error")
+            result = run_command(
+                f"python main.py perturb --config_file {cmd_config}", print_output=True
+            )
+            self.assertFalse(command_result_is_error(result))
             yaml_run = self.get_last_created_in_dir(self.log_dir / "*")
             yaml_config = yaml_run / "config.yaml"
             yaml_ckpt_1, yaml_ckpt_2 = self.get_last_ckpts(yaml_run)
@@ -90,7 +89,7 @@ class TestConfig(BaseTest):
         # run programmatically again
         with self.subTest("identical run"):
             exp = PerturbedTrainingRunner.create_from_file(cmd_config)
-            self.assertTrue(run_experiment(exp))
+            self.assertTrue(exp.run_experiment())
             second_run = self.get_last_created_in_dir(self.log_dir / "*")
             second_config = second_run / "config.yaml"
             second_ckpt_1, second_ckpt_2 = self.get_last_ckpts(second_run)

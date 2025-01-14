@@ -111,28 +111,6 @@ class BaseTest(unittest.TestCase):
         return command
 
     @staticmethod
-    def run_command(command, print_output=False):
-        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
-        one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
-        try:
-            results = subprocess.run(one_line, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            if print_output:
-                print("Error during run: ", e, sep="\n")
-                traceback.print_exc()
-                print(e.stdout)
-                print(e.stderr)
-            return "error"
-        # check that output doesn't contain traceback
-        idx = results.stderr.find("Traceback (")
-        if idx >= 0:
-            print(results.stderr[idx:])
-            return "error"
-        if print_output:
-            print(results.stdout)
-        return results
-
-    @staticmethod
     def get_last_ckpts(exp_dir, seed1=SEED_1, seed2=SEED_2):
         ckpt_1 = BaseTest.get_last_created_in_dir(
             exp_dir / f"model1-seed_{seed1}-ls_{seed1}" / "checkpoints" / "ep-*.ckpt"

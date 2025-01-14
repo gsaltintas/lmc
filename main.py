@@ -7,6 +7,7 @@ from lmc.config import maybe_get_arg
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment.perturb import PerturbedTrainingRunner
+from lmc.experiment.logreg import ActiveLearningLogisticRegressionSearch
 
 
 logger = logging.getLogger("")
@@ -15,6 +16,7 @@ logger = logging.getLogger("")
 managers = dict(
     train=TrainingRunner,
     perturb=PerturbedTrainingRunner,
+    logreg=ActiveLearningLogisticRegressionSearch,
 )
 
 

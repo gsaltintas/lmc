@@ -1,10 +1,10 @@
-
 import unittest
 from glob import glob
 import torchvision
 
 from lmc.experiment_config import PerturbedTrainer
 from lmc.experiment.perturb import PerturbedTrainingRunner
+from lmc.utils.run import command_result_is_error, run_command
 from tests.base import BaseTest
 
 torchvision.disable_beta_transforms_warning()
@@ -46,7 +46,10 @@ class TestTrainingRunner(BaseTest):
             self.assertEqual(
                 "different",
                 self.run_butterfly_deterministic(
-                    deterministic=False, model_name="resnet20-8", dataset="cifar10", lmc_on_train_end="true",
+                    deterministic=False,
+                    model_name="resnet20-8",
+                    dataset="cifar10",
+                    lmc_on_train_end="true",
                 ),
             )
 
@@ -64,9 +67,9 @@ class TestTrainingRunner(BaseTest):
     def run_butterfly_deterministic(self, seed1=42, seed2=None, **kwargs):
         seed2 = seed1 if seed2 is None else seed2
         command = self.get_test_command(seed1=seed1, seed2=seed2, **kwargs)
-        results = self.run_command(command)
-        if results == "error":
-            return results
+        result = run_command(command)
+        if command_result_is_error(result):
+            return "error"
 
         # check if training models 1 and 2 gives the same result
         last_run = self.get_last_created_in_dir(self.log_dir / "*")
@@ -131,8 +134,7 @@ class TestTrainingRunner(BaseTest):
             | {"perturb_inds": [perturb_ind + 1]}
         )
         exp_manager = PerturbedTrainingRunner(config)
-        exp_manager.setup()
-        exp_manager.run()
+        exp_manager.run_experiment()
         steps_per_epoch = exp_manager.steps_per_epoch
         steps = config.trainer.training_steps.get_step(
             steps_per_epoch
@@ -154,7 +156,7 @@ class TestTrainingRunner(BaseTest):
             unperturbed_steps,
             orig_steps,
             f"Expected {orig_steps} steps for the non perturbed model, got {unperturbed_steps}",
-    )
+        )
 
 
 if __name__ == "__main__":
