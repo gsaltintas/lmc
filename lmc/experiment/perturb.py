@@ -236,15 +236,11 @@ class PerturbedTrainingRunner(TrainingRunner):
                         continue
                     element.train_iterator.update()
 
-                    loss = train.step_element(
-                        self.config,
+                    self.step_element(
                         element,
                         x,
                         y,
-                        self.device,
-                        self.loss_fn,
                         ep,
-                        self.steps_per_epoch,
                         early_iter_ckpt_steps,
                         i=element_ind + 1,
                     )
