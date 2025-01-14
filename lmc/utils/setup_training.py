@@ -417,10 +417,14 @@ def setup_wandb(config: Experiment) -> None:
                 config=conf_dct,
                 dir=WANDB_DIR,
                 id=config.logger.run_id,
+                mode="offline" if config.logger.wandb_offline else "online",
             )
-            
         if config.model_dir is not None:
-            Path(config.model_dir).joinpath("wandb.txt").write_text(run.url)
+            if run.url is None:
+                url = f"https://wandb.ai/{run.entity}/{run.project}/runs/{run.id}"
+            else:
+                url = run.url
+            Path(config.model_dir).joinpath("wandb.txt").write_text(url)
 
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
