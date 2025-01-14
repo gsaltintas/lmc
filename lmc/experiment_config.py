@@ -139,9 +139,6 @@ def zip_and_save_source(target_base_dir: Union[str, Path]) -> None:
 
 @dataclass
 class Seeds(Config):
-    deterministic: bool = False
-
-    _deterministic: str = "If true, make CUDA exactly deterministic."
     _name = "seeds"
     _description = "Collection of seeds used during the experiment"
 
@@ -170,6 +167,8 @@ class Experiment:
     logger: LoggerConfig = None
     lmc: LMCConfig = None
     n_models: int = 1  
+    deterministic: bool = False
+    zip_and_save_source: bool = True
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -178,6 +177,8 @@ class Experiment:
     _name_prefix: str = field(init=True, default="")
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
     _description: str = field(init=True, default="")
+    _deterministic: str = "If true, make CUDA exactly deterministic."
+    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
     def __init__(self, *args, **kwargs):
         # Call Trainer's constructor so that 'model', 'data' etc. are set up
@@ -189,6 +190,8 @@ class Experiment:
         self.n_models = kwargs.get("n_models", 1)
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
+        self.deterministic = kwargs.get("deterministic", False)
+        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
 
         # Dynamically build the Seeds class
 
@@ -305,9 +308,6 @@ class Experiment:
 class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
-
-    zip_and_save_source: bool = True
-    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
 
 @dataclass

@@ -375,7 +375,7 @@ def setup_device(config: Experiment) -> torch.device:
     """
     Configure and initialize the computing device for PyTorch operations.
     """
-    if config.seeds.deterministic:
+    if config.deterministic:
         # set env variable for use_deterministic_algorithms
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
