@@ -1,5 +1,3 @@
-
-
 #!/bin/bash
 PERTURB_STEP=$1
 THRESHOLD=$2
