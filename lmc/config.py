@@ -1,11 +1,7 @@
 import argparse
 import logging
-import math
 import os
-import re
-from copy import deepcopy
-from dataclasses import (MISSING, asdict, dataclass, field, fields,
-                         make_dataclass)
+from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
 from pprint import pformat
 from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
@@ -127,11 +123,21 @@ def add_basic_args(
                 typ = field_.default_factory()
         elif typ is USE_DEFAULT_FACTORY:
             typ = field_.default_factory()
+            
 
         arg_name = f"--{field_.name}" if prefix is None else f"--{prefix}_{field_.name}"
 
-        default = getattr(defaults, field_.name, None) if defaults else field_.default
-        required = field_.default is MISSING and (not defaults or default is None)
+        if defaults:
+            default = getattr(defaults, field_.name, None)
+        elif field_.default is not MISSING:
+            default = field_.default
+        elif field_.default_factory is not MISSING:
+            default = field_.default_factory()
+        else:
+            default = None
+
+        required = field_.default is MISSING and field_.default_factory is MISSING and (not defaults or default is None)
+        
         helptext = getattr(cls, f"_{field_.name}", "")
         if required:
             helptext = f"(required: {typ.__name__}) " + helptext
@@ -320,7 +326,12 @@ class Config:
                 else:
                     typ = field_.default_factory()
             val = getattr(self, field_.name)
-            if isinstance(typ, type) and issubclass(typ, Config):
+            if isinstance(field_.type, type) and issubclass(field_.type, Step):
+                # for steps only log step int
+                if "st" in val.value:
+                    val = int(val.value.replace("st", ""))
+                else: val = val.value
+            elif isinstance(typ, type) and issubclass(typ, Config):
                 val = val.wandb_dct()
             d[field_.name] = val
         return d
@@ -378,7 +389,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = Step("1ep")
+    save_freq: Step = Step("1ep") #field(init=True, default_factory=lambda: Step("1ep"))
     # save_freq: str = "1ep"
     save_early_iters: bool = False
     save_best: bool = True
@@ -504,6 +515,9 @@ class ResNetConfig(ModelConfig_):
 
     _width: str = "Output channels of the first convolution"
 
+@dataclass
+class BertConfig(ModelConfig_):
+    pass
 
 @dataclass
 class MLPConfig(ModelConfig_):

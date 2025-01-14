@@ -1,17 +1,39 @@
+import logging
 import math
+import re
 from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict
+from typing import Dict, List, Optional
 
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
 
 from lmc.utils.seeds import temp_seed
 
+logger = logging.getLogger(__name__)  # Add this line to define the logger
 
-def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=None, loss_fn: callable = None) -> Dict[str, torch.Tensor]:
+
+def _should_perturb_parameter(param_name: str, dont_perturb_module_patterns: Optional[List[str]] = None) -> bool:
+    """
+    Check if a parameter should be perturbed based on its name and the dont_perturb_module_patterns.
+    
+    Args:
+        param_name (str): Name of the parameter
+        
+    Returns:
+        bool: True if the parameter should be perturbed, False otherwise
+    """
+    if dont_perturb_module_patterns is None or len(dont_perturb_module_patterns) == 0:
+        return True
+    for pattern in dont_perturb_module_patterns:
+        if re.match(pattern, param_name):
+            return False
+    return True
+
+def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=None, loss_fn: callable = None, dont_perturb_patterns: List[str] = None) -> Dict[str, torch.Tensor]:
     """
     Get a random (based on the seed) batch from the dataloader and compute noise as the gradient 
     with respect to the provided loss.
@@ -28,14 +50,7 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
     model.zero_grad()
     if loss_fn is None:
         loss_fn = torch.nn.CrossEntropyLoss()
-    # if noise_seed is not None:
-    #     with temp_seed(noise_seed):
-    #         # Get a random batch from the dataloader
-    #         batch = next(iter(dataloader))
-    # else:
-    #     # Get a random batch from the dataloader without setting a seed
-    #     batch = next(iter(dataloader))
-    
+
     batch = next(iter(dataloader))
     # Unpack inputs and targets (adjust if your dataloader provides a different structure)
     inputs, targets = batch
@@ -54,16 +69,20 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
     noise = {}
     for name, param in model.named_parameters():
         grad = param.grad
-        if grad is None:
+        if not _should_perturb_parameter(name, dont_perturb_patterns):
+            logger.info(f"Not generating any noise for parameter ({name}).")
+            noise[name] = torch.zeros_like(param)
+        elif grad is None:
             grad = torch.zeros_like(param)
-        noise[name] = grad.clone()
+        else:
+            noise[name] = grad.clone()
         # if param.requires_grad:
         #     noise[name] = torch.autograd.grad(loss, param, retain_graph=True, create_graph=False)[0]
     model.zero_grad()
     return noise
 
 @torch.no_grad()
-def get_gaussian_noise(model: "BaseModel", noise_seed: int = None) -> Dict[str, torch.Tensor]:
+def get_gaussian_noise(model: "BaseModel", noise_seed: int = None, dont_perturb_patterns:Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
     """_summary_
 
     Args:
@@ -77,13 +96,15 @@ def get_gaussian_noise(model: "BaseModel", noise_seed: int = None) -> Dict[str, 
         model.zero_grad()
         noise_dct = dict()
         for name, param in model.named_parameters():
-            if not param.requires_grad:
+            if not param.requires_grad or not _should_perturb_parameter(name, dont_perturb_patterns):
+                logger.info(f"Not generating any noise for parameter ({name}).")
                 noise_dct[name] = torch.zeros_like(param)
                 continue
 
             fan_in = 1.
             if param.ndim >= 2 :
                 fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(param)
+                
             noise = torch.empty_like(param)
             std = 1. / math.sqrt(fan_in)
             with torch.no_grad():
@@ -122,3 +143,14 @@ def get_noise_l2(noise_dct: OrderedDict) -> float:
     for n, p in noise_dct.items():
         noise_l2 += p.pow(2).sum().item()
     return noise_l2
+
+def normalize_noise(noise_dct: OrderedDict[str, torch.Tensor], l2: float):
+    """ Normalize the noise dict to have a total l2 length """
+    total_norm = torch.linalg.norm(parameters_to_vector(noise_dct.values()))
+    norm_factor = l2 / total_norm
+    for name, n in noise_dct.items():
+        noise_dct[name] = n * norm_factor
+
+    act_norm = torch.linalg.norm(parameters_to_vector(noise_dct.values()))
+    assert torch.allclose(act_norm, torch.tensor(l2)), f"Noise norm ({act_norm}) and desired {l2}."
+    return noise_dct

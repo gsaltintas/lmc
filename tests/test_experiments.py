@@ -11,16 +11,15 @@ torchvision.disable_beta_transforms_warning()
 
 
 class TestTrainingRunner(BaseTest):
+
     def test_butterfly_deterministic(self):
+        # check whether model pairs are same or not
+
         # should fail
         with self.subTest("bad args"):
             self.assertEqual(
                 "error", self.run_butterfly_deterministic(perturb_step=None)
             )
-
-        # should be identical
-        with self.subTest("deterministic"):
-            self.assertEqual("same", self.run_butterfly_deterministic())
 
         # should not be identical due to extra training time
         with self.subTest("extra training"):

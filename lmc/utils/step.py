@@ -27,6 +27,7 @@ class Step:
     value: Union[str, int, None] = None #field(init=True, default_factory=format_step)
     steps_per_epoch: Optional[int] = 1
     _name: str = None
+    _pattern: str = r"Step\(value='([^']+)', steps_per_epoch=(\d+)(?:, _name=(?:None|'[^']*'))?\)"
 
     def __post_init__(self):
         if str(self.value).isnumeric():
@@ -68,12 +69,12 @@ class Step:
             return val % self.get_step(steps_per_epoch)
         return val % self.get_epoch(steps_per_epoch)
     
-    
     @classmethod
     def from_string(cls, step_str: str):
         """Parse a string representation of a Step and return a Step instance."""
         # Use regex to extract the value and steps_per_epoch
-        match = re.match(r"Step\(value='([^']+)', steps_per_epoch=(\d+)\)", step_str)
+        match = re.match(cls._pattern, step_str)
+
         if not match:
             raise ValueError(f"Invalid step string format: {step_str}")
         
@@ -81,6 +82,18 @@ class Step:
         steps_per_epoch = int(match.group(2))
         
         return cls(value=value, steps_per_epoch=steps_per_epoch)
+    
+    def __str__(self):
+        return f"Step(value='{self.value}', steps_per_epoch='{self.steps_per_epoch}')"
+    
+    @classmethod
+    def is_step(cls, x: str) -> bool:
+        if not isinstance(x, Step) and not isinstance(x, str):
+            return False
+        match = re.match(cls._pattern, x)
+        if match:
+            return True
+        return False
     
     def wandb_dct(self):
         # TODO: not sure about this design choice

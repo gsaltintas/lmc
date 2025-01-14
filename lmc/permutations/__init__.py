@@ -35,7 +35,6 @@ def get_cost(
     permutations, similarity_matrices = align_obj.fit(params_A, params_B)
 
     costs = {}
-# from lmc.models.layers import is_norm_layer
 
 
 def create_permspec_from_model(model: nn.Module, model_name: Optional[str] = None) -> PermSpec:

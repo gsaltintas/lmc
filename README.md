@@ -27,3 +27,8 @@ export WANDB_API_KEY="YOUR_API_KEY"
 export SCRATCH="PATH_TO_SCRATCH"
 export HUGGINGFACE_HUB_CACHE="$SCRATCH/.cache"
 ```
+
+To disable torchvision warnings add this to your profile
+```bash
+export PYTHONWARNINGS="ignore::UserWarning:torchvision.transforms.v2,ignore::UserWarning:torchvision.datapoints"
+```

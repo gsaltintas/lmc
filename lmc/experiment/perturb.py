@@ -1,21 +1,19 @@
 from dataclasses import dataclass, field
 from typing import Dict
-
 import torch
-import wandb
 from torch.nn.utils import parameters_to_vector
+import wandb
 
 from lmc.utils.seeds import seed_everything
-import train
 from lmc.butterfly.butterfly import (
     get_batch_noise,
     get_gaussian_noise,
     get_noise_l2,
+    normalize_noise,
     perturb_model,
 )
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from lmc.utils.step import Step
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import (
@@ -25,6 +23,7 @@ from lmc.utils.setup_training import (
     setup_model_dir,
     setup_wandb,
 )
+from lmc.utils.step import Step
 
 
 def is_same_model(training_elements):
@@ -73,11 +72,15 @@ class PerturbedTrainingRunner(TrainingRunner):
                         dataloader=dl,
                         noise_seed=el.perturb_seed,
                         loss_fn=el.loss_fn,
+                        dont_perturb_patterns=self.config.dont_perturb_module_patterns
                     )
                 elif self.config.perturb_mode == "gaussian":
                     self.noise_dct[ind] = get_gaussian_noise(
-                        el.model, noise_seed=el.perturb_seed
+                        el.model, noise_seed=el.perturb_seed, dont_perturb_patterns=self.config.dont_perturb_module_patterns
                     )
+                if self.config.normalize_perturb:
+                    # normalize to self.config.perturb_scale
+                    self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
 
     def setup(self) -> None:
         if self.config.perturb_debug_dummy_run:
@@ -165,19 +168,19 @@ class PerturbedTrainingRunner(TrainingRunner):
                     "Noise created for models %s at perturbance time.",
                     self.config.perturb_inds,
                 )
-
-            perturb_model(el.model, self.noise_dct[ind], self.config.perturb_scale)
+            perturb_scale = 1. if self.config.normalize_perturb else self.config.perturb_scale
+            perturb_model(el.model, self.noise_dct[ind], perturb_scale)
 
             noise_l2 = get_noise_l2(self.noise_dct[ind])
             self.logger.info(
                 "Model %d perturbed with %f scaling, absolute l2 %f.",
                 ind,
-                self.config.perturb_scale,
+                perturb_scale,
                 noise_l2,
             )
             log_dct[f"static/noise/{ind}-l2"] = noise_l2
             log_dct[f"static/noise/{ind}-l2-scaled"] = noise_l2 * (
-                self.config.perturb_scale**2
+                perturb_scale**2
             )
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:
@@ -202,7 +205,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         # TPDP: make training step as Step
         print(self.config.display)
         print("Running perturbed training.")
-        early_iter_ckpt_steps = train.get_early_iter_ckpt_steps(
+        early_iter_ckpt_steps = self.get_early_iter_ckpt_steps(
             self.steps_per_epoch, n_ckpts=10
         )
         ep: int = 1

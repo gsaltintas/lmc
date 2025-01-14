@@ -13,6 +13,7 @@ from typing import Dict, List, Mapping, Tuple, Union
 
 import numpy as np
 import torch
+import torchvision.transforms as transforms
 import wandb
 import wandb.sync
 from torch import nn, optim
@@ -25,12 +26,9 @@ from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
-from lmc.utils.step import Step
 from lmc.utils.metrics import Metrics
 from lmc.utils.seeds import seed_everything, seed_worker
-
-torchvision.disable_beta_transforms_warning()
-import torchvision.transforms as transforms
+from lmc.utils.step import Step
 
 logger = logging.getLogger("setup")
 
