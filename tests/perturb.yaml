@@ -19,6 +19,7 @@ data:
   random_crop: false
   random_rotation: 10.0
   test_batch_size: 1024
+deterministic: false
 lmc:
   activation_matching_samples: 2
   lmc_check_perms: true
@@ -83,7 +84,6 @@ rewind_lr: false
 same_steps_pperturb: true
 sample_noise_at: init
 seeds:
-  deterministic: false
   loader_seed1: 42
   loader_seed2: 41
   seed1: 42

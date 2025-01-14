@@ -1,3 +1,4 @@
+from copy import deepcopy
 import unittest
 from pathlib import Path
 from typing import Any, Dict
@@ -49,55 +50,50 @@ class TestConfig(BaseTest):
         PerturbedTrainer.load_from_file(new_yaml)
 
     def test_cmd_same_as_yaml(self):
-        # check that loading from the config to file gives the same config
         # run from command line to generate config file first
-        command = self.get_test_command()
+        command = self.get_test_command(model_dir=self.log_dir / "test-config-base")
         result = run_command(command, print_output=True)
         self.assertFalse(command_result_is_error(result))
-        cmd_run = self.get_last_created_in_dir(self.log_dir / "*")
-        cmd_config = cmd_run / "config.yaml"
-        cmd_ckpt_1, cmd_ckpt_2 = self.get_last_ckpts(cmd_run)
+        base_run = self.log_dir / "test-config-base"
+        base_config = PerturbedTrainer.load_from_file(base_run / "config.yaml")
+        base_ckpt_1, base_ckpt_2 = self.get_last_ckpts(base_run)
 
-        # run programmatically
-        with self.subTest("programmatic run"):
-            exp = PerturbedTrainingRunner.create_from_file(cmd_config)
-            config = exp.config  # compare all runs against this config
-            self.assertTrue(exp.run_experiment())
-            code_run = self.get_last_created_in_dir(self.log_dir / "*")
-            code_ckpt_1, code_ckpt_2 = self.get_last_ckpts(code_run)
+        def copy_config(model_dir):
+            config = deepcopy(base_config)
+            config.model_dir = self.log_dir / model_dir
+            return config
 
-            with open(cmd_config) as f:
-                self._check_nested_dict(yaml.load(f, Loader=yaml.Loader), config)
-            self.assertTrue(self.ckpts_match(code_ckpt_1, cmd_ckpt_1))
-            self.assertTrue(self.ckpts_match(code_ckpt_2, cmd_ckpt_2))
+        def get_last_run_results(model_dir):
+            run_dir = self.log_dir / model_dir
+            self.assertEqual(run_dir.name, model_dir)
+            ckpt_1, ckpt_2 = self.get_last_ckpts(run_dir)
+            config_file = run_dir / "config.yaml"
+            with open(config_file) as f:
+                config_yaml = yaml.load(f, Loader=yaml.Loader)
+            self.assertNotEqual(config_yaml["model_dir"], base_config.model_dir)
+            config_yaml["model_dir"] = base_config.model_dir
+            self._check_nested_dict(config_yaml, base_config)
+            match_1 = self.ckpts_match(ckpt_1, base_ckpt_1)
+            match_2 = self.ckpts_match(ckpt_2, base_ckpt_2)
+            return match_1, match_2
 
-        # use config file from command line
-        with self.subTest("command line config file"):
+        with self.subTest("cmd: run from command line passing config file"):
+            config = copy_config("test-config-cmd")
+            config.save(self.log_dir / "test-config-cmd-yaml", zip_code_base=False)
             result = run_command(
-                f"python main.py perturb --config_file {cmd_config}", print_output=True
+                f"python main.py perturb --config_file {self.log_dir / 'test-config-cmd-yaml' / 'config.yaml'}", print_output=True
             )
             self.assertFalse(command_result_is_error(result))
-            yaml_run = self.get_last_created_in_dir(self.log_dir / "*")
-            yaml_config = yaml_run / "config.yaml"
-            yaml_ckpt_1, yaml_ckpt_2 = self.get_last_ckpts(yaml_run)
+            ckpts_match_1, ckpts_match_2 = get_last_run_results("test-config-cmd")
+            self.assertTrue(ckpts_match_1 and ckpts_match_2)
 
-            with open(yaml_config) as f:
-                self._check_nested_dict(yaml.load(f, Loader=yaml.Loader), config)
-            self.assertTrue(self.ckpts_match(yaml_ckpt_1, cmd_ckpt_1))
-            self.assertTrue(self.ckpts_match(yaml_ckpt_2, cmd_ckpt_2))
-
-        # run programmatically again
-        with self.subTest("identical run"):
-            exp = PerturbedTrainingRunner.create_from_file(cmd_config)
+        with self.subTest("obj: run programmatically using config object, and change hparams"):
+            base_config.seeds.seed1 += 1
+            exp = PerturbedTrainingRunner(copy_config("test-config-obj"))
             self.assertTrue(exp.run_experiment())
-            second_run = self.get_last_created_in_dir(self.log_dir / "*")
-            second_config = second_run / "config.yaml"
-            second_ckpt_1, second_ckpt_2 = self.get_last_ckpts(second_run)
-
-            with open(second_config) as f:
-                self._check_nested_dict(yaml.load(f, Loader=yaml.Loader), config)
-            self.assertTrue(self.ckpts_match(second_ckpt_1, cmd_ckpt_1))
-            self.assertTrue(self.ckpts_match(second_ckpt_2, cmd_ckpt_2))
+            ckpts_match_1, ckpts_match_2 = get_last_run_results("test-config-obj")
+            self.assertFalse(ckpts_match_1)
+            self.assertTrue(ckpts_match_2)
 
 
 if __name__ == "__main__":

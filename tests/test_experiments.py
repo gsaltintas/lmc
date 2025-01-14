@@ -73,7 +73,7 @@ class TestTrainingRunner(BaseTest):
 
         # check if training models 1 and 2 gives the same result
         last_run = self.get_last_created_in_dir(self.log_dir / "*")
-        ckpt_1, ckpt_2 = self.get_last_ckpts(last_run, seed1, seed2)
+        ckpt_1, ckpt_2 = self.get_last_ckpts(last_run)
         # check there is more than 1 saved ckpt per model
         self.assertGreater(len(glob(str(ckpt_1.parent / "*.ckpt"))), 1)
         self.assertGreater(len(glob(str(ckpt_2.parent / "*.ckpt"))), 1)

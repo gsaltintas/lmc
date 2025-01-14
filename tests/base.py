@@ -8,7 +8,7 @@ import torch
 
 
 class BaseTest(unittest.TestCase):
-    TEST_COMMAND = """python main.py {experiment}  \
+    TEST_COMMAND = """python main.py {experiment} {model_dir}  \
             --project test-project  \
                 --run_name test-{experiment}  \
                 --path {data_dir}/{dataset}  \
@@ -86,6 +86,7 @@ class BaseTest(unittest.TestCase):
         wandb_offline="true",
         same_steps_pperturb="false",
         lmc_on_train_end="false",
+        model_dir=None,
         args=[],
     ):
         command = str.format(
@@ -106,18 +107,17 @@ class BaseTest(unittest.TestCase):
             wandb_offline=wandb_offline,
             same_steps_pperturb=same_steps_pperturb,
             lmc_on_train_end=lmc_on_train_end,
+            model_dir="" if model_dir is None else f"--model_dir {model_dir}",
             args=args if isinstance(args, str) else " ".join(args),
         )
         return command
 
     @staticmethod
-    def get_last_ckpts(exp_dir, seed1=SEED_1, seed2=SEED_2):
-        ckpt_1 = BaseTest.get_last_created_in_dir(
-            exp_dir / f"model1-seed_{seed1}-ls_{seed1}" / "checkpoints" / "ep-*.ckpt"
-        )
-        ckpt_2 = BaseTest.get_last_created_in_dir(
-            exp_dir / f"model2-seed_{seed2}-ls_{seed2}" / "checkpoints" / "ep-*.ckpt"
-        )
+    def get_last_ckpts(exp_dir):
+        model_1 = next(exp_dir.glob("model1*"))
+        model_2 = next(exp_dir.glob("model2*"))
+        ckpt_1 = BaseTest.get_last_created_in_dir(model_1 / "checkpoints" / "ep-*.ckpt")
+        ckpt_2 = BaseTest.get_last_created_in_dir(model_2 / "checkpoints" / "ep-*.ckpt")
         return ckpt_1, ckpt_2
 
     @staticmethod

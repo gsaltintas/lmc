@@ -59,30 +59,28 @@ class TestTrainingRunner(BaseTest):
             logreg_y=logreg_y,
             logreg_n=logreg_n,
         )
-        if model_dir is not None:
-            args += f"\n--model_dir {model_dir}"
         return super().get_test_command(
             experiment="logreg",
             perturb_scale=0.1,
             perturb_step=390,
             use_wandb="true",
             lmc_on_train_end="true",
+            model_dir=model_dir,
             args=args,
         )
 
     def test_dummy_logreg(self):
         # logic test: check that logistic regression over dummy values works
         def run_dummy_logreg(model_dir):
-            model_path = Path("tests") / "tmp" / model_dir
             command = self.get_test_command(
                 is_dummy_run=True,
                 logreg_y="test/dummyvalue",
                 logreg_n=10,
-                model_dir=model_path,
+                model_dir=self.log_dir / model_dir,
             )
             result = run_command(command, print_output=True)
             self.assertFalse(command_result_is_error(result))
-            with open(model_path / "wandb_summary.json", "r") as f:
+            with open(self.log_dir / model_dir / "wandb_summary.json", "r") as f:
                 value = json.load(f)["logreg/max_entropy_x"]
             return value
 
