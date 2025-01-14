@@ -2,15 +2,12 @@ from glob import glob
 import os
 from pathlib import Path
 from shutil import rmtree
-import subprocess
-import traceback
 import unittest
 
 import torch
 
 
 class BaseTest(unittest.TestCase):
-
     TEST_COMMAND = """python main.py {experiment}  \
             --project test-project  \
                 --run_name test-{experiment}  \
@@ -19,6 +16,7 @@ class BaseTest(unittest.TestCase):
                 --save_early_iters false  \
                 --cleanup_after false  \
                 --use_wandb {use_wandb}  \
+                --wandb_offline {wandb_offline}  \
                 --zip_and_save_source false  \
             --model_name {model_name}  \
                 --norm layernorm  \
@@ -56,9 +54,9 @@ class BaseTest(unittest.TestCase):
     SEED_2 = 41
 
     def setUp(self):
-        test_path = Path(os.path.relpath(
-            os.path.dirname(os.path.realpath(__file__)), os.getcwd()
-        ))
+        test_path = Path(
+            os.path.relpath(os.path.dirname(os.path.realpath(__file__)), os.getcwd())
+        )
         self.log_dir = test_path / "tmp"
         self.log_dir.mkdir(exist_ok=True)
 
@@ -85,6 +83,7 @@ class BaseTest(unittest.TestCase):
         perturb_inds=[1],
         rewind_lr="false",
         use_wandb="false",
+        wandb_offline="true",
         same_steps_pperturb="false",
         lmc_on_train_end="false",
         args=[],
@@ -104,6 +103,7 @@ class BaseTest(unittest.TestCase):
             perturb_inds=" ".join(str(x) for x in perturb_inds),
             rewind_lr=rewind_lr,
             use_wandb=use_wandb,
+            wandb_offline=wandb_offline,
             same_steps_pperturb=same_steps_pperturb,
             lmc_on_train_end=lmc_on_train_end,
             args=args if isinstance(args, str) else " ".join(args),

@@ -5,6 +5,7 @@ import torch
 import wandb
 from torch.nn.utils import parameters_to_vector
 
+from lmc.utils.seeds import seed_everything
 import train
 from lmc.butterfly.butterfly import (
     get_batch_noise,
@@ -79,6 +80,12 @@ class PerturbedTrainingRunner(TrainingRunner):
                     )
 
     def setup(self) -> None:
+        if self.config.perturb_debug_dummy_run:
+            setup_model_dir(self.config)  # give a place to save wandb run summary
+            # make outcome deterministic for debugging
+            seed_everything(self.config.seeds.seed1)
+            setup_wandb(self.config)
+            return  # speed up testing by only doing the above
         super().setup()
         if self.config.sample_noise_at == "init":
             self.create_noise_dicts()
@@ -190,7 +197,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.logger.info("Model %d lr schedule reset.", ind)
 
     def run(self):
-        self.setup()
+        if self.config.perturb_debug_dummy_run:
+            return self.dummy_run()
         # TPDP: make training step as Step
         print(self.config.display)
         print("Running perturbed training.")
@@ -260,3 +268,10 @@ class PerturbedTrainingRunner(TrainingRunner):
             )
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
+
+    def dummy_run(self):
+        # for testing and debugging logreg, this avoids having to do multiple training runs
+        if self.config.logger.use_wandb:
+            # randomly draw from uniform [0, perturb_step)
+            value = torch.rand(1).item() * self.config.perturb_scale
+            wandb.log({"test/dummyvalue": value})

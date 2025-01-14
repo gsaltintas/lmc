@@ -345,6 +345,7 @@ class PerturbedTrainer(Trainer):
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
     sample_noise_at: Literal["init", "perturb"] = "init"
+    perturb_debug_dummy_run: bool = False
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -368,6 +369,7 @@ class PerturbedTrainer(Trainer):
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
+        self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
 
         n_models = kwargs.get("n_models", 1)
         # Dynamically build the Seeds class
