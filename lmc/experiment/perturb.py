@@ -6,15 +6,24 @@ import wandb
 from torch.nn.utils import parameters_to_vector
 
 import train
-from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
-                                     get_noise_l2, perturb_model)
+from lmc.butterfly.butterfly import (
+    get_batch_noise,
+    get_gaussian_noise,
+    get_noise_l2,
+    perturb_model,
+)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.step import Step
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
-                                      setup_loader)
+from lmc.utils.setup_training import (
+    TrainingElement,
+    configure_lr_scheduler,
+    setup_loader,
+    setup_model_dir,
+    setup_wandb,
+)
 
 
 def is_same_model(training_elements):
@@ -92,7 +101,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         )
         log_dct.update(
             {
-                f"static/l2_dist_at_init/{i}-{i+1}": torch.norm(v1 - v2).item()
+                f"static/l2_dist_at_init/{i}-{i + 1}": torch.norm(v1 - v2).item()
                 for i, (v1, v2) in enumerate(
                     zip(self.models_at_init, self.models_at_init[1:]), start=1
                 )
@@ -107,9 +116,9 @@ class PerturbedTrainingRunner(TrainingRunner):
         current_lr = get_lr(element.opt)
         self.logger.info("Lr scheduler will continue from this point (%s).", current_lr)
         for g in element.opt.param_groups:
-            assert (
-                g["lr"] == current_lr
-            ), f"Lr of the parameter group {g} is not configured properly."
+            assert g["lr"] == current_lr, (
+                f"Lr of the parameter group {g} is not configured properly."
+            )
         steps_per_epoch = len(element.train_loader)
 
         if prev_max_steps is None:

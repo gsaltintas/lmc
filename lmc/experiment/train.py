@@ -47,7 +47,6 @@ class TrainingRunner(ExperimentManager):
         pass
 
     def run(self):
-        self.setup()
         print(self.config.display)
         early_iter_ckpt_steps = train.get_early_iter_ckpt_steps(
             self.steps_per_epoch, n_ckpts=10
