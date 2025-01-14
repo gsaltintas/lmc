@@ -352,24 +352,21 @@ def setup_model_dir(config: Trainer) -> Path:
     Raises:
         FileNotFoundError: If the specified `log_dir` does not exist.
     """
-    if (m := config.model_dir) and Path(m).resolve().absolute().exists():
-        return Path(m)
     if not config.logger.log_dir.exists():
         raise FileNotFoundError(f"Must provide an existing log_dir ({config.logger.log_dir})")
-    hashname = config.hashname
-    now = datetime.now()
-    formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
-    model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
-    model_dir.mkdir(exist_ok=True)
-    model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
-    config.model_dir = model_dir
-    
-    config.model_dir = model_dir
-    # Save code as zip and config as yaml into the model directory.
-    config.save(model_dir, zip_code_base=config.zip_and_save_source)
+    if config.model_dir is None:
+        hashname = config.hashname
+        now = datetime.now()
+        formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
+        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
+        logger.info(f"Created model dir: {config.model_dir}")
+    config.model_dir.mkdir(exist_ok=True)
+    config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
 
-    logger.info(f"Created model dir: {model_dir}")
-    return model_dir
+    # Save code as zip and config as yaml into the model directory.
+    config.save(config.model_dir, zip_code_base=config.zip_and_save_source)
+
+    return config.model_dir
 
 def setup_device(config: Experiment) -> torch.device:
     """
