@@ -1,10 +1,11 @@
 
 import unittest
 from glob import glob
+
 import torchvision
 
-from lmc.experiment_config import PerturbedTrainer
 from lmc.experiment.perturb import PerturbedTrainingRunner
+from lmc.experiment_config import PerturbedTrainer
 from tests.base import BaseTest
 
 torchvision.disable_beta_transforms_warning()

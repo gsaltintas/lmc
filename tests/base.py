@@ -1,10 +1,10 @@
-from glob import glob
 import os
-from pathlib import Path
-from shutil import rmtree
 import subprocess
 import traceback
 import unittest
+from glob import glob
+from pathlib import Path
+from shutil import rmtree
 
 import torch
 
@@ -14,11 +14,13 @@ class BaseTest(unittest.TestCase):
     TEST_COMMAND = """python main.py {experiment}  \
             --project test-project  \
                 --run_name test-{experiment}  \
-                --path {data_dir}/{dataset}  \
+                --path {data_dir} \
                 --log_dir {log_dir}  \
                 --save_early_iters false  \
                 --cleanup_after false  \
                 --use_wandb {use_wandb}  \
+                    --project {project} \
+                    --run_name {run_name}
                 --zip_and_save_source false  \
             --model_name {model_name}  \
                 --norm layernorm  \
@@ -87,6 +89,8 @@ class BaseTest(unittest.TestCase):
         use_wandb="false",
         same_steps_pperturb="false",
         lmc_on_train_end="false",
+        project="lmc-test",
+        run_name=None,
         args=[],
     ):
         command = str.format(
@@ -106,6 +110,8 @@ class BaseTest(unittest.TestCase):
             use_wandb=use_wandb,
             same_steps_pperturb=same_steps_pperturb,
             lmc_on_train_end=lmc_on_train_end,
+            project=project,
+            run_name=run_name,
             args=args if isinstance(args, str) else " ".join(args),
         )
         return command
