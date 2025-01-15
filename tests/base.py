@@ -32,7 +32,7 @@ class BaseTest(unittest.TestCase):
                 --momentum 0.9  \
                 --rewind_lr {rewind_lr}  \
             --n_models 2  \
-                --perturb_mode gaussian  \
+                --perturb_mode {perturb_mode}  \
                 --perturb_step {perturb_step}  \
                 --perturb_inds {perturb_inds}  \
                 --perturb_scale {perturb_scale}  \
@@ -77,6 +77,7 @@ class BaseTest(unittest.TestCase):
         seed2=SEED_2,
         perturb_step=0,
         perturb_scale=0,
+        perturb_mode="batch",
         deterministic=True,
         model_name="mlp/128x3",
         dataset="mnist",
@@ -96,6 +97,7 @@ class BaseTest(unittest.TestCase):
             seed2=seed2,
             perturb_step=perturb_step,
             perturb_scale=perturb_scale,
+            perturb_mode=perturb_mode,
             deterministic=deterministic,
             log_dir=self.log_dir,
             data_dir=self.data_dir,

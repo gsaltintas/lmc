@@ -49,7 +49,7 @@ class TestConfig(BaseTest):
 
     def test_cmd_same_as_yaml(self):
         # run from command line to generate config file first
-        command = self.get_test_command(model_dir=self.log_dir / "test-config-base", lmc_on_train_end="true", use_wandb="true")
+        command = self.get_test_command(model_dir=self.log_dir / "test-config-base", lmc_on_train_end="true", use_wandb="true", perturb_scale=1)
         result = run_command(command, print_output=True)
         self.assertFalse(command_result_is_error(result))
         base_run = self.log_dir / "test-config-base"
@@ -96,8 +96,8 @@ class TestConfig(BaseTest):
             self.assertTrue(ckpts_match_2)
 
         with self.subTest("regression test perturb experiment: check that barriers haven't changed"):
-            self.assertEqual(value_cmd, 1.1138309775531292)
-            self.assertEqual(value_obj, 0.5490821118414402)
+            self.assertEqual(value_cmd, 0.8919784092326959)
+            self.assertEqual(value_obj, 1.5229564649641514)
 
 
 if __name__ == "__main__":

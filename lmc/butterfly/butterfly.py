@@ -137,7 +137,8 @@ def perturb_model(model: nn.Module, noise_dct: OrderedDict, noise_multiplier: fl
     else:
         model = deepcopy(model)
         model.load_state_dict(perturb_params)
-    
+    return model
+
 def get_noise_l2(noise_dct: OrderedDict) -> float:
     noise_l2 = 0.
     for n, p in noise_dct.items():
