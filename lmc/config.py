@@ -406,13 +406,23 @@ class TrainerConfig(Config):
 
 @dataclass
 class DataConfig(Config):
-    dataset: Literal["cifar10", "mnist", "cifar100", "tiny-imagenet"]
+    # Dataset choices including both vision and language datasets
+    dataset: Literal[
+        # Vision datasets
+        "cifar10", "mnist", "cifar100", "tiny-imagenet",
+        # Language datasets
+        "wikitext-2", "wikitext-103", "squad", "glue", "cord",
+        "webtext", "c4", "pile", "bookcorpus"
+    ]
 
+    # General configurations
     batch_size: int = 128
     test_batch_size: int = 1024
     path: Path = Path("./data")
     download: bool = False
+    num_workers: int = 4
 
+    # Vision-specific augmentations
     hflip: bool = True
     mixup: float = 0.0
     cutmix: float = 0.0
@@ -420,16 +430,66 @@ class DataConfig(Config):
     random_rotation: float = 0.0
     random_crop: bool = False
     cutout: Optional[int] = None
-    num_workers: int = 4
 
+    # Language-specific configurations
+    tokenizer_name: Optional[str] = None
+    max_seq_length: int = 512
+    min_seq_length: int = 4
+    padding_side: str = "right"
+    truncation_side: str = "right"
+    pad_to_multiple_of: Optional[int] = 8
+
+    # Text preprocessing flags
+    lowercase: bool = True
+    remove_punctuation: bool = False
+    strip_accents: bool = True
+    add_special_tokens: bool = True
+    
+    # Language augmentation settings
+    token_dropout_prob: float = 0.0
+    word_dropout_prob: float = 0.0
+    whole_word_masking: bool = False
+    masking_probability: float = 0.15
+    span_length: int = 3
+    enable_back_translation: bool = False
+    translation_languages: List[str] = field(default_factory=lambda: ["de", "fr"])
+    
+    # GLUE specific settings
+    glue_task: Optional[str] = None
+
+    # Dataset splits
+    validation_split: float = 0.1
+    test_split: float = 0.1
+    shuffle_dataset: bool = True
+
+    # Documentation fields
     _hflip: str = "Pass true to perform random horizontal flip with probability 0.5."
     _name = "data"
-    _description = "Data and augmentations configuration"
+    _description = "Data and augmentations configuration for both vision and language tasks"
 
     def __post_init__(self):
         self.path = Path(self.path).resolve().absolute()
-        return super().__post_init__()
 
+        # Validate language-specific configurations when using language datasets
+        if self.is_language_dataset():
+            if not self.tokenizer_name:
+                raise ValueError("Must provide tokenizer_name for language datasets")
+            
+            if self.max_seq_length < self.min_seq_length:
+                raise ValueError("max_seq_length must be greater than min_seq_length")
+
+            if self.masking_probability > 1.0 or self.masking_probability < 0.0:
+                raise ValueError("masking_probability must be between 0 and 1")
+
+        return super().__post_init__()
+    
+    def is_language_dataset(self) -> bool:
+        """Check if the selected dataset is a language dataset"""
+        language_datasets = {
+            "wikitext-2", "wikitext-103", "squad", "glue", 
+            "cord", "webtext", "c4", "pile", "bookcorpus"
+        }
+        return self.dataset in language_datasets
 
 @dataclass
 class LoggerConfig(Config):
@@ -515,7 +575,7 @@ class ResNetConfig(ModelConfig_):
     _width: str = "Output channels of the first convolution"
 
 @dataclass
-class BertConfig(ModelConfig_):
+class NLPModelConfig(ModelConfig_):
     pass
 
 @dataclass
@@ -539,18 +599,14 @@ def make_model_config(**kwargs) -> Type:
         model_cls = MLPConfig
     elif "resnet" in model_name:
         model_cls = ResNetConfig
+    elif "bert" in model_name:
+        model_cls = NLPModelConfig
+    elif "t5" in model_name:
+        model_cls = NLPModelConfig
     fields_ = [(f.name, f.type, f) for f in fields(model_cls) if not f.name.startswith("_")] +  [(f.name, f.type, f) for f in fields(model_cls) if f.name.startswith("_")]
     
     return make_dataclass("ModelConfig", fields_ , bases=(model_cls, ))
 
-    # model: Union[MLPConfig, ResNetConfig] = field(
-    #     init=True,
-    #     default_factory=field_factory(
-    #         "model_name",
-    #         mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
-    #         default_val="mlp",
-    #     ),
-    # )
 @dataclass
 class ModelConfig(Config):
     pass

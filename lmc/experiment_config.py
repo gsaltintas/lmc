@@ -52,7 +52,7 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
     vals = {}
     n_models = d.get("n_models", 1)
     if n_models == 1 and hasattr(klass, "n_models"):
-        n_models = getattr(klass, n_models)
+        n_models = getattr(klass, "n_models")
     
     for field_ in fields(klass):
         name, typ = field_.name, field_.type
@@ -219,7 +219,6 @@ class Experiment:
             if field_.name.startswith("_"):
                 continue
             conf = field_.type
-
             if conf is USE_DEFAULT_FACTORY:
                 conf = field_.default_factory()
             if isinstance(conf, type) and issubclass(conf, Config):
@@ -311,6 +310,20 @@ class Trainer(Experiment):
     zip_and_save_source: bool = True
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
+
+@dataclass(init=False)
+class Finetuner(Trainer):
+    _name_prefix: str = "finetuner"
+    _description: str = "Run a finetuning script."
+
+    # todo something wrong here
+    frozen_layers: List[str] = field(init=True, default_factory=list)
+    _frozen_layers: str = "List of frozen layers or regex patterns"
+    
+    def __init__(self, *args, **kwargs):
+        self.frozen_layers = kwargs.get("frozen_layers", [])
+        super().__init__(*args, **kwargs)
+        
 
 @dataclass
 class PerturbSeeds(Config):

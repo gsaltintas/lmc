@@ -1,4 +1,18 @@
+import logging
+import re
+from typing import Optional, Tuple
+
+import torch
 import torchvision
+from datasets import load_dataset
+from torch.utils.data import DataLoader
+from transformers import (AutoModelForCausalLM,
+                          AutoModelForSequenceClassification, AutoTokenizer,
+                          DataCollatorForLanguageModeling,
+                          DataCollatorWithPadding)
+
+from lmc.models.bert import Bert
+from lmc.models.t5 import T5
 
 torchvision.disable_beta_transforms_warning()
 import logging
@@ -14,12 +28,12 @@ from typing import Dict, List, Mapping, Tuple, Union
 import numpy as np
 import torch
 import torchvision.transforms as transforms
-import wandb
 import wandb.sync
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import wandb
 from lmc.config import DataConfig
 from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
                                  MEAN_DICT, STD_DICT, TORCH_DICT)
@@ -193,6 +207,72 @@ def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> Non
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
 
+
+def should_freeze_layer(layer_name: str, pattern: str) -> bool:
+    """Check if layer should be frozen based on exact match or regex pattern"""
+    try:
+        # First try exact match
+        if pattern == layer_name:
+            return True
+        # Then try as regex pattern
+        if re.match(pattern, layer_name):
+            return True
+    except re.error:
+        # If pattern is invalid regex, treat as normal string
+        return pattern in layer_name
+    return False
+
+def freeze_layers(model, frozen_layers: List):
+    """Freeze layers matching either exact names or regex patterns"""
+    frozen_count = 0
+    total_params = 0
+    
+    for name, param in model.named_parameters():
+        total_params += 1
+        if any(should_freeze_layer(name, pattern) for pattern in frozen_layers):
+            param.requires_grad = False
+            frozen_count += 1
+            logger.info(f"Frozen layer: {name}")
+                    
+    if frozen_count > 0:
+        logger.info(f"Froze {frozen_count}/{total_params} layers based on {len(frozen_layers)} patterns")
+
+def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) -> torch.nn.Module:
+    """Configure model for NLP tasks"""
+    conf = config.model
+    
+    # Setup tokenizer first
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.data.tokenizer_name,
+        cache_dir=str(config.data.path),
+        model_max_length=config.data.max_seq_length,
+        padding_side=config.data.padding_side,
+        truncation_side=config.data.truncation_side
+    )
+    if "t5" in conf.model_name.lower():
+        model = T5(conf.model_name)
+    elif "bert" in conf.mode_name.lower():
+        model = Bert(conf.model_name)
+    # Determine model type based on task
+    elif config.data.dataset.startswith("glue"):
+        num_labels = 1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
+        model = AutoModelForSequenceClassification.from_pretrained(
+            conf.model_name,
+            num_labels=num_labels,
+            cache_dir=str(config.data.path)
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            conf.model_name,
+            cache_dir=str(config.data.path)
+        )
+    
+    model = model.to(device)
+    
+    logger.info(f"Created NLP model: {conf.model_name}")
+    return model, tokenizer
+
+
 def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
@@ -213,7 +293,8 @@ def configure_model(config: Trainer, model_dir: Path, device: torch.device, retu
 
     logger.info("Model created.")
     # logger.info
-    print(model)
+    # print(model)
+    model = model.to(device)
     logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
     return model
 
@@ -306,6 +387,75 @@ def configure_lr_scheduler(
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
 
+
+def setup_nlp_loader(
+    data_conf: DataConfig, 
+    train: bool, 
+    evaluate: bool, 
+    tokenizer,
+    loader_seed: Optional[int] = None
+) -> DataLoader:
+    """Setup data loader for NLP tasks"""
+    # Set random seeds for reproducibility
+    if loader_seed is not None:
+        torch.manual_seed(loader_seed)
+        g = torch.Generator()
+        g.manual_seed(loader_seed)
+    
+    # Load dataset based on configuration
+    if data_conf.dataset.startswith("glue"):
+        dataset = load_dataset("glue", data_conf.glue_task)
+        split = "train" if train else "validation"
+    else:
+        dataset = load_dataset(
+            data_conf.dataset,
+            cache_dir=str(data_conf.path),
+            split="train" if train else "test"
+        )
+    
+    # Apply text preprocessing based on config
+    def preprocess_function(examples):
+        # Apply text preprocessing options
+        if data_conf.lowercase:
+            examples['text'] = examples['text'].lower()
+        
+        # Tokenize the texts
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+        }
+        
+        return tokenizer(examples['text'], **tokenizer_kwargs)
+    
+    # Transform dataset
+    tokenized_dataset = dataset.map(
+        preprocess_function,
+        batched=True,
+        remove_columns=dataset.column_names
+    )
+    
+    # Setup the appropriate data collator
+    if data_conf.whole_word_masking:
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=True,
+            mlm_probability=data_conf.masking_probability
+        )
+    else:
+        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    
+    # Create dataloader
+    batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
+    
+    return DataLoader(
+        tokenized_dataset,
+        batch_size=batch_size,
+        shuffle=train and not evaluate,
+        num_workers=data_conf.num_workers,
+        collate_fn=data_collator,
+        generator=g if loader_seed is not None else None
+    )
 
 def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
     dataset = data_conf.dataset
@@ -436,28 +586,41 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
         
-        train_loader = setup_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
-        train_eval_loader = setup_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
-        test_loader = setup_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
+        
+        # Determine if using NLP or vision setup
+        is_nlp_task = config.data.is_language_dataset()
+        
+        if is_nlp_task:
+            model, tokenizer = configure_nlp_model(config, model_dir, device)
+            train_loader = setup_nlp_loader(config.data, train=True, evaluate=False, tokenizer=tokenizer, loader_seed=loader_seed)
+            train_eval_loader = setup_nlp_loader(config.data, train=True, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
+            test_loader = setup_nlp_loader(config.data, train=False, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
+        else:
+            model = configure_model(config, model_dir, device, model_ind=i)
+            train_loader = setup_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
+            train_eval_loader = setup_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
+            test_loader = setup_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
+        
+        if hasattr(config, "frozen_layers"):
+            freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
-
-        config.trainer.seed = seed
+        # config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        seed_everything(seed)
-        if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
-            ## TODO: do this, resume_epoch not implemented
-            config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
-                ".ckpt"
-            )
-            if not config.model.ckpt_path.exists():
-                config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"{config.resume_epoch}").with_suffix(
-                    ".ckpt"
-                )
-            logger.info("Model will be loaded from %s.", config.model.ckpt_path)
-            assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
-            ckpt = torch.load(config.model.ckpt_path, map_location=device)
+        # seed_everything(seed)
+        # if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
+        #     ## TODO: do this, resume_epoch not implemented
+        #     config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
+        #         ".ckpt"
+        #     )
+        #     if not config.model.ckpt_path.exists():
+        #         config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"{config.resume_epoch}").with_suffix(
+        #             ".ckpt"
+        #         )
+        #     logger.info("Model will be loaded from %s.", config.model.ckpt_path)
+        #     assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
+        #     ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
-        model = configure_model(config, model_dir, device, return_perms=False, model_ind=i)
+        # model = configure_model(config, model_dir, device, return_perms=False, model_ind=i)
         model = model.to(device)
         logger.info("Setup model %d with seed=%d.", i, seed)
 
