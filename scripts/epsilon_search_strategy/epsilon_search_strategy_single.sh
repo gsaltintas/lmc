@@ -27,7 +27,7 @@ python main.py perturb  \
         --use_wandb=true  \
     --model_name=$MODEL  \
         --norm=$NORM  \
-    --dataset=cifar10  \
+    --dataset=$DATASET  \
         --hflip=true  \
         --random_rotation=10  \
         --random_crop=false  \

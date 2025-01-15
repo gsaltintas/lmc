@@ -1,35 +1,35 @@
 #!/bin/bash
-PERTURB_STEP=$1
-THRESHOLD=$2
-INIT_SCALE=$3
-N_RUNS=$4
-SEED=$5
 
-MODEL=resnet20-32
+PERTURB_STEP=$1
+SCALE=$2
+REPLICATE=$3
+MODEL=$4
+BATCH_SIZE=$5
+LR=$6
+WARMUP_RATIO=$7
+DONT_PERTURB_PATTERNS=$8
+GROUP=$9
+
 DATASET="cifar10"
 NORM="layernorm"
-PERTURB_MODE="gaussian"
+PERTURB_TYPE="batch"
 
-RUN_NAME="logreg-$PERTURB_STEP-$N_RUNS"
+SEED=$REPLICATE
+RUN_NAME="$GROUP-$MODEL-$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE"
 echo $RUN_NAME
 
 source $HOME/ssetup-uv.sh $DATASET
 
-python main.py logreg  \
-    --logreg_n=$N_RUNS  \
-        --logreg_x="perturb_scale"  \
-        --logreg_y="lmc-0-1/lmc/loss/weighted/increase_end0_train"  \
-        --logreg_threshold=$THRESHOLD  \
-        --logreg_max_step_ratio=10  \
-        --logreg_reseed_every_run=true  \
+python main.py perturb  \
     --project="$SSETUP_PROJECT_NAME-$SSETUP_EXP_NAME"  \
         --run_name=$RUN_NAME  \
+        --group=$GROUP  \
         --path=$SLURM_TMPDIR/data/$DATASET  \
         --log_dir=$SSETUP_OUTPUT_DIR  \
         --save_early_iters=false  \
-        --cleanup_after=false  \
-        --use_wandb=true  \
+        --cleanup_after=true  \
         --zip_and_save_source=false  \
+        --use_wandb=true  \
     --model_name=$MODEL  \
         --norm=$NORM  \
     --dataset=$DATASET  \
@@ -38,16 +38,18 @@ python main.py logreg  \
         --random_crop=false  \
     --optimizer=sgd  \
         --training_steps=50ep  \
-        --lr=0.1   \
+        --batch_size=$BATCH_SIZE  \
+        --lr=$LR   \
         --lr_scheduler=triangle  \
-        --warmup_ratio=0.02  \
+        --warmup_ratio=$WARMUP_RATIO  \
         --momentum=0.9  \
     --n_models=2  \
-        --perturb_mode=$PERTURB_MODE  \
+        --perturb_mode=$PERTURB_TYPE  \
+        --perturb_scale=$SCALE  \
         --perturb_step=$PERTURB_STEP  \
-        --perturb_scale=$INIT_SCALE  \
         --perturb_inds=1  \
         --same_steps_pperturb=false  \
+        --normalize_perturb=false  \
     --deterministic=true  \
         --seed1=$SEED  \
         --seed2=$SEED  \
@@ -57,3 +59,4 @@ python main.py logreg  \
     --lmc_check_perms=false  \
         --lmc_on_epoch_end=false  \
         --lmc_on_train_end=true  \
+    --dont_perturb_module_patterns=$DONT_PERTURB_PATTERNS  \
