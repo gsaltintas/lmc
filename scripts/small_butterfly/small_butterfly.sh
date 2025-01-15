@@ -5,8 +5,8 @@
 for REPLICATE in 1 2; do
     for SCALE in 0.000001 0.0001 0.01 0.1 1; do
         for STEP in 0 1950; do
-            sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet20-64 128 0.1 0.02 ".*norm.*" "shallow-wide"
-            sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet32-8 128 0.1 0.02 ".*norm.*" "deep-narrow"
+            sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet8-64 128 0.1 0.02 ".*norm.*" "shallow-wide"
+            sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet32-16 128 0.1 0.02 ".*norm.*" "deep-narrow"
             sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet20-32 128 0.001 0.02 ".*norm.*" "lr-0.001"
             sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet20-32 16384 0.1 0.02 ".*norm.*" "batch-16384"
             sbatch ./scripts/small_butterfly/small_butterfly_single.sh $STEP $SCALE $REPLICATE resnet20-32 128 0.1 0 ".*norm.*" "no-warmup"

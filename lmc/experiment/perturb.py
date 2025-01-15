@@ -83,12 +83,6 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
 
     def setup(self) -> None:
-        if self.config.perturb_debug_dummy_run:
-            setup_model_dir(self.config)  # give a place to save wandb run summary
-            # make outcome deterministic for debugging
-            seed_everything(self.config.seeds.seed1)
-            setup_wandb(self.config)
-            return  # speed up testing by only doing the above
         super().setup()
         if self.config.sample_noise_at == "init":
             self.create_noise_dicts()
