@@ -2,15 +2,15 @@ import math
 from dataclasses import dataclass, field
 
 import torch
-import wandb
 
 import train
+import wandb
 from lmc.data.data_stats import SAMPLE_DICT
+from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.metrics import report_results
 from lmc.utils.setup_training import TrainingElements, setup_experiment
-from lmc.experiment.base import ExperimentManager
 
 
 @dataclass

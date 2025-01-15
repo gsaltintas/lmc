@@ -7,8 +7,8 @@ from typing import Union
 
 from rich.logging import RichHandler
 from torch import nn
-from lmc.experiment_config import Experiment
 
+from lmc.experiment_config import Experiment
 
 FORMAT = "%(name)s - %(levelname)s: %(message)s"
 
