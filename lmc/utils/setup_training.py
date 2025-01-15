@@ -193,7 +193,7 @@ def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> Non
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
 
-def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
+def configure_model(config: Trainer, device: torch.device) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
     out = CLASS_DICT[config.data.dataset]
@@ -215,6 +215,7 @@ def configure_model(config: Trainer, model_dir: Path, device: torch.device, retu
     # logger.info
     print(model)
     logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
+    model = model.to(device)
     return model
 
 def configure_optimizer(config: Trainer, model: 'BaseModel'):
@@ -461,8 +462,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
             ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
-        model = configure_model(config, model_dir, device, return_perms=False, model_ind=i)
-        model = model.to(device)
+        model = configure_model(config, device)
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)

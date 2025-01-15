@@ -29,7 +29,6 @@ python main.py logreg  \
         --save_early_iters=false  \
         --cleanup_after=false  \
         --use_wandb=true  \
-        --wandb_offline=true  \
         --zip_and_save_source=false  \
     --model_name=$MODEL  \
         --norm=$NORM  \

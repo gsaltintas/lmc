@@ -52,7 +52,7 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
     vals = {}
     n_models = d.get("n_models", 1)
     if n_models == 1 and hasattr(klass, "n_models"):
-        n_models = getattr(klass, n_models)
+        n_models = getattr(klass, "n_models")
     
     for field_ in fields(klass):
         name, typ = field_.name, field_.type
