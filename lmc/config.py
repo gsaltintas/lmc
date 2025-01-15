@@ -389,8 +389,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = Step("1ep") #field(init=True, default_factory=lambda: Step("1ep"))
-    # save_freq: str = "1ep"
+    save_freq: Step = field(init=True, default_factory=lambda: Step("1ep"))
     save_early_iters: bool = False
     save_best: bool = True
     use_scaler: bool = False
