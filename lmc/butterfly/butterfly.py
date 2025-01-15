@@ -144,6 +144,51 @@ def get_noise_l2(noise_dct: OrderedDict) -> float:
         noise_l2 += p.pow(2).sum().item()
     return noise_l2
 
+def get_average_grad_norm(model: "BaseModel", dataloader: DataLoader, loss_fn: callable = None, num_datapoints: int =1) -> float:
+    """
+    Calculate the gradient norm of a model over specified number of datapoints.
+    
+    Args:
+        model: The neural network model
+        dataloader: DataLoader containing the input data
+        loss_fn: Loss function (defaults to CrossEntropyLoss if None)
+        num_datapoints: Number of batches to process (default=1), pass -1 to iterate through all points
+    
+    Returns:
+        float: Average L2 norm of the gradients
+    """
+
+    model.zero_grad()
+    
+    if loss_fn is None:
+        loss_fn = torch.nn.CrossEntropyLoss()
+        
+    for i, (inputs, targets) in enumerate(dataloader):
+        if i !=  -1 and i >= num_datapoints:
+            break
+        inputs, targets = inputs.to(model.device), targets.to(model.device)
+
+        # Perform a forward pass
+        outputs = model(inputs)
+
+        # Compute the cross-entropy loss
+        loss = loss_fn(outputs, targets)
+        loss.backward()
+
+    total_norm = 0.
+    param_count = 0
+    for param in model.parameters():
+        if param.grad is not None:
+            param_norm = param.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+            param_count += param.numel()
+    
+    # Divide by both number of parameters and number of datapoints
+    avg_grad_norm = torch.sqrt(torch.tensor(total_norm)) / (param_count * num_datapoints)
+
+    model.zero_grad()
+    return avg_grad_norm
+
 def normalize_noise(noise_dct: OrderedDict[str, torch.Tensor], l2: float):
     """ Normalize the noise dict to have a total l2 length """
     total_norm = torch.linalg.norm(parameters_to_vector(noise_dct.values()))

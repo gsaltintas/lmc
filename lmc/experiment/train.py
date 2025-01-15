@@ -10,6 +10,7 @@ import wandb
 from lmc.data.data_stats import SAMPLE_DICT
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
+from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.metrics import AverageMeter, mixup_topk_accuracy, report_results
 from lmc.utils.setup_training import (TrainingElements, save_model_opt,
@@ -42,6 +43,7 @@ class TrainingRunner(ExperimentManager):
         self.max_epochs = self.training_elements.max_steps.get_epoch(
             self.steps_per_epoch
         )
+        self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
 
     def on_train_start(self):
         pass
