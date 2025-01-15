@@ -44,8 +44,8 @@ python main.py perturb  \
         --perturb_inds=1  \
         --same_steps_pperturb=false  \
     --deterministic=$DETERMINISTIC  \
-        --seed1=$SEED  \
-        --seed2=$SEED  \
-        --loader_seed1=$SEED  \
-        --loader_seed2=$SEED  \
-        --perturb_seed1=$SEED  \
+        --seed1=10$SEED  \
+        --seed2=20$SEED  \
+        --loader_seed1=30$SEED  \
+        --loader_seed2=40$SEED  \
+        --perturb_seed1=50$SEED  \

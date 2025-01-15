@@ -10,6 +10,8 @@ from .base_model import BaseModel
 from .layers import norm_layer
 
 plan_mapping: Dict[int, List[int]] = {
+    8: [1, 1, 1],
+    14: [2, 2, 2],
     20: [3, 3, 3],
     18: [2, 2, 2, 2],
     34: [3, 4, 6, 3],
