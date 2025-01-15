@@ -1,6 +1,8 @@
 import abc
 import argparse
+import json
 import logging
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union
@@ -8,7 +10,9 @@ from typing import Union
 from rich.logging import RichHandler
 from torch import nn
 
+import wandb
 from lmc.experiment_config import Experiment
+from lmc.utils.setup_training import cleanup
 
 FORMAT = "%(name)s - %(levelname)s: %(message)s"
 
@@ -61,9 +65,26 @@ class ExperimentManager(abc.ABC):
     @abc.abstractmethod
     def run(self) -> None:
         """Run the job."""
-
         pass
 
     @abc.abstractmethod
     def setup(self) -> None:
         pass
+
+    def finish(self) -> None:
+        # save wandb run summary values to file
+        if self.config.logger.use_wandb:
+            with open(self.config.model_dir / "wandb_summary.json", "w") as f:
+                json.dump(dict(wandb.run.summary), f)
+
+    def run_experiment(self):
+        try:
+            self.setup()
+            self.run()
+            self.finish()
+            return True
+        except Exception:
+            traceback.print_exc()
+            return False
+        finally:
+            cleanup(self.config)

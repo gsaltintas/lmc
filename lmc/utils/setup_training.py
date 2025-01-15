@@ -41,7 +41,7 @@ from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
 from lmc.utils.metrics import Metrics
-from lmc.utils.seeds import make_deterministic, seed_everything, seed_worker
+from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
 
 logger = logging.getLogger("setup")
@@ -500,28 +500,30 @@ def setup_model_dir(config: Trainer) -> Path:
     Raises:
         FileNotFoundError: If the specified `log_dir` does not exist.
     """
-    if (m := config.model_dir) and Path(m).resolve().absolute().exists():
-        return Path(m)
     if not config.logger.log_dir.exists():
         raise FileNotFoundError(f"Must provide an existing log_dir ({config.logger.log_dir})")
-    hashname = config.hashname
-    now = datetime.now()
-    formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
-    model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
-    model_dir.mkdir(exist_ok=True)
-    model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
-    config.model_dir = model_dir
-    
+    if config.model_dir is None:
+        hashname = config.hashname
+        now = datetime.now()
+        formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
+        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
+        logger.info(f"Created model dir: {config.model_dir}")
+    config.model_dir.mkdir(exist_ok=True)
+    config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
+
     # Save code as zip and config as yaml into the model directory.
-    config.save(model_dir, zip_code_base=config.zip_and_save_source)
+    config.save(config.model_dir, zip_code_base=config.zip_and_save_source)
 
-    logger.info(f"Created model dir: {model_dir}")
-    return model_dir
+    return config.model_dir
 
-def setup_device() -> torch.device:
+def setup_device(config: Experiment) -> torch.device:
     """
     Configure and initialize the computing device for PyTorch operations.
     """
+    if config.deterministic:
+        # set env variable for use_deterministic_algorithms
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        torch.use_deterministic_algorithms(True)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -560,17 +562,19 @@ def setup_wandb(config: Experiment) -> None:
                 config=conf_dct,
                 dir=WANDB_DIR,
                 id=config.logger.run_id,
+                mode="offline" if config.logger.wandb_offline else "online",
             )
-            
         if config.model_dir is not None:
-            Path(config.model_dir).joinpath("wandb.txt").write_text(run.url)
+            if run.url is None:
+                url = f"https://wandb.ai/{run.entity}/{run.project}/runs/{run.id}"
+            else:
+                url = run.url
+            Path(config.model_dir).joinpath("wandb.txt").write_text(url)
 
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
-    if config.seeds.deterministic:
-        make_deterministic()
     """Creates all necessary elements. models, datamodules, etc."""
-    device = setup_device()
+    device = setup_device(config)
     model_dir = setup_model_dir(config)
     # config.model_dir.joinpath("barriers").mkdir(exist_ok=True)
 

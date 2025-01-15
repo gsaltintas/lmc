@@ -139,9 +139,6 @@ def zip_and_save_source(target_base_dir: Union[str, Path]) -> None:
 
 @dataclass
 class Seeds(Config):
-    deterministic: bool = False
-
-    _deterministic: str = "If true, make CUDA exactly deterministic."
     _name = "seeds"
     _description = "Collection of seeds used during the experiment"
 
@@ -170,6 +167,8 @@ class Experiment:
     logger: LoggerConfig = None
     lmc: LMCConfig = None
     n_models: int = 1  
+    deterministic: bool = False
+    zip_and_save_source: bool = True
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -178,6 +177,8 @@ class Experiment:
     _name_prefix: str = field(init=True, default="")
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
     _description: str = field(init=True, default="")
+    _deterministic: str = "If true, make CUDA exactly deterministic."
+    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
 
     def __init__(self, *args, **kwargs):
         # Call Trainer's constructor so that 'model', 'data' etc. are set up
@@ -189,6 +190,8 @@ class Experiment:
         self.n_models = kwargs.get("n_models", 1)
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
+        self.deterministic = kwargs.get("deterministic", False)
+        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
 
         # Dynamically build the Seeds class
 
@@ -307,9 +310,6 @@ class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
-    zip_and_save_source: bool = True
-    _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
-
 
 @dataclass(init=False)
 class Finetuner(Trainer):
@@ -353,7 +353,7 @@ class PerturbedTrainer(Trainer):
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
     sample_noise_at: Literal["init", "perturb"] = "init"
     dont_perturb_module_patterns: List[str] = field(init=True, default_factory=lambda: [])
-
+    perturb_debug_dummy_run: bool = False
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -378,6 +378,7 @@ class PerturbedTrainer(Trainer):
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
+        self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
         self.dont_perturb_module_patterns = kwargs.get("dont_perturb_module_patterns", [])
 
         n_models = kwargs.get("n_models", 1)

@@ -497,6 +497,7 @@ class LoggerConfig(Config):
     _description = "Logger configuration"
 
     use_wandb: bool = False
+    wandb_offline: bool = False
     use_tqdm: bool = True
     print_summary: bool = True
     print_optimizers: bool = True

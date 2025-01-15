@@ -1,12 +1,12 @@
 import argparse
 import logging
 import sys
-import traceback
 from typing import Type
 
 from lmc.config import maybe_get_arg
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment.finetune import FinetuningRunner
+from lmc.experiment.logreg import ActiveLearningLogisticRegressionSearch
 from lmc.experiment.perturb import PerturbedTrainingRunner
 from lmc.experiment.train import TrainingRunner
 from lmc.utils.setup_training import cleanup
@@ -18,6 +18,7 @@ managers = dict(
     train=TrainingRunner,
     perturb=PerturbedTrainingRunner,
     finetune=FinetuningRunner,
+    logreg=ActiveLearningLogisticRegressionSearch,
 )
 
 
@@ -26,17 +27,6 @@ def get_experiment(manager_name: str) -> Type[ExperimentManager]:
         raise ValueError("No such runner: {}".format(manager_name))
     else:
         return managers[manager_name]
-
-
-def run_experiment(experiment_manager: ExperimentManager):
-    try:
-        experiment_manager.run()
-        return True
-    except Exception:
-        traceback.print_exc()
-        return False
-    finally:
-        cleanup(experiment_manager.config)
 
 
 if __name__ == "__main__":
@@ -57,7 +47,9 @@ if __name__ == "__main__":
     experiment_class = get_experiment(manager_name)
 
     if config_file is None:
-        usage = "main.py {} [...] => {}".format(manager_name, experiment_class.description)
+        usage = "main.py {} [...] => {}".format(
+            manager_name, experiment_class.description
+        )
         usage += "\n" + "=" * 82 + "\n"
         parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
         parser.add_argument("subcommand")
@@ -68,4 +60,5 @@ if __name__ == "__main__":
         experiment_manager = experiment_class.create_from_args(args)
     else:
         experiment_manager = experiment_class.create_from_file(config_file)
-    run_experiment(experiment_manager)
+
+    experiment_manager.run_experiment()
