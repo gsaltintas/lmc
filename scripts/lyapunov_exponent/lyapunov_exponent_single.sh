@@ -24,7 +24,7 @@ python main.py perturb  \
         --zip_and_save_source=false  \
     --model_name=$MODEL  \
         --norm=$NORM  \
-    --dataset=cifar10  \
+    --dataset=$DATASET  \
         --hflip=true  \
         --random_rotation=10  \
         --random_crop=false  \
