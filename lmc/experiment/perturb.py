@@ -1,20 +1,28 @@
 from dataclasses import dataclass, field
 from typing import Dict
-
 import torch
 from torch.nn.utils import parameters_to_vector
-
-import train
 import wandb
-from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
-                                     get_noise_l2, normalize_noise,
-                                     perturb_model)
+
+from lmc.utils.seeds import seed_everything
+from lmc.butterfly.butterfly import (
+    get_batch_noise,
+    get_gaussian_noise,
+    get_noise_l2,
+    normalize_noise,
+    perturb_model,
+)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
-                                      setup_loader)
+from lmc.utils.setup_training import (
+    TrainingElement,
+    configure_lr_scheduler,
+    setup_loader,
+    setup_model_dir,
+    setup_wandb,
+)
 from lmc.utils.step import Step
 
 
@@ -75,6 +83,12 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
 
     def setup(self) -> None:
+        if self.config.perturb_debug_dummy_run:
+            setup_model_dir(self.config)  # give a place to save wandb run summary
+            # make outcome deterministic for debugging
+            seed_everything(self.config.seeds.seed1)
+            setup_wandb(self.config)
+            return  # speed up testing by only doing the above
         super().setup()
         if self.config.sample_noise_at == "init":
             self.create_noise_dicts()
@@ -97,7 +111,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         )
         log_dct.update(
             {
-                f"static/l2_dist_at_init/{i}-{i+1}": torch.norm(v1 - v2).item()
+                f"static/l2_dist_at_init/{i}-{i + 1}": torch.norm(v1 - v2).item()
                 for i, (v1, v2) in enumerate(
                     zip(self.models_at_init, self.models_at_init[1:]), start=1
                 )
@@ -112,9 +126,9 @@ class PerturbedTrainingRunner(TrainingRunner):
         current_lr = get_lr(element.opt)
         self.logger.info("Lr scheduler will continue from this point (%s).", current_lr)
         for g in element.opt.param_groups:
-            assert (
-                g["lr"] == current_lr
-            ), f"Lr of the parameter group {g} is not configured properly."
+            assert g["lr"] == current_lr, (
+                f"Lr of the parameter group {g} is not configured properly."
+            )
         steps_per_epoch = len(element.train_loader)
 
         if prev_max_steps is None:
@@ -186,11 +200,12 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.logger.info("Model %d lr schedule reset.", ind)
 
     def run(self):
-        self.setup()
+        if self.config.perturb_debug_dummy_run:
+            return self.dummy_run()
         # TPDP: make training step as Step
         print(self.config.display)
         print("Running perturbed training.")
-        early_iter_ckpt_steps = train.get_early_iter_ckpt_steps(
+        early_iter_ckpt_steps = self.get_early_iter_ckpt_steps(
             self.steps_per_epoch, n_ckpts=10
         )
         ep: int = 1
@@ -221,15 +236,11 @@ class PerturbedTrainingRunner(TrainingRunner):
                         continue
                     element.train_iterator.update()
 
-                    loss = train.step_element(
-                        self.config,
+                    self.step_element(
                         element,
                         x,
                         y,
-                        self.device,
-                        self.loss_fn,
                         ep,
-                        self.steps_per_epoch,
                         early_iter_ckpt_steps,
                         i=element_ind + 1,
                     )
@@ -256,3 +267,10 @@ class PerturbedTrainingRunner(TrainingRunner):
             )
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
+
+    def dummy_run(self):
+        # for testing and debugging logreg, this avoids having to do multiple training runs
+        if self.config.logger.use_wandb:
+            # randomly draw from uniform [0, perturb_step)
+            value = torch.rand(1).item() * self.config.perturb_scale
+            wandb.log({"test/dummyvalue": value})

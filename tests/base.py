@@ -2,16 +2,13 @@ from glob import glob
 import os
 from pathlib import Path
 from shutil import rmtree
-import subprocess
-import traceback
 import unittest
 
 import torch
 
 
 class BaseTest(unittest.TestCase):
-
-    TEST_COMMAND = """python main.py {experiment}  \
+    TEST_COMMAND = """python main.py {experiment} {model_dir}  \
             --project test-project  \
                 --run_name test-{experiment}  \
                 --path {data_dir}/{dataset}  \
@@ -19,6 +16,7 @@ class BaseTest(unittest.TestCase):
                 --save_early_iters false  \
                 --cleanup_after false  \
                 --use_wandb {use_wandb}  \
+                --wandb_offline {wandb_offline}  \
                 --zip_and_save_source false  \
             --model_name {model_name}  \
                 --norm layernorm  \
@@ -56,9 +54,9 @@ class BaseTest(unittest.TestCase):
     SEED_2 = 41
 
     def setUp(self):
-        test_path = Path(os.path.relpath(
-            os.path.dirname(os.path.realpath(__file__)), os.getcwd()
-        ))
+        test_path = Path(
+            os.path.relpath(os.path.dirname(os.path.realpath(__file__)), os.getcwd())
+        )
         self.log_dir = test_path / "tmp"
         self.log_dir.mkdir(exist_ok=True)
 
@@ -85,8 +83,10 @@ class BaseTest(unittest.TestCase):
         perturb_inds=[1],
         rewind_lr="false",
         use_wandb="false",
+        wandb_offline="true",
         same_steps_pperturb="false",
         lmc_on_train_end="false",
+        model_dir=None,
         args=[],
     ):
         command = str.format(
@@ -104,42 +104,20 @@ class BaseTest(unittest.TestCase):
             perturb_inds=" ".join(str(x) for x in perturb_inds),
             rewind_lr=rewind_lr,
             use_wandb=use_wandb,
+            wandb_offline=wandb_offline,
             same_steps_pperturb=same_steps_pperturb,
             lmc_on_train_end=lmc_on_train_end,
+            model_dir="" if model_dir is None else f"--model_dir {model_dir}",
             args=args if isinstance(args, str) else " ".join(args),
         )
         return command
 
     @staticmethod
-    def run_command(command, print_output=False):
-        # split command by spaces, remove excess spaces and line continuation symbols ("\"), replace commas with spaces to allow lists
-        one_line = [x for x in "".join(command.split("\\")).split(" ") if len(x) > 0]
-        try:
-            results = subprocess.run(one_line, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            if print_output:
-                print("Error during run: ", e, sep="\n")
-                traceback.print_exc()
-                print(e.stdout)
-                print(e.stderr)
-            return "error"
-        # check that output doesn't contain traceback
-        idx = results.stderr.find("Traceback (")
-        if idx >= 0:
-            print(results.stderr[idx:])
-            return "error"
-        if print_output:
-            print(results.stdout)
-        return results
-
-    @staticmethod
-    def get_last_ckpts(exp_dir, seed1=SEED_1, seed2=SEED_2):
-        ckpt_1 = BaseTest.get_last_created_in_dir(
-            exp_dir / f"model1-seed_{seed1}-ls_{seed1}" / "checkpoints" / "ep-*.ckpt"
-        )
-        ckpt_2 = BaseTest.get_last_created_in_dir(
-            exp_dir / f"model2-seed_{seed2}-ls_{seed2}" / "checkpoints" / "ep-*.ckpt"
-        )
+    def get_last_ckpts(exp_dir):
+        model_1 = next(exp_dir.glob("model1*"))
+        model_2 = next(exp_dir.glob("model2*"))
+        ckpt_1 = BaseTest.get_last_created_in_dir(model_1 / "checkpoints" / "ep-*.ckpt")
+        ckpt_2 = BaseTest.get_last_created_in_dir(model_2 / "checkpoints" / "ep-*.ckpt")
         return ckpt_1, ckpt_2
 
     @staticmethod
