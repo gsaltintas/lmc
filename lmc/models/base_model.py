@@ -131,3 +131,64 @@ class BaseModel(nn.Module):
     @property
     def device(self):
         return next(self.parameters()).device
+
+    @abstractmethod
+    def get_init_stds(self) -> dict[str, float]:
+        """Returns dict of per-layer standard deviations for each parameter in the layer at initialization.
+        The expected L2 norm of each layer is thus standard deviation * sqrt(number of parameters)"""
+        # heuristic approach based on pytorch defaults
+        std = {}
+        for k, v in self.state_dict().items():
+            if k.endswith(".bias"):
+                std[k] = 0.0
+            # norm weight
+            elif k.endswith(".weight") and v.dim() == 1:
+                std[k] = 0.0
+            # conv or linear weight
+            elif k.endswith(".weight") and v.dim() > 1:
+                if self.initialization_strategy in ("xavier_uniform", "glorot_uniform"):
+                    std[k] = xavier_uniform_std(v)
+                elif self.initialization_strategy in ("xavier_normal", "glorot_normal"):
+                    std[k] = xavier_normal_std(v)
+                elif self.initialization_strategy in ("kaiming_uniform", "he_uniform"):
+                    std[k] = kaiming_uniform_std(v)
+                elif self.initialization_strategy in ("kaiming_normal", "he_normal"):
+                    std[k] = kaiming_normal_std(v)
+            else:
+                raise ValueError(f"Unknown layer type and std: name={k} shape={v.shape}")
+        return std
+
+    def get_total_init_std(self) -> float:
+        """Return standard deviation of entire parameter vector at init,
+        i.e. the expected L2 norm of the parameters minus their mean at init"""
+        l2 = 0
+        sd = self.state_dict()
+        for k, v in self.get_init_stds().items():
+            l2 += v**2 * sd[k].nelement()
+        return l2**0.5
+
+
+def fan_in(tensor):
+    k = 1
+    # multiply everything except output size, which is first dim
+    for d in tensor.shape[1:]:
+        k *= d
+    return k
+
+
+def xavier_uniform_std(tensor) -> float:
+    raise NotImplementedError()
+
+
+def xavier_normal_std(tensor) -> float:
+    raise NotImplementedError()
+
+
+def kaiming_uniform_std(tensor) -> float:
+    # kaiming uniform(-1/sqrt(k), 1/sqrt(k)), where k = weight.size(1) * prod(*kernel_size)
+    # std is 1/sqrt(12)*(b-a), where b-a = 2/sqrt(k)
+    return 2 / (12 * fan_in(tensor))**0.5
+
+
+def kaiming_normal_std(tensor) -> float:
+    return (2 / fan_in(tensor))**0.5

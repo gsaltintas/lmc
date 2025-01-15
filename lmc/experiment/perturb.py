@@ -8,7 +8,6 @@ from lmc.utils.seeds import seed_everything
 from lmc.butterfly.butterfly import (
     get_batch_noise,
     get_gaussian_noise,
-    get_noise_l2,
     normalize_noise,
     perturb_model,
 )
@@ -80,6 +79,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                     )
                 if self.config.normalize_perturb:
                     # normalize to self.config.perturb_scale
+                    scale = el.get_total_init_std()
                     self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
 
     def setup(self) -> None:

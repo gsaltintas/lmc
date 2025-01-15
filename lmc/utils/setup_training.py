@@ -193,7 +193,7 @@ def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> Non
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
 
-def configure_model(config: Trainer, device: torch.device) -> 'BaseModel':
+def configure_model(config: Trainer, device: torch.device, print_output=True) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
     out = CLASS_DICT[config.data.dataset]
@@ -206,14 +206,16 @@ def configure_model(config: Trainer, device: torch.device) -> 'BaseModel':
                 conf.model_name = "resnet20"
                 print("hello")
 
-        print(config.model.model_name, conf.model_name)
+        if print_output:
+            print(config.model.model_name, conf.model_name)
         model = ResNet.get_model_from_code(model_code=conf.model_name, output_dim=out, initialization_strategy=conf.initialization_strategy, norm=conf.norm)
 
     # if config.resume_from: 5279952
 
     logger.info("Model created.")
     # logger.info
-    print(model)
+    if print_output:
+        print(model)
     logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
     model = model.to(device)
     return model
