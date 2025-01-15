@@ -14,9 +14,12 @@ DATASET="cifar10"
 NORM="layernorm"
 PERTURB_TYPE="batch"
 
-SEED=$REPLICATE
+SEED=$RANDOM
+LOADER_SEED=$RANDOM
+PERTURB_SEED=$RANDOM
 RUN_NAME="$GROUP-$MODEL-$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE"
-echo $RUN_NAME
+echo "[small_butterfly_single.sh] run name: $RUN_NAME"
+echo "[small_butterfly_single.sh] seeds: training $SEED loader $LOADER_SEED perturb $PERTURB_SEED"
 
 source $HOME/ssetup-uv.sh $DATASET
 
@@ -51,11 +54,11 @@ python main.py perturb  \
         --same_steps_pperturb=false  \
         --normalize_perturb=false  \
     --deterministic=true  \
-        --seed1=10$SEED  \
-        --seed2=20$SEED  \
-        --loader_seed1=30$SEED  \
-        --loader_seed2=40$SEED  \
-        --perturb_seed1=50$SEED  \
+        --seed1=$SEED  \
+        --seed2=$SEED  \
+        --loader_seed1=$LOADER_SEED  \
+        --loader_seed2=$LOADER_SEED  \
+        --perturb_seed1=$PERTURB_SEED  \
     --lmc_check_perms=false  \
         --lmc_on_epoch_end=false  \
         --lmc_on_train_end=true  \
