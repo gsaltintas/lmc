@@ -19,6 +19,7 @@ class Bert(BaseModel):
         output_dim: int = ...,
         initialization_strategy: str = "pretrained",
         norm: str = "layernorm",
+        gradient_checkpointing: bool = True
     ):
         super().__init__(output_dim, initialization_strategy, act="act", norm=norm)
         self.tokenizer = BertTokenizer.from_pretrained(model_name)
@@ -27,7 +28,9 @@ class Bert(BaseModel):
         else:
             # Create a custom configuration
             config = BertConfig.from_pretrained(model_name, num_labels=output_dim)
-            self.model = BertForSequenceClassification(config)
+            self.model = BertForSequenceClassification(config,)
+        if gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
         self.num_layers = self.model.config.num_hidden_layers
 
         self.num_heads = self.model.config.num_attention_heads
@@ -40,19 +43,21 @@ class Bert(BaseModel):
     @staticmethod
     def get_model_from_code(model_code: str, output_dim: int, **kwargs) -> "BaseModel":
         return Bert(model_name=model_code, output_dim=output_dim, **kwargs)
-
+    
     def forward(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: torch.Tensor = None,
+        **kwargs  # This will capture any additional arguments
     ):
         return self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
+            **kwargs  # Pass them along to the model
         )
-
+        
     def permutation_spec(self, prefix: str = "", **kwargs) -> PermSpec:
         names_to_perms = OrderedDict()
         P0 = "P_0"
