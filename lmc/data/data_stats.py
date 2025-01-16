@@ -602,6 +602,48 @@ class DatasetRegistry:
             *cls.generation.get_available_datasets(),
         )
 
+    @classmethod
+    def get_all_confgs(cls) -> Dict[str, Union[VisionConfig, LanguageConfig]]:
+        return  cls.vision._registry | cls.nli._registry| cls.qa._registry| cls.glue._registry| cls.generation._registry
+    
+    @classmethod
+    def get_language_registry(cls) -> Dict[str, LanguageConfig]:
+        return cls.nli._registry| cls.qa._registry| cls.glue._registry| cls.generation._registry
+    
+    
+    
+### Backward Compatibility
+
+
+# Number of samples
+SAMPLE_DICT = {key: conf.samples for key, conf in DatasetRegistry.get_all_confgs.items()}
+# Number of classes
+CLASS_DICT = {key: conf.classes for key, conf in DatasetRegistry.get_all_confgs.items()}
+IS_GENERATION_TASK = {key: conf.task_type == TaskType.GENERATION for key, conf in DatasetRegistry.get_all_confgs.items()}
+TASK_MAPPING = {key: conf.task_type for key, conf in DatasetRegistry.get_all_confgs.items()}
+
+### Vision only
+# Number of channels
+CHANNELS_DICT = {key: conf.channels for key, conf in DatasetRegistry.vision._registry.items()}
+# Image resolutions
+DEFAULT_RES_DICT = {key: conf.resolution for key, conf in DatasetRegistry.vision._registry.items()}
+
+# Standardization statistics
+MEAN_DICT = {key: conf.mean for key, conf in DatasetRegistry.vision._registry.items()}
+STD_DICT = {key: conf.std for key, conf in DatasetRegistry.vision._registry.items()}
+
+# Whether dataset can be cached in memory, available in torch
+OS_CACHED_DICT = {key: conf.can_cache for key, conf in DatasetRegistry.vision._registry.items()}
+TORCH_DICT = {key: conf.torch_dataset for key, conf in DatasetRegistry.vision._registry.items()}
+
+### NLP only
+# Vocabulary sizes for language models
+VOCAB_SIZE_DICT = {key: conf.vocab_size for key, conf in DatasetRegistry.get_language_registry().items()}
+MAX_SEQ_LENGTH_DICT = {key: conf.max_seq_length for key, conf in DatasetRegistry.get_language_registry().items()}
+HUGGING_FACE_DICT = {key: conf.hf_path for key, conf in DatasetRegistry.get_language_registry().items()}
+# Dataset configurations where needed
+HF_CONFIG_DICT = {key: conf.hf_config for key, conf in DatasetRegistry.get_language_registry().items()}
+DATASET_SPLITS = {key: conf.splits for key, conf in DatasetRegistry.get_language_registry().items()}
 
 if __name__ == "__main__":
 
