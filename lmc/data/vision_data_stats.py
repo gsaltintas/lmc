@@ -1,9 +1,15 @@
 """
-Script by Gregor Bachmann (Original: https://github.com/gregorbachmann/scaling_mlps/blob/main/data_utils/data_stats.py)
+Modified from Gregor Bachmann (Original: https://github.com/gregorbachmann/scaling_mlps/blob/main/data_utils/data_stats.py)
 Date: August 1, 2023
 """
 
+from enum import Enum
+from typing import Callable, Dict
+
 import numpy as np
+from torchvision import datasets as D
+
+from lmc.data.utils import TaskType
 
 # Define all the relevant stats for the datasets to look up
 
@@ -90,9 +96,7 @@ MEAN_DICT = {
     "imagenet21": np.array([0.485, 0.456, 0.406]),
     "imagenet": np.array([0.485, 0.456, 0.406]),
     "tinyimagenet": np.array([0.485, 0.456, 0.406]),
-    # "cifar10": np.array([0.5, 0.5, 0.5]),
     "cifar10": np.array([0.49139968, 0.48215827, 0.44653124]),
-    # "cifar10": np.array( [0.4914, 0.4822, 0.4465]), # ffcv example
     "cifar100": np.array([0.49139968, 0.48215827, 0.44653124]),
     "mnist": np.array([0.1307]),
     "stl10": np.array([0.4914, 0.4822, 0.4465]),
@@ -105,8 +109,7 @@ STD_DICT = {
     "imagenet21": np.array([0.229, 0.224, 0.225]),
     "imagenet": np.array([0.229, 0.224, 0.225]),
     "tinyimagenet": np.array([0.229, 0.224, 0.225]),
-    "cifar10": np.array([0.24703233, 0.24348505, 0.26158768]), # gregor's version
-    # "cifar10": np.array([0.2023, 0.1994, 0.201 ]), # ffcv sample notebook
+    "cifar10": np.array([0.24703233, 0.24348505, 0.26158768]), 
     "cifar100": np.array([0.24703233, 0.24348505, 0.26158768]),
     "mnist": np.array([0.3081]),
     "stl10": np.array([0.2471, 0.2435, 0.2616]),
@@ -114,36 +117,56 @@ STD_DICT = {
     "cinic10_wo_cifar10": np.array([0.24205776, 0.23828046, 0.25874835]),
 }
 
-# Whether dataset can be cached in memory
+# Whether dataset can be cached in memory, available in torch
 OS_CACHED_DICT = {
     "imagenet21": False,
     "imagenet": False,
     "tinyimagenet": False,
     "cifar10": True,
     "cifar100": False,
-    # "mnist": False,
     "mnist": True,
     "stl10": True,
     "pets": True,
-    "coyo": False,
     "cinic10": False,
     "cinic10_wo_cifar10": False
 }
 
-from torchvision import datasets as D
 
-# todo: complete tiny imagenet, cinic10s
 TORCH_DICT = {
-    # "imagenet21": False,
     "imagenet": D.ImageNet,
-    # "tinyimagenet": ,
+    "tinyimagenet": "lmc.data.TinyImageNet",
     "cifar10": D.CIFAR10,
     "cifar100": D.CIFAR100,
-    # "mnist": False,
     "mnist": D.MNIST,
     "stl10": D.STL10,
-    # "pets": D.Pe,
-    # "coyo": D.coyo,
-    # "cinic10": D.c,
-    # "cinic10_wo_cifar10": False
+    "pets": D.OxfordIIITPet,
+    "cinic10": "lmc.data.CINIC10",
+    "cinic10_wo_cifar10": "lmc.data.CINIC10_WO_CIFAR10"
+}
+
+IS_GENERATION_TASK = {
+    # Vision tasks (all False)
+    "imagenet21": False,
+    "imagenet": False,
+    "tinyimagenet": False,
+    "cifar10": False,
+    "cifar100": False,
+    "mnist": False,
+    "stl10": False,
+    "cinic10": False,
+    "cinic10_wo_cifar10": False,
+}
+
+TASK_MAPPING = {
+    ## vision
+     "imagenet21": TaskType.CLASSIFICATION,
+    "imagenet": TaskType.CLASSIFICATION,
+    "tinyimagenet": TaskType.CLASSIFICATION,
+    "cifar10": TaskType.CLASSIFICATION,
+    "cifar100": TaskType.CLASSIFICATION,
+    "mnist": TaskType.CLASSIFICATION,
+    "stl10": TaskType.CLASSIFICATION,
+    "cinic10": TaskType.CLASSIFICATION,
+    "cinic10_wo_cifar10": TaskType.CLASSIFICATION,
+    
 }
