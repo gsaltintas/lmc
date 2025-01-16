@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union
 
+import torch
+import torch.autograd.profiler as profiler
 from rich.logging import RichHandler
 from torch import nn
 
@@ -80,7 +82,12 @@ class ExperimentManager(abc.ABC):
     def run_experiment(self):
         try:
             self.setup()
-            self.run()
+            if self.config.logger.profile:
+                with profiler.profile(use_cuda=torch.cuda.is_available()) as prof:
+                    self.run()
+                print(prof.key_averages().table(sort_by="cuda_time_total"))
+            else:
+                self.run()
             self.finish()
             return True
         except Exception:
