@@ -160,99 +160,102 @@ class ResNet(BaseModel):
         return PermSpec(names_to_perms=names_to_perms, acts_to_perms=self._acts_to_perms())
 
 
-    # def permutation_spec(self, permute_residuals: bool = False) -> Permutations:
-    #     first_params = {
-    #         "conv1.weight": ("P_0", None),
-    #         "conv1.bias": ("P_0",),
-    #         "norm1.weight": ("P_0",),
-    #         "norm1.bias": ("P_0",),
-    #     }
-    #     conv_block = lambda layer, ind, perm, inv_perm, block_ind: {
-    #         f"layer{layer}.{ind}.conv{block_ind}.weight": (perm, inv_perm),
-    #         f"layer{layer}.{ind}.conv{block_ind}.bias": (perm,),
-    #         f"layer{layer}.{ind}.norm{block_ind}.weight": (perm,),
-    #         f"layer{layer}.{ind}.norm{block_ind}.bias": (perm,),
-    #     }
+class Residual(nn.Module):
+    def __init__(self, inner_module: nn.Module):
+        super().__init__()
+        self.inner_module = inner_module
+        
+    def forward(self, x):
+        return x + self.inner_module(x)
+    
+def conv_block(in_channels, out_channels, pool=False, norm: str = "batchnorm"):
+    layers = OrderedDict(
+        conv=nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+        norm=norm_layer(norm, out_channels),
+        act=nn.ReLU(inplace=True),
+    )
+    if pool:
+        layers["pool"] = nn.MaxPool2d(2)
+    return nn.Sequential(layers)
 
-    #     def shortcut_block(layer, shortcut_ind, perm, inv_perm):
-    #         if shortcut_ind == 0 and layer != 1:
-    #             return {
-    #                 f"layer{layer}.0.shortcut.0.weight": (perm, inv_perm),
-    #                 f"layer{layer}.0.shortcut.0.bias": (perm,),
-    #                 f"layer{layer}.0.shortcut.1.weight": (perm,),
-    #                 f"layer{layer}.0.shortcut.1.bias": (perm,),
-    #             }
-    #         else:
-    #             if permute_residuals:
-    #                 d = {
-    #                     # f"layer{layer}.{shortcut_ind}.shortcut.0.indices": (perm, inv_perm) ,
-    #                     f"layer{layer}.{shortcut_ind}.shortcut.0.input_indices": (inv_perm,),
-    #                     f"layer{layer}.{shortcut_ind}.shortcut.0.output_indices": (perm,),
-    #                 }
-    #                 return d
-    #             else:
-    #                 # return { f"layer{layer}.{shortcut_ind}.shortcut.0.indices": (None,) }
-    #                 d = {
-    #                     # f"layer{layer}.{shortcut_ind}.shortcut.0.indices": (perm, inv_perm) ,
-    #                     f"layer{layer}.{shortcut_ind}.shortcut.0.input_indices": (None,),
-    #                     f"layer{layer}.{shortcut_ind}.shortcut.0.output_indices": (None,),
-    #                 }
-    #                 return d
 
-    #     if self.config.layers:
-    #         d = self.config.layers
-    #         depth = len(d)
-    #     else:
-    #         d = [(self.config.depth - 2) // 6] * 3
-    #         depth = 3
-    #     layer_perms = {}
-    #     curr_perm = 0
-    #     block_inv_perm = curr_perm
-    #     for i in range(depth):
-    #         # block_perm = curr_perm + d[i] - 1
-    #         for j in range(d[i]):
-    #             curr_perm += 1
-    #             if i > 0 and j == 0:
-    #                 # later layers, later blocks, shortcut is a conv-norm layer
-    #                 # todo: shortcut is a conv
-    #                 layer_perms.update(conv_block(i + 1, j, f"P_{curr_perm}", f"P_{block_inv_perm}", 1))
-    #                 if permute_residuals:
-    #                     layer_perms.update(shortcut_block(i + 1, j, f"P_{curr_perm + 1}", f"P_{block_inv_perm}"))
-    #                     block_inv_perm = curr_perm + 1
-    #                     layer_perms.update(conv_block(i + 1, j, f"P_{block_inv_perm}", f"P_{curr_perm}", 2))
-    #                     curr_perm += 1
-    #                 else:
-    #                     layer_perms.update(shortcut_block(i + 1, j, f"P_{curr_perm + 1}", f"P_{block_inv_perm}"))
-    #                     block_inv_perm = curr_perm + 1
-    #                     layer_perms.update(conv_block(i + 1, j, f"P_{block_inv_perm}", f"P_{curr_perm}", 2))
-    #                     curr_perm += 1
+class ResNet9(BaseModel):
+    def __init__(self, plan, output_dim: int = ..., initialization_strategy: str = ..., norm: str = "layernorm", width: int = 64) -> None:
+        super().__init__(output_dim, initialization_strategy, norm=norm)
+        in_channels = 3
+        self.model = nn.Sequential(
+            OrderedDict(
+                conv1=conv_block(in_channels, width, norm=norm),
+                conv2=conv_block(width, width*2, pool=True, norm=norm),
+                shortcut1=Residual(
+                    nn.Sequential(
+                        OrderedDict(conv1=conv_block(width*2, width*2, norm=norm), conv2=conv_block(width*2, width*2, norm=norm))
+                    ),
+                ),
+                conv3=conv_block(width*2, width*4, pool=True, norm=norm),
+                conv4=conv_block(width*4, width*4, pool=True, norm=norm),
+                shortcut2=Residual(
+                    nn.Sequential(
+                        OrderedDict(conv1=conv_block(width*4, width*4, norm=norm), conv2=conv_block(width*4, width*4, norm=norm))
+                    ),
+                ),
+                pool=nn.Sequential(nn.AdaptiveMaxPool2d((1, 1)), nn.Flatten(start_dim=1)),
+                fc=nn.Linear(width*4, self.config.num_classes),
+            )
+        )
+        self.reset_parameters(initialization_strategy)
 
-    #             else:
-    #                 # first layer, first block
-    #                 layer_perms.update(conv_block(i + 1, j, f"P_{curr_perm}", f"P_{block_inv_perm}", 1))
-    #                 # last block of any layer
-    #                 if permute_residuals:
-    #                     layer_perms.update(conv_block(i + 1, j, f"P_{curr_perm+1}", f"P_{curr_perm}", 2))
-    #                     layer_perms.update(shortcut_block(i + 1, j, f"P_{curr_perm+1}", f"P_{block_inv_perm}"))
-    #                     # layer_perms.update(shortcut_block(i + 1, j, f"P_{curr_perm+1}", None))
-    #                     curr_perm += 1
-    #                     block_inv_perm = curr_perm
-    #                 else:
-    #                     layer_perms.update(conv_block(i + 1, j, f"P_{block_inv_perm}", f"P_{curr_perm}", 2))
-    #                     layer_perms.update(shortcut_block(i + 1, j, None, None))
-    #     curr_perm = block_inv_perm
-    #     names_to_perms = (
-    #         first_params
-    #         | layer_perms
-    #         | {
-    #             "fc.weight": (None, f"P_{curr_perm}"),
-    #             "fc.bias": (None,),
-    #         }
-    #     )
+    def _acts_to_perms(self):
+        #TODO: 
+        pass
+    
+    def permutation_spec(self, prefix: str = "", **kwargs) -> PermSpec:
+        conv_block = lambda layer, perm, inv_perm: {
+            f"conv{layer}.conv.weight": (perm, inv_perm),
+            f"conv{layer}.conv.bias": (perm,),
+            f"conv{layer}.norm.weight": (perm,),
+            f"conv{layer}.norm.bias": (perm,),
+        }
 
-    #     assert (
-    #         len((s := set(names_to_perms)) - set(k := dict(self.model.named_parameters()).keys())) == 0
-    #     ), f"Following keys appear in the permutations but not in the model parameters: {s - k}"
-    #     assert len(k - s) == 0, f"Following keys were not encountered in the permutations: {k - s}"
-    #     # names_to_perms
-    #     return permutation_spec_from_names_to_perms(names_to_perms)
+        def shortcut_block(layer, final_perm, intermediate_perm, inv_perm):
+            d = {}
+            d[f"shortcut{layer}.identity.input_indices"] = (None,)
+            d[f"shortcut{layer}.identity.output_indices"] = (None,)
+            inv_perm_ = inv_perm
+            perm_ = intermediate_perm
+            for shortcut_ind in [1, 2]:
+                if shortcut_ind == 2:
+                    inv_perm_ = intermediate_perm
+                    perm_ = final_perm
+                d = d | {
+                    f"shortcut{layer}.inner_module.conv{shortcut_ind}.conv.weight": (perm_, inv_perm_),
+                    f"shortcut{layer}.inner_module.conv{shortcut_ind}.conv.bias": (perm_,),
+                    f"shortcut{layer}.inner_module.conv{shortcut_ind}.norm.weight": (perm_,),
+                    f"shortcut{layer}.inner_module.conv{shortcut_ind}.norm.bias": (perm_,),
+                }
+            return d
+
+        layer_perms = (
+            conv_block(1, "P_0", None)
+            | conv_block(2, "P_1", "P_0")
+            | shortcut_block(1, "P_1", "P_2", "P_1")
+            | conv_block(3, "P_3", "P_1")
+            | conv_block(4, "P_4", "P_3")
+            | shortcut_block(2, "P_4", "P_5", "P_4")
+        )
+        final_perm_ind = 4
+        names_to_perms = layer_perms | {
+            "fc.weight": (None, f"P_{final_perm_ind}"),
+            "fc.bias": (None,),
+        }
+
+        assert (
+            len((s := set(names_to_perms)) - set(k := dict(self.model.named_parameters()).keys())) == 0
+        ), f"Following keys appear in the permutations but not in the model parameters: {s - k}"
+        assert len(k - s) == 0, f"Following keys were not encountered in the permutations: {k - s}"
+        # names_to_perms
+        if prefix:
+            names_to_perms = OrderedDict((f"{prefix}.{name}", val) for (name, val) in names_to_perms.items())
+        return PermSpec(names_to_perms=names_to_perms, acts_to_perms=self._acts_to_perms())
+
+
