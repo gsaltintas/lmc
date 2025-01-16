@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import os
 from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
@@ -10,7 +11,9 @@ from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
 from rich.console import Console
 from rich.table import Table
 
-from lmc.data.data_stats import MAX_SEQ_LENGTH_DICT, TASK_MAPPING
+from lmc.data.data_stats import (MAX_SEQ_LENGTH_DICT, TASK_MAPPING,
+                                 DatasetRegistry, LanguageConfig, TaskType,
+                                 VisionConfig)
 from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
                                          Inits, Norms)
 from lmc.utils.step import Step
@@ -501,32 +504,74 @@ class DataConfig(Config):
     
     def is_language_dataset(self) -> bool:
         """Check if the selected dataset is a language dataset"""
-        vision_datasets = {"cifar10", "mnist", "cifar100", "tiny-imagenet", "cinic10", "imagenet"}
-        return self.dataset not in vision_datasets
-
+        return not isinstance(
+            DatasetRegistry.get_dataset_info(self.dataset),
+            VisionConfig
+        )
+        
+    
     @property
-    def task_type(self) -> str:
+    def task_type(self) -> TaskType:
         """Get the task type for the dataset"""
-        task_type = TASK_MAPPING.get(self.dataset)
-        return task_type
+        return DatasetRegistry.get_dataset_info(self.dataset).task_type
 
     def is_sequence_labeling(self) -> bool:
         """Check if the current dataset is a sequence labeling task"""
-        return self.task_type() == "sequence_labeling"
+        return self.task_type == TaskType.SEQUENCE_LABELING
 
     def is_question_answering(self) -> bool:
         """Check if the current dataset is a QA task"""
-        return self.task_type() == "question_answering"
+        return self.task_type == TaskType.QUESTION_ANSWERING
 
     def is_classification(self) -> bool:
         """Check if the current dataset is a classification task"""
-        return self.task_type() in ["classification", "natural_language_inference"]
+        return self.task_type in [
+            TaskType.CLASSIFICATION,
+            TaskType.NATURAL_LANGUAGE_INFERENCE
+        ]
 
     def get_num_labels(self) -> int:
         """Get number of labels/classes for the dataset"""
+        config :Union[VisionConfig, LanguageConfig]= DatasetRegistry.get_dataset_info(self.dataset)
         if self.dataset == "glue" and self.glue_task:
-            return CLASS_DICT.get(f"glue/{self.glue_task}", 0)
-        return CLASS_DICT.get(self.dataset, 0)
+            return DatasetRegistry.glue.get(f"glue/{self.glue_task}").classes
+        return config.classes
+    
+    def get_num_in_channels(self) -> int:
+        """Get number of input channels for vision datasets."""
+        if self.is_language_dataset():
+            raise ValueError(f"Cannot get number of channels for language dataset {self.dataset}")
+        
+        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
+        
+        return config.channels
+
+    def get_default_res(self) -> int:
+        """Get default resolution for vision datasets."""
+        if self.is_language_dataset():
+            raise ValueError(f"Cannot get resolution for language dataset {self.dataset}")
+            
+        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
+        
+        return config.resolution
+    
+    
+    def get_hf_path(self) -> str:
+        config: LanguageConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a language dataset")
+        return  config.hf_config
+    @property
+    def dataset_info(self) -> Union[VisionConfig, LanguageConfig]:
+        """Get complete dataset configuration"""
+        return DatasetRegistry.get_dataset_info(self.dataset)
+    
+    def get_steps_per_epoch(self) -> int:
+        return math.ceil(self.dataset_info.samples / self.batch_size)
     
 @dataclass
 class LoggerConfig(Config):

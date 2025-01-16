@@ -1,6 +1,5 @@
 import logging
 import re
-from enum import Enum
 from typing import Callable, Dict, Optional, Tuple
 
 import torch
@@ -19,7 +18,6 @@ torchvision.disable_beta_transforms_warning()
 import logging
 import math
 import os
-import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -36,11 +34,7 @@ from tqdm import tqdm
 
 import wandb
 from lmc.config import DataConfig
-from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DATASET_SPLITS,
-                                 DEFAULT_RES_DICT, HF_CONFIG_DICT,
-                                 HUGGING_FACE_DICT, IS_GENERATION_TASK,
-                                 MEAN_DICT, STD_DICT, TASK_MAPPING, TORCH_DICT,
-                                 TaskType)
+from lmc.data.data_stats import DatasetRegistry, TaskType
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
@@ -254,10 +248,9 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
         padding_side=config.data.padding_side,
         truncation_side=config.data.truncation_side
     )
-    is_generation_task = IS_GENERATION_TASK.get(config.data.dataset, False)
-    if config.data.dataset not in CLASS_DICT:
+    if config.data.dataset not in DatasetRegistry.get_available_datasets():
         raise ValueError(f"Unkown output dimension for dataset {config.data.dataset}")
-    out = CLASS_DICT[config.data.dataset]
+    out = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
     
     if "t5" in conf.model_name.lower():
         model = T5(conf.model_name)
@@ -287,10 +280,10 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
 def configure_vision_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
-    out = CLASS_DICT[config.data.dataset]
+    out = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
     #TODO: load checkpoints
     if "mlp" in conf.model_name:
-        model = MLP.get_model_from_code(conf.model_name, output_dim=out, input_dim=CHANNELS_DICT[config.data.dataset] * DEFAULT_RES_DICT[config.data.dataset] ** 2, initialization_strategy=conf.initialization_strategy, norm=conf.norm, act=conf.act, hidden_dim=conf.width, depth=conf.num_hidden_layers+1)
+        model = MLP.get_model_from_code(conf.model_name, output_dim=out, input_dim=config.data.get_num_in_channels() * config.data.get_default_res() ** 2, initialization_strategy=conf.initialization_strategy, norm=conf.norm, act=conf.act, hidden_dim=conf.width, depth=conf.num_hidden_layers+1)
     elif "resnet" in conf.model_name:
         if conf.model_name == "resnet":
             if config.data.dataset.lower() == "cifar10":
@@ -574,15 +567,11 @@ def setup_nlp_loader(
         g = torch.Generator()
         g.manual_seed(loader_seed)
     
-    # Get dataset and its task type
-    hf_path = HUGGING_FACE_DICT.get(data_conf.dataset)
-    if hf_path is None:
-        raise ValueError(f"Dataset {data_conf.dataset} not found in HUGGING_FACE_DICT")
-    
-    task_type = TASK_MAPPING[data_conf.dataset]
+    dataset_conf = data_conf.dataset_info
+    task_type = data_conf.task_type
     
     # Determine split based on dataset
-    splits = DATASET_SPLITS.get(data_conf.dataset, {"train": "train", "test": "test"})
+    splits = data_conf.splits
     if train:
         split = splits["train"]
     else:
@@ -596,14 +585,14 @@ def setup_nlp_loader(
             split = splits["train"]
     
     # Load dataset
-    dataset_config = HF_CONFIG_DICT.get(data_conf.dataset, {})
+    dataset_config = dataset_conf.hf_config
     load_kwargs = {
         "cache_dir": str(data_conf.path),
         "split": split,
         "name": dataset_config
     }
     
-    dataset = load_dataset(hf_path, **load_kwargs)
+    dataset = load_dataset(dataset_conf.hf_path, **load_kwargs)
     
     # Debug: print first example
     logger.debug(f"First example from dataset: {dataset[0]}")
@@ -645,86 +634,13 @@ def setup_nlp_loader(
         prefetch_factor=2 if data_conf.num_workers>0 else None,
         persistent_workers=True if data_conf.num_workers>0 else False,
     )
-    
-def setup_nlp_loader_old(
-    data_conf: DataConfig, 
-    train: bool, 
-    evaluate: bool, 
-    tokenizer,
-    loader_seed: Optional[int] = None
-) -> DataLoader:
-    """Setup data loader for NLP tasks"""
-    # Set random seeds for reproducibility
-    if loader_seed is not None:
-        torch.manual_seed(loader_seed)
-        g = torch.Generator()
-        g.manual_seed(loader_seed)
-    
-    # Load dataset based on configuration
-    if data_conf.dataset.startswith("glue"):
-        dataset = load_dataset("glue", data_conf.glue_task)
-        split = "train" if train else "validation"
-    else:
-        hf_path = HUGGING_FACE_DICT[data_conf.dataset]
-        dataset_config = HF_CONFIG_DICT.get(data_conf.dataset)
-        load_kwargs = {
-            "cache_dir": str(data_conf.path),
-            "split": "train" if train else "validation"
-        }
-        if dataset_config:
-            load_kwargs["name"] = dataset_config
-        
-        dataset = load_dataset(hf_path, **load_kwargs)
-
-    
-    # Apply text preprocessing based on config
-    def preprocess_function(examples):
-        # Apply text preprocessing options
-        if data_conf.lowercase:
-            examples['text'] = examples['text'].lower()
-        
-        # Tokenize the texts
-        tokenizer_kwargs = {
-            "padding": True if evaluate else False,
-            "truncation": True,
-            "max_length": data_conf.max_seq_length,
-        }
-        
-        return tokenizer(examples['text'], **tokenizer_kwargs)
-    
-    # Transform dataset
-    tokenized_dataset = dataset.map(
-        preprocess_function,
-        batched=True,
-        remove_columns=dataset.column_names
-    )
-    
-    # Setup the appropriate data collator
-    if data_conf.whole_word_masking:
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=True,
-            mlm_probability=data_conf.masking_probability
-        )
-    else:
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-    
-    # Create dataloader
-    batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
-    
-    return DataLoader(
-        tokenized_dataset,
-        batch_size=batch_size,
-        shuffle=train and not evaluate,
-        num_workers=data_conf.num_workers,
-        collate_fn=data_collator,
-        generator=g if loader_seed is not None else None
-    )
-
+  
+  
 def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
     dataset = data_conf.dataset
-    w = DEFAULT_RES_DICT[dataset]
-    mean, std = MEAN_DICT[dataset], STD_DICT[dataset]
+    dataset_conf = data_conf.dataset_info
+    w = dataset_conf.resolution
+    mean, std = dataset_conf.mean, dataset_conf.std
     transforms_ = [transforms.Resize((w, w))]
     if not evaluate:
         if data_conf.random_crop:
@@ -746,7 +662,7 @@ def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, load
     transforms_.append(transforms.ToTensor())
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
-    dataset_cls = TORCH_DICT[dataset]
+    dataset_cls = dataset_conf.torch_dataset
     dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=data_conf.download)
 
     batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 

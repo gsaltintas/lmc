@@ -1,4 +1,3 @@
-import math
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List
@@ -9,7 +8,7 @@ from torchmetrics import SQuAD
 from tqdm import tqdm
 
 import wandb
-from lmc.data.data_stats import SAMPLE_DICT, TaskType
+from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
@@ -40,9 +39,7 @@ class TrainingRunner(ExperimentManager):
         self.device: torch.device
         self.training_elements, self.device = setup_experiment(self.config)
         # import code; code.interact(local=locals()|globals())
-        self.steps_per_epoch = math.ceil(
-            SAMPLE_DICT[self.config.data.dataset] / self.config.data.batch_size
-        )
+        self.steps_per_epoch = self.config.data.get_steps_per_epoch()
         self.max_epochs = self.training_elements.max_steps.get_epoch(
             self.steps_per_epoch
         )

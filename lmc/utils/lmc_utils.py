@@ -15,7 +15,7 @@ from torchmetrics import Accuracy
 from tqdm import tqdm
 
 from lmc.config import Config
-from lmc.data.data_stats import CLASS_DICT
+from lmc.data.data_stats import DatasetRegistry
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.alignment_methods import weight_matching
 from lmc.utils.setup_training import Iterator
@@ -250,7 +250,7 @@ def check_lmc(training_elements, config: Config, ep, log_dct, results: Union[pd.
             
             # Evaluate LMC
             # todo: maybe add this to basemodel or trainingelement
-            num_classes = CLASS_DICT[config.data.dataset]
+            num_classes = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
             results_ = interpolate_evaluate(ep, model, prev_model, None, model.device, el.train_eval_loader, el.test_loader, n_points=config.lmc.n_points, inner_tqdm=el.extra_iterator, num_classes=num_classes)
             results_["model1_ind"] = model_ind
             results_["model2_ind"] = other_ind
