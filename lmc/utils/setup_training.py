@@ -1,10 +1,6 @@
-import torchvision
-
-torchvision.disable_beta_transforms_warning()
 import logging
 import math
 import os
-import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -270,6 +266,25 @@ def configure_lr_scheduler(
             anneal_strategy="cost",
             pct_start=warmup_ratio,
         )
+    elif lr_scheduler == "flat":
+        # Adjust the schedule to account for continuation
+        start_ind = global_step if global_step < training_steps else 0
+        # resetting lr scheduler, needs to be followed by reset_base_lrs
+        if global_step > 0:
+            schedule = np.interp(
+                np.arange(0, training_steps + 1),
+                [0, warmup_steps, global_step, training_steps],
+                [0, 1, 1, 1],
+            )[start_ind:]
+        else:
+            schedule = np.interp(
+                np.arange(0, training_steps + 1),
+                [0, warmup_steps, training_steps],
+                [0, 1, 1],
+            )[start_ind:]
+        scheduler = optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda=lambda x: schedule[x]
+        )
     elif lr_scheduler == "triangle":
         # Adjust the schedule to account for continuation
         start_ind = global_step if global_step < training_steps else 0
@@ -311,20 +326,25 @@ def configure_lr_scheduler(
 def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
     dataset = data_conf.dataset
     w = DEFAULT_RES_DICT[dataset]
-    mean, std = MEAN_DICT[dataset], STD_DICT[dataset]
+    mean, std = list(MEAN_DICT[dataset]), list(STD_DICT[dataset])
     transforms_ = [transforms.Resize((w, w))]
     if not evaluate:
-        if data_conf.random_crop:
-            transforms_.append(transforms.RandomCrop(w, fill=mean))
         if data_conf.hflip:
             transforms_.append(transforms.RandomHorizontalFlip())
         if (rot := data_conf.random_rotation):
             transforms_.append(transforms.RandomRotation(rot))
+        if data_conf.random_translate:
+            t = data_conf.random_translate / w
+            transforms_.append(transforms.RandomAffine(degrees=0, translate=(t, t), fill=mean))
         if data_conf.gaussian_blur:
             transforms_.append(transforms.GaussianBlur(kernel_size=3))
-        # TODO: do the cutmix/mixup
-
+    # put ToTensor here because RandomErasing needs it (can't move it earlier as that would break regression tests due to reordering transforms)
     transforms_.append(transforms.ToTensor())
+    if not evaluate:
+        if data_conf.cutout:
+            scale = data_conf.cutout / w
+            transforms_.append(transforms.RandomErasing(p=0.5, scale=(0.02, scale), ratio=(0.3, 3.3), value=mean))
+        # TODO: do the cutmix/mixup
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = TORCH_DICT[dataset]
@@ -332,16 +352,15 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
 
     batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 
 
-    torch.manual_seed(loader_seed)
     g = torch.Generator()
-    g.manual_seed(loader_seed)
+    if loader_seed is not None:
+        g.manual_seed(loader_seed)
 
     loader = DataLoader(
         dataset, batch_size=batch_size, shuffle=train, 
         num_workers=data_conf.num_workers, 
         generator=g, worker_init_fn=seed_worker
     )
-
     return loader
 
 def setup_model_dir(config: Trainer) -> Path:

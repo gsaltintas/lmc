@@ -35,7 +35,6 @@ python main.py logreg  \
     --dataset=$DATASET  \
         --hflip=true  \
         --random_rotation=10  \
-        --random_crop=false  \
     --optimizer=sgd  \
         --training_steps=50ep  \
         --lr=0.1   \
