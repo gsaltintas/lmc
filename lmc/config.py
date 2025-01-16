@@ -10,6 +10,7 @@ from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
 from rich.console import Console
 from rich.table import Table
 
+from lmc.data.data_stats import MAX_SEQ_LENGTH_DICT, TASK_MAPPING
 from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
                                          Inits, Norms)
 from lmc.utils.step import Step
@@ -395,6 +396,7 @@ class TrainerConfig(Config):
     save_best: bool = True
     use_scaler: bool = False
     label_smoothing: float = 0.0
+    gradient_accumulation_steps: int = 1
 
     _training_steps = "Total number of steps (st) or epochs (ep), specify as Xep or Xst"
     _save_freq = "Frequency to save checkpoints during training in steps (st) or epochs (ep), specify as Xep or Xst"
@@ -409,11 +411,23 @@ class DataConfig(Config):
     # Dataset choices including both vision and language datasets
     dataset: Literal[
         # Vision datasets
-        "cifar10", "mnist", "cifar100", "tiny-imagenet",
-        # Language datasets
-        "wikitext-2", "wikitext-103", "squad", "glue", "cord",
+        "cifar10", "mnist", "cifar100", "tiny-imagenet",  "cinic10", "imagenet",
+        
+        # Language datasets - Text Classification/Regression (CR)
+        "snli", "scitail", "glue",
+        
+        # Language datasets - Question Answering (QA)
+        "squad_v1", "squad_v2", "newsqa", "hotpotqa", 
+        "duorc", "drop", "wikihop", "boolq", "comqa",
+        
+        # Language datasets - Sequence Labeling (SL)
+        "conll2003", "ptb", "conj",
+        
+        # Language datasets - Language Modeling
+        "wikitext-2", "wikitext-103", "cord", "cord-v2",
         "webtext", "c4", "pile", "bookcorpus"
     ]
+
 
     # General configurations
     batch_size: int = 128
@@ -428,6 +442,7 @@ class DataConfig(Config):
     cutmix: float = 0.0
     gaussian_blur: bool = False
     random_rotation: float = 0.0
+    random_translate: float = 0.0
     random_crop: bool = False
     cutout: Optional[int] = None
 
@@ -481,16 +496,38 @@ class DataConfig(Config):
             if self.masking_probability > 1.0 or self.masking_probability < 0.0:
                 raise ValueError("masking_probability must be between 0 and 1")
 
+        self.max_seq_length = MAX_SEQ_LENGTH_DICT.get(self.dataset, 128)
         return super().__post_init__()
     
     def is_language_dataset(self) -> bool:
         """Check if the selected dataset is a language dataset"""
-        language_datasets = {
-            "wikitext-2", "wikitext-103", "squad", "glue", 
-            "cord", "webtext", "c4", "pile", "bookcorpus"
-        }
-        return self.dataset in language_datasets
+        vision_datasets = {"cifar10", "mnist", "cifar100", "tiny-imagenet", "cinic10", "imagenet"}
+        return self.dataset not in vision_datasets
 
+    @property
+    def task_type(self) -> str:
+        """Get the task type for the dataset"""
+        task_type = TASK_MAPPING.get(self.dataset)
+        return task_type
+
+    def is_sequence_labeling(self) -> bool:
+        """Check if the current dataset is a sequence labeling task"""
+        return self.task_type() == "sequence_labeling"
+
+    def is_question_answering(self) -> bool:
+        """Check if the current dataset is a QA task"""
+        return self.task_type() == "question_answering"
+
+    def is_classification(self) -> bool:
+        """Check if the current dataset is a classification task"""
+        return self.task_type() in ["classification", "natural_language_inference"]
+
+    def get_num_labels(self) -> int:
+        """Get number of labels/classes for the dataset"""
+        if self.dataset == "glue" and self.glue_task:
+            return CLASS_DICT.get(f"glue/{self.glue_task}", 0)
+        return CLASS_DICT.get(self.dataset, 0)
+    
 @dataclass
 class LoggerConfig(Config):
     _name = "logger"
@@ -515,6 +552,7 @@ class LoggerConfig(Config):
     log_dir: Path = Path("../experiments")
     cleanup_after: bool = False
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
+    profile: bool = False
 
     _cleanup_after: str = (
         "Pass true only if you want to delete the experiment directory after experiment is finished."
@@ -541,19 +579,21 @@ class Model:
 
 @dataclass
 class ModelConfig_(Config):
-    model_name: str
+    model_name: str = field(init=True, kw_only=True)
 
     norm: Norms = None
     act: Activations = "relu"
     initialization_strategy: Inits = "kaiming_normal"
     ckpt_path: Optional[Path] = None
+    gradient_checkpointing: bool = True
 
-    _model_name = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
-    _initialization_strategy = "Initialization strategy for the model's layers"
-
-    _name = "model"
-    _description = ""
-    _add_prefix = False
+    _model_name: str = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
+    _initialization_strategy: str = "Initialization strategy for the model's layers"
+    _gradient_checkpointing: str = "Only implemented for HuggingFace models, disable by passing false"
+    
+    _name: str = "model"
+    _description: str = ""
+    _add_prefix: str = False
 
     def __post_init__(self):
         correct_name = pattern_matched(self.model_name, MODEL_NAME_PATTERNS)

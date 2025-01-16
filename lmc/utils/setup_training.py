@@ -1,6 +1,7 @@
 import logging
 import re
-from typing import Optional, Tuple
+from enum import Enum
+from typing import Callable, Dict, Optional, Tuple
 
 import torch
 import torchvision
@@ -9,7 +10,7 @@ from torch.utils.data import DataLoader
 from transformers import (AutoModelForCausalLM,
                           AutoModelForSequenceClassification, AutoTokenizer,
                           DataCollatorForLanguageModeling,
-                          DataCollatorWithPadding)
+                          DataCollatorWithPadding, PreTrainedTokenizer)
 
 from lmc.models.bert import Bert
 from lmc.models.t5 import T5
@@ -35,8 +36,11 @@ from tqdm import tqdm
 
 import wandb
 from lmc.config import DataConfig
-from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DEFAULT_RES_DICT,
-                                 MEAN_DICT, STD_DICT, TORCH_DICT)
+from lmc.data.data_stats import (CHANNELS_DICT, CLASS_DICT, DATASET_SPLITS,
+                                 DEFAULT_RES_DICT, HF_CONFIG_DICT,
+                                 HUGGING_FACE_DICT, IS_GENERATION_TASK,
+                                 MEAN_DICT, STD_DICT, TASK_MAPPING, TORCH_DICT,
+                                 TaskType)
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
@@ -95,6 +99,7 @@ class TrainingElement(object):
     metrics: Metrics = field(init=True, default_factory=Metrics)
     # TODO: later add the loss func for nlp models
     loss_fn: callable = nn.CrossEntropyLoss()
+    tokenizer: AutoTokenizer = None
 
     def on_epoch_start(self):
         """ call on epoch start to prepare for training the epoch """
@@ -249,10 +254,15 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
         padding_side=config.data.padding_side,
         truncation_side=config.data.truncation_side
     )
+    is_generation_task = IS_GENERATION_TASK.get(config.data.dataset, False)
+    if config.data.dataset not in CLASS_DICT:
+        raise ValueError(f"Unkown output dimension for dataset {config.data.dataset}")
+    out = CLASS_DICT[config.data.dataset]
+    
     if "t5" in conf.model_name.lower():
         model = T5(conf.model_name)
-    elif "bert" in conf.mode_name.lower():
-        model = Bert(conf.model_name)
+    elif "bert" in conf.model_name.lower():
+        model = Bert(conf.model_name, output_dim=out)
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
         num_labels = 1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
@@ -268,12 +278,13 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
         )
     
     model = model.to(device)
-    
     logger.info(f"Created NLP model: {conf.model_name}")
+    print(model)
+    
     return model, tokenizer
 
 
-def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
+def configure_vision_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
     out = CLASS_DICT[config.data.dataset]
@@ -293,10 +304,19 @@ def configure_model(config: Trainer, model_dir: Path, device: torch.device, retu
 
     logger.info("Model created.")
     # logger.info
-    # print(model)
+    print(model)
     model = model.to(device)
     logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
     return model
+
+        
+def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
+    """ creates a model given the configuration """
+    conf = config.model
+    if config.data.is_language_dataset():
+        return configure_nlp_model(config, model_dir, device)
+    else:
+        return configure_vision_model(config, model_dir, device, return_perms, model_ind)
 
 def configure_optimizer(config: Trainer, model: 'BaseModel'):
     opt_conf = config.trainer.opt
@@ -386,9 +406,247 @@ def configure_lr_scheduler(
     else:
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
+def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, data_conf: DataConfig, evaluate: bool) -> Callable:
+    """Returns the appropriate preprocessing function for the given task type."""
+    
+    def preprocess_classification(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+        }
+        # Handle both single strings and lists of strings
+        text = examples.get('text', examples.get('sentence', ''))
+        if data_conf.lowercase:
+            # Handle both single string and list of strings
+            if isinstance(text, str):
+                text = text.lower()
+            else:
+                text = [t.lower() for t in text]
+        return tokenizer(text, **tokenizer_kwargs)
 
+    def preprocess_sequence_pair(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+        }
+        # Make sure we get lists of strings
+        text1 = examples.get('sentence1', examples.get('question', []))
+        text2 = examples.get('sentence2', examples.get('context', []))
+        
+        if data_conf.lowercase:
+            text1 = [t.lower() for t in text1]
+            text2 = [t.lower() for t in text2]
+        return tokenizer(text1, text2, **tokenizer_kwargs)
+
+    def preprocess_generation(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+        }
+        # Make sure we get a list of strings
+        if isinstance(examples['text'], str):
+            text = [examples['text']]
+        else:
+            text = examples['text']
+            
+        if data_conf.lowercase:
+            text = [t.lower() for t in text]
+        return tokenizer(text, **tokenizer_kwargs)
+
+    def preprocess_qa(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+            "return_offsets_mapping": True
+        }
+        # Make sure we get lists of strings
+        questions = examples['question']
+        contexts = examples['context']
+        
+        # Handle possible single string inputs
+        if isinstance(questions, str):
+            questions = [questions]
+        if isinstance(contexts, str):
+            contexts = [contexts]
+            
+        if data_conf.lowercase:
+            questions = [q.lower() for q in questions]
+            contexts = [c.lower() for c in contexts]
+        return tokenizer(questions, contexts, **tokenizer_kwargs)
+
+    def preprocess_nli(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+        }
+        
+        # Get labels
+        labels = examples.get('label', examples.get('labels', None))
+        # Filter out -1 labels or map them to a valid class
+        labels = [l if l != -1 else 0 for l in labels]  # Map -1 to 0 or handle as needed
+        
+        if labels is None:
+            raise ValueError("No labels found in dataset (looking for 'label' or 'labels' field)")
+        
+        # NLI typically has premise and hypothesis
+        premise = examples.get('premise', examples.get('sentence1', []))
+        hypothesis = examples.get('hypothesis', examples.get('sentence2', []))
+        
+        if data_conf.lowercase:
+            premise = [p.lower() for p in premise]
+            hypothesis = [h.lower() for h in hypothesis]
+        # Tokenize inputs
+        tokenized = tokenizer(premise, hypothesis, **tokenizer_kwargs)
+        
+        # Add labels to the tokenized output
+        tokenized['labels'] = labels
+        
+        return tokenized
+
+    def preprocess_sequence_labeling(examples):
+        tokenizer_kwargs = {
+            "padding": True if evaluate else False,
+            "truncation": True,
+            "max_length": data_conf.max_seq_length,
+            "return_offsets_mapping": True,
+            "return_special_tokens_mask": True
+        }
+        # Get the text and labels
+        tokens = examples.get('tokens', examples.get('words', []))
+        labels = examples.get('tags', examples.get('labels', []))
+        
+        if data_conf.lowercase:
+            tokens = [[t.lower() for t in seq] for seq in tokens]
+            
+        # Tokenize the text
+        tokenized = tokenizer(
+            tokens,
+            is_split_into_words=True,
+            **tokenizer_kwargs
+        )
+        
+        if labels is not None:
+            # Align labels with wordpiece tokens
+            aligned_labels = []
+            for i, label in enumerate(labels):
+                word_ids = tokenized.word_ids(batch_index=i)
+                previous_word_idx = None
+                label_ids = []
+                for word_idx in word_ids:
+                    if word_idx is None:
+                        label_ids.append(-100)
+                    elif word_idx != previous_word_idx:
+                        label_ids.append(label[word_idx])
+                    else:
+                        label_ids.append(-100 if not data_conf.label_all_tokens else label[word_idx])
+                    previous_word_idx = word_idx
+                aligned_labels.append(label_ids)
+            tokenized["labels"] = aligned_labels
+            
+        return tokenized
+
+    preprocessors = {
+        TaskType.CLASSIFICATION: preprocess_classification,
+        TaskType.SEQUENCE_PAIR: preprocess_sequence_pair,
+        TaskType.GENERATION: preprocess_generation,
+        TaskType.QUESTION_ANSWERING: preprocess_qa,
+        TaskType.NATURAL_LANGUAGE_INFERENCE: preprocess_nli,
+        TaskType.SEQUENCE_LABELING: preprocess_sequence_labeling
+    }
+    
+    return preprocessors[task_type]
 
 def setup_nlp_loader(
+    data_conf: DataConfig, 
+    train: bool, 
+    evaluate: bool, 
+    tokenizer: PreTrainedTokenizer,
+    loader_seed: Optional[int] = None
+) -> DataLoader:
+    """Setup data loader for NLP tasks"""
+    if loader_seed is not None:
+        torch.manual_seed(loader_seed)
+        g = torch.Generator()
+        g.manual_seed(loader_seed)
+    
+    # Get dataset and its task type
+    hf_path = HUGGING_FACE_DICT.get(data_conf.dataset)
+    if hf_path is None:
+        raise ValueError(f"Dataset {data_conf.dataset} not found in HUGGING_FACE_DICT")
+    
+    task_type = TASK_MAPPING[data_conf.dataset]
+    
+    # Determine split based on dataset
+    splits = DATASET_SPLITS.get(data_conf.dataset, {"train": "train", "test": "test"})
+    if train:
+        split = splits["train"]
+    else:
+        # For evaluation, prefer validation split if it exists, otherwise use test
+        if evaluate and "validation" in splits:
+            split = splits["validation"]
+        elif "test" in splits:
+            split = splits["test"]
+        else:
+            logger.warning(f"Dataset {data_conf.dataset} has no validation/test split, using train split")
+            split = splits["train"]
+    
+    # Load dataset
+    dataset_config = HF_CONFIG_DICT.get(data_conf.dataset, {})
+    load_kwargs = {
+        "cache_dir": str(data_conf.path),
+        "split": split,
+        "name": dataset_config
+    }
+    
+    dataset = load_dataset(hf_path, **load_kwargs)
+    
+    # Debug: print first example
+    logger.debug(f"First example from dataset: {dataset[0]}")
+    logger.debug(f"Dataset features: {dataset.features}")
+    
+    # Get appropriate preprocessor
+    preprocessor = get_task_preprocessor(task_type, tokenizer, data_conf, evaluate)
+    
+    # Transform dataset
+    tokenized_dataset = dataset.map(
+        preprocessor,
+        batched=True,
+        remove_columns=dataset.column_names
+    )
+    
+    # Setup data collator based on task
+    if task_type == TaskType.GENERATION and data_conf.whole_word_masking:
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=True,
+            mlm_probability=data_conf.masking_probability
+        )
+    else:
+        data_collator = DataCollatorWithPadding(tokenizer)
+    
+    batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
+    loader_kwargs=dict(
+        
+    )
+    return DataLoader(
+        tokenized_dataset,
+        batch_size=batch_size,
+        shuffle=train and not evaluate,
+        num_workers=data_conf.num_workers,
+        collate_fn=data_collator,
+        generator=g if loader_seed is not None else None, 
+        worker_init_fn=seed_worker,
+        pin_memory=True,
+        prefetch_factor=2 if data_conf.num_workers>0 else None,
+        persistent_workers=True if data_conf.num_workers>0 else False,
+    )
+    
+def setup_nlp_loader_old(
     data_conf: DataConfig, 
     train: bool, 
     evaluate: bool, 
@@ -407,11 +665,17 @@ def setup_nlp_loader(
         dataset = load_dataset("glue", data_conf.glue_task)
         split = "train" if train else "validation"
     else:
-        dataset = load_dataset(
-            data_conf.dataset,
-            cache_dir=str(data_conf.path),
-            split="train" if train else "test"
-        )
+        hf_path = HUGGING_FACE_DICT[data_conf.dataset]
+        dataset_config = HF_CONFIG_DICT.get(data_conf.dataset)
+        load_kwargs = {
+            "cache_dir": str(data_conf.path),
+            "split": "train" if train else "validation"
+        }
+        if dataset_config:
+            load_kwargs["name"] = dataset_config
+        
+        dataset = load_dataset(hf_path, **load_kwargs)
+
     
     # Apply text preprocessing based on config
     def preprocess_function(examples):
@@ -457,7 +721,7 @@ def setup_nlp_loader(
         generator=g if loader_seed is not None else None
     )
 
-def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
+def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
     dataset = data_conf.dataset
     w = DEFAULT_RES_DICT[dataset]
     mean, std = MEAN_DICT[dataset], STD_DICT[dataset]
@@ -467,10 +731,16 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
             transforms_.append(transforms.RandomCrop(w, fill=mean))
         if data_conf.hflip:
             transforms_.append(transforms.RandomHorizontalFlip())
+        if data_conf.random_translate:
+            t = data_conf.random_translate / w
+            transforms_.append(transforms.RandomAffine(degrees=0, translate=(t, t), scale=(0.02, 1), shear=0, fill=mean))
         if (rot := data_conf.random_rotation):
             transforms_.append(transforms.RandomRotation(rot))
         if data_conf.gaussian_blur:
             transforms_.append(transforms.GaussianBlur(kernel_size=3))
+        if data_conf.cutout:
+            scale = data_conf.cutout / w
+            transforms_.append(transforms.RandomErasing(scale=(0.02, scale), ratio=(1, 1), value=mean))
         # TODO: do the cutmix/mixup
 
     transforms_.append(transforms.ToTensor())
@@ -492,6 +762,11 @@ def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed
     )
 
     return loader
+
+def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None, tokenizer:AutoTokenizer = None) -> DataLoader:
+    if data_conf.is_language_dataset():
+        return setup_nlp_loader(data_conf, train, evaluate, tokenizer=tokenizer, loader_seed=loader_seed)
+    return setup_vision_loader(data_conf, train, evaluate, loader_seed=loader_seed)
 
 def setup_model_dir(config: Trainer) -> Path:
     """
@@ -593,6 +868,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
+        tokenizer = None
         
         if is_nlp_task:
             model, tokenizer = configure_nlp_model(config, model_dir, device)
@@ -660,7 +936,8 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             test_loader=test_loader,
             max_steps=max_steps,
             save_freq_step=save_freq,
-            perturb_seed=perturb_seed
+            perturb_seed=perturb_seed,
+            tokenizer=tokenizer
         ))
     seed_everything(first_seed)
     if config.logger.use_tqdm:
