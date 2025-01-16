@@ -1,6 +1,3 @@
-import torchvision
-
-torchvision.disable_beta_transforms_warning()
 import argparse
 import unittest
 
@@ -14,7 +11,6 @@ class TestConfig(unittest.TestCase):
         norm="layernorm",
         hflip=True,
         random_rotation=10,
-        random_crop=False,
         lr_scheduler="triangle",
         lr=0.001,
         warmup_ratio=0.02,

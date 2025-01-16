@@ -23,7 +23,8 @@ class BaseTest(unittest.TestCase):
             --dataset {dataset}  \
                 --hflip true  \
                 --random_rotation 10  \
-                --random_crop false  \
+                --random_translate 0  \
+                --cutout 0  \
             --optimizer sgd  \
                 --training_steps 2ep  \
                 --lr 0.1   \
