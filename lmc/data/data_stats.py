@@ -580,30 +580,32 @@ class DatasetRegistry:
                 name: config for name, config in zip(dataset_names, configs)
             },
         }
+        
+    @classmethod
+    def get_all_registries(cls) -> List[BaseRegistry]:
+        return [cls.vision, cls.qa, cls.generation, cls.nli, cls.glue]
 
     @classmethod
     def get_dataset_info(cls, dataset_name: str) -> Union[VisionConfig, LanguageConfig]:
         """Get configuration for a single dataset."""
         # Try each registry
-        for registry in [cls.vision, cls.qa]:  # add others
-            try:
+        for registry in cls.get_all_registries():
+            if hasattr(registry, dataset_name):
                 return registry.get(dataset_name)
-            except KeyError:
-                continue
         raise ValueError(f"Dataset {dataset_name} not found in any registry")
 
     @classmethod
     def get_available_datasets(cls) -> List[str]:
-        return list(
+        return [
             *cls.vision.get_available_datasets(),
             *cls.nli.get_available_datasets(),
             *cls.qa.get_available_datasets(),
             *cls.glue.get_available_datasets(),
             *cls.generation.get_available_datasets(),
-        )
+            ]
 
     @classmethod
-    def get_all_confgs(cls) -> Dict[str, Union[VisionConfig, LanguageConfig]]:
+    def get_all_configs(cls) -> Dict[str, Union[VisionConfig, LanguageConfig]]:
         return  cls.vision._registry | cls.nli._registry| cls.qa._registry| cls.glue._registry| cls.generation._registry
     
     @classmethod
@@ -616,11 +618,11 @@ class DatasetRegistry:
 
 
 # Number of samples
-SAMPLE_DICT = {key: conf.samples for key, conf in DatasetRegistry.get_all_confgs.items()}
+SAMPLE_DICT = {key: conf.samples for key, conf in DatasetRegistry.get_all_configs().items()}
 # Number of classes
-CLASS_DICT = {key: conf.classes for key, conf in DatasetRegistry.get_all_confgs.items()}
-IS_GENERATION_TASK = {key: conf.task_type == TaskType.GENERATION for key, conf in DatasetRegistry.get_all_confgs.items()}
-TASK_MAPPING = {key: conf.task_type for key, conf in DatasetRegistry.get_all_confgs.items()}
+CLASS_DICT = {key: conf.classes for key, conf in DatasetRegistry.get_all_configs().items()}
+IS_GENERATION_TASK = {key: conf.task_type == TaskType.GENERATION for key, conf in DatasetRegistry.get_all_configs().items()}
+TASK_MAPPING = {key: conf.task_type for key, conf in DatasetRegistry.get_all_configs().items()}
 
 ### Vision only
 # Number of channels
