@@ -1,5 +1,4 @@
 from copy import deepcopy
-import json
 import unittest
 from pathlib import Path
 from typing import Any, Dict
@@ -78,8 +77,7 @@ class TestConfig(BaseTest):
             self._check_nested_dict(config_yaml, base_config)
             match_1 = self.ckpts_match(ckpt_1, base_ckpt_1)
             match_2 = self.ckpts_match(ckpt_2, base_ckpt_2)
-            with open(run_dir / "wandb_summary.json", "r") as f:
-                value = json.load(f)["lmc-0-1/lmc/loss/weighted/barrier_train"]
+            value = self.get_summary_value("lmc-0-1/lmc/loss/weighted/barrier_train")
             return match_1, match_2, value
 
         with self.subTest("cmd: run from command line passing config file"):
