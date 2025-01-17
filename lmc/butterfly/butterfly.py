@@ -3,7 +3,7 @@ import math
 import re
 from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -52,17 +52,39 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
         loss_fn = torch.nn.CrossEntropyLoss()
 
     batch = next(iter(dataloader))
-    # Unpack inputs and targets (adjust if your dataloader provides a different structure)
-    inputs, targets = batch
+    if model.is_language_model:
+        # Handle language model batch
+        batch = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v 
+                for k, v in batch.items()}
+        
+        # Forward pass and loss calculation
+        outputs = model(**batch)
+        
+        # Use model's built-in loss if available
+        if hasattr(outputs, "loss"):
+            loss = outputs.loss
+        elif hasattr(outputs, "logits") and "labels" in batch:
+            if loss_fn is not None:
+                loss = loss_fn(outputs.logits.view(-1, outputs.logits.size(-1)), 
+                                batch["labels"].view(-1))
+            else:
+                loss = nn.CrossEntropyLoss()(outputs.logits.view(-1, outputs.logits.size(-1)), 
+                                            batch["labels"].view(-1))
+        else:
+            raise ValueError("Could not compute loss for language model")
+            
+    else:
+        # Unpack inputs and targets (adjust if your dataloader provides a different structure)
+        inputs, targets = batch
 
-    # Move inputs and targets to the device of the model
-    inputs, targets = inputs.to(model.device), targets.to(model.device)
+        # Move inputs and targets to the device of the model
+        inputs, targets = inputs.to(model.device), targets.to(model.device)
 
-    # Perform a forward pass
-    outputs = model(inputs)
+        # Perform a forward pass
+        outputs = model(inputs)
 
-    # Compute the cross-entropy loss
-    loss = loss_fn(outputs, targets)
+        # Compute the cross-entropy loss
+        loss = loss_fn(outputs, targets)
     loss.backward()
 
     # Compute gradients w.r.t the model's parameters
@@ -76,8 +98,7 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
             grad = torch.zeros_like(param)
         else:
             noise[name] = grad.clone()
-        # if param.requires_grad:
-        #     noise[name] = torch.autograd.grad(loss, param, retain_graph=True, create_graph=False)[0]
+
     model.zero_grad()
     return noise
 
@@ -144,9 +165,15 @@ def get_noise_l2(noise_dct: OrderedDict) -> float:
         noise_l2 += p.pow(2).sum().item()
     return noise_l2
 
-def get_average_grad_norm(model: "BaseModel", dataloader: DataLoader, loss_fn: callable = None, num_datapoints: int =1) -> float:
+def get_average_grad_norm(
+    model: "BaseModel", 
+    dataloader: DataLoader, 
+    loss_fn: callable = None, 
+    num_datapoints: int = 1
+) -> Tuple[float, int]:
     """
     Calculate the gradient norm of a model over specified number of datapoints.
+    Handles both vision and language models.
     
     Args:
         model: The neural network model
@@ -155,26 +182,59 @@ def get_average_grad_norm(model: "BaseModel", dataloader: DataLoader, loss_fn: c
         num_datapoints: Number of batches to process (default=1), pass -1 to iterate through all points
     
     Returns:
-        float: Average L2 norm of the gradients
+        tuple[float, int]: A tuple containing:
+            - Average L2 norm of the gradients
+            - Total number of parameters with a gradient in the model
     """
-
     model.zero_grad()
     
-    if loss_fn is None:
+    if loss_fn is None and not model.is_language_model:
         loss_fn = torch.nn.CrossEntropyLoss()
-        
-    for i, (inputs, targets) in enumerate(dataloader):
-        if i !=  -1 and i >= num_datapoints:
+    
+    processed_batches = 0
+    
+    for i, batch in enumerate(dataloader):
+        if i != -1 and i >= num_datapoints:
             break
-        inputs, targets = inputs.to(model.device), targets.to(model.device)
-
-        # Perform a forward pass
-        outputs = model(inputs)
-
-        # Compute the cross-entropy loss
-        loss = loss_fn(outputs, targets)
+            
+        if model.is_language_model:
+            # Handle language model batch
+            batch = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v 
+                    for k, v in batch.items()}
+            
+            # Forward pass and loss calculation
+            outputs = model(**batch)
+            
+            # Use model's built-in loss if available
+            if hasattr(outputs, "loss"):
+                loss = outputs.loss
+            elif hasattr(outputs, "logits") and "labels" in batch:
+                if loss_fn is not None:
+                    loss = loss_fn(outputs.logits.view(-1, outputs.logits.size(-1)), 
+                                 batch["labels"].view(-1))
+                else:
+                    loss = nn.CrossEntropyLoss()(outputs.logits.view(-1, outputs.logits.size(-1)), 
+                                                batch["labels"].view(-1))
+            else:
+                raise ValueError("Could not compute loss for language model")
+                
+        else:
+            # Handle vision model batch
+            if isinstance(batch, (list, tuple)):
+                inputs, targets = batch
+            else:
+                raise ValueError(f"Unexpected batch format for vision model: {type(batch)}")
+                
+            inputs = inputs.to(model.device)
+            targets = targets.to(model.device)
+            
+            outputs = model(inputs)
+            loss = loss_fn(outputs, targets)
+        
         loss.backward()
-
+        processed_batches += 1
+    
+    # Calculate gradient norm
     total_norm = 0.
     param_count = 0
     for param in model.parameters():
@@ -183,11 +243,14 @@ def get_average_grad_norm(model: "BaseModel", dataloader: DataLoader, loss_fn: c
             total_norm += param_norm.item() ** 2
             param_count += param.numel()
     
-    # Divide by both number of parameters and number of datapoints
-    avg_grad_norm = torch.sqrt(torch.tensor(total_norm)) / (param_count * num_datapoints)
-
+    # Divide by both number of parameters and number of processed batches
+    if processed_batches == 0 or param_count == 0:
+        avg_grad_norm = 0.0
+    else:
+        avg_grad_norm = torch.sqrt(torch.tensor(total_norm)) / (param_count * processed_batches)
+    
     model.zero_grad()
-    return avg_grad_norm
+    return avg_grad_norm, param_count
 
 def normalize_noise(noise_dct: OrderedDict[str, torch.Tensor], l2: float):
     """ Normalize the noise dict to have a total l2 length """

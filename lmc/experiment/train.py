@@ -290,10 +290,8 @@ class TrainingRunner(ExperimentManager):
         return loss.detach()
 
     def eval_epoch(self, ep, log_dct, curr_step):
-        print("hello")
         for i, element in enumerate(self.training_elements, start=1):
             if curr_step > element.max_steps.get_step(self.steps_per_epoch):
-                print("skipping")
                 continue
                 
             # Save checkpoint
