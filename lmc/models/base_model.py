@@ -158,15 +158,6 @@ class BaseModel(nn.Module):
                 raise ValueError(f"Unknown layer type and std: name={k} shape={v.shape}")
         return std
 
-    def get_total_init_std(self) -> float:
-        """Return standard deviation of entire parameter vector at init,
-        i.e. the expected L2 norm of the parameters minus their mean at init"""
-        l2 = 0
-        sd = self.state_dict()
-        for k, v in self.get_init_stds().items():
-            l2 += v**2 * sd[k].nelement()
-        return l2**0.5
-
 
 def fan_in(tensor):
     k = 1

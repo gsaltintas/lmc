@@ -2,15 +2,14 @@ from collections import defaultdict
 import unittest
 
 import torch
-from torch.nn.utils import parameters_to_vector
 
-from lmc.butterfly.butterfly import get_noise_l2
+from lmc.butterfly.butterfly import get_l2
 from lmc.experiment_config import Trainer
 from lmc.utils.seeds import seed_everything
 from lmc.utils.setup_training import configure_model
 
 
-class TestNoiseScale(unittest.TestCase):
+class TestNoise(unittest.TestCase):
     def setUp(self):
         seed_everything(42)
 
@@ -40,7 +39,7 @@ class TestNoiseScale(unittest.TestCase):
                     else:
                         sqsum += torch.sum(v**2).item()
                         params[k].append(v)
-                verify_sqsum = get_noise_l2(model.state_dict())
+                verify_sqsum = get_l2(model.state_dict())**2
                 self.assertAlmostEqual(sqsum + norm_sqsum, verify_sqsum.item(), places=1)
                 l2.append(sqsum**0.5)
 
@@ -59,6 +58,9 @@ class TestNoiseScale(unittest.TestCase):
         self._check_init_std("mlp/128x3", "kaiming_normal")
         self._check_init_std("resnet20-8", "kaiming_uniform")
         self._check_init_std("resnet20-16", "kaiming_normal")
+
+    def test_batch_noise(self):
+        pass  # TODO
 
 
 if __name__ == "__main__":

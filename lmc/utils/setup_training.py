@@ -235,7 +235,7 @@ def configure_lr_scheduler(
     optimizer: optim.Optimizer,
     training_steps: int,
     lr_scheduler: str = None,
-    warmup_ratio: int = 0,
+    warmup_ratio: float = 0,
     lr_schedule: dict = None,
     global_step: int = 0,
     warmup_steps: int = None,

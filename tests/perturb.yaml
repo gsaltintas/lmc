@@ -60,7 +60,7 @@ perturb_step:
 resume_from: null
 rewind_lr: false
 same_steps_pperturb: true
-sample_noise_at: init
+sample_noise_at: perturb
 seeds:
   loader_seed1: 42
   loader_seed2: 41

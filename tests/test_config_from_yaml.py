@@ -77,7 +77,7 @@ class TestConfig(BaseTest):
             self._check_nested_dict(config_yaml, base_config)
             match_1 = self.ckpts_match(ckpt_1, base_ckpt_1)
             match_2 = self.ckpts_match(ckpt_2, base_ckpt_2)
-            value = self.get_summary_value("lmc-0-1/lmc/loss/weighted/barrier_train")
+            value = self.get_summary_value(model_dir, "lmc-0-1/lmc/loss/weighted/barrier_train")
             return match_1, match_2, value
 
         with self.subTest("cmd: run from command line passing config file"):

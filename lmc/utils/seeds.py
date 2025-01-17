@@ -1,5 +1,6 @@
 import random
 from contextlib import contextmanager
+from typing import Optional
 
 import numpy as np
 import torch
@@ -23,7 +24,7 @@ def seed_worker(loader_seed):
 
 
 @contextmanager
-def temp_seed(seed: int):
+def temp_seed(seed: Optional[int]):
     """
     Context manager to temporarily set random seeds for Python, NumPy, and PyTorch.
 
@@ -34,6 +35,8 @@ def temp_seed(seed: int):
         with temp_seed(42):
             # Code that requires the temporary seed
     """
+    if seed is None:
+        return
     # Save current RNG states
     state_python = random.getstate()
     state_numpy = np.random.get_state()

@@ -70,15 +70,14 @@ class TestTrainingRunner(BaseTest):
     def test_dummy_logreg(self):
         # logic test: check that logistic regression over dummy values works
         def run_dummy_logreg(model_dir):
-            command = self.get_test_command(
+            return self.run_command_and_return_result(
+                model_dir,
+                "logreg/max_entropy_x",
                 is_dummy_run=True,
                 logreg_y="test/dummyvalue",
                 logreg_n=10,
                 model_dir=self.log_dir / model_dir,
             )
-            result = run_command(command, print_output=True)
-            self.assertFalse(command_result_is_error(result))
-            return self.get_summary_value("logreg/max_entropy_x")
 
         run_1 = run_dummy_logreg("test-logreg-1")
         # dummy runs draw logreg_y uniformly from [0, perturb_step)

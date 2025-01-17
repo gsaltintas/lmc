@@ -1,28 +1,30 @@
 import logging
 import math
 import re
-from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
 
+from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.seeds import temp_seed
+from lmc.utils.setup_training import setup_loader
 
 logger = logging.getLogger(__name__)  # Add this line to define the logger
 
 
-def _should_perturb_parameter(param_name: str, dont_perturb_module_patterns: Optional[List[str]] = None) -> bool:
+def _should_perturb_parameter(
+    param_name: str, dont_perturb_module_patterns: Optional[List[str]]
+) -> bool:
     """
     Check if a parameter should be perturbed based on its name and the dont_perturb_module_patterns.
-    
+
     Args:
         param_name (str): Name of the parameter
-        
+
     Returns:
         bool: True if the parameter should be perturbed, False otherwise
     """
@@ -33,9 +35,27 @@ def _should_perturb_parameter(param_name: str, dont_perturb_module_patterns: Opt
             return False
     return True
 
-def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=None, loss_fn: callable = None, dont_perturb_patterns: List[str] = None) -> Dict[str, torch.Tensor]:
+
+def get_perturbed_layers(
+    model, dont_perturb_module_patterns: Optional[List[str]] = None
+) -> Set[str]:
     """
-    Get a random (based on the seed) batch from the dataloader and compute noise as the gradient 
+    Returns a set of parameter names that should be perturbed
+    """
+    layers = set()
+    for name, param in model.named_parameters():
+        if param.requires_grad and _should_perturb_parameter(
+            name, dont_perturb_module_patterns
+        ):
+            layers.add(name)
+    return layers
+
+
+def get_batch_noise(
+    model: "BaseModel", dataloader: DataLoader, loss_fn: nn.Module, layers
+) -> Dict[str, torch.Tensor]:
+    """
+    Get a random (based on the seed) batch from the dataloader and compute noise as the gradient
     with respect to the provided loss.
 
     Args:
@@ -69,20 +89,19 @@ def get_batch_noise(model: "BaseModel", dataloader: DataLoader, noise_seed: int=
     noise = {}
     for name, param in model.named_parameters():
         grad = param.grad
-        if not _should_perturb_parameter(name, dont_perturb_patterns):
+        if name not in layers:
             logger.info(f"Not generating any noise for parameter ({name}).")
             noise[name] = torch.zeros_like(param)
         elif grad is None:
             grad = torch.zeros_like(param)
         else:
             noise[name] = grad.clone()
-        # if param.requires_grad:
-        #     noise[name] = torch.autograd.grad(loss, param, retain_graph=True, create_graph=False)[0]
     model.zero_grad()
     return noise
 
+
 @torch.no_grad()
-def get_gaussian_noise(model: "BaseModel", noise_seed: int = None, dont_perturb_patterns:Optional[List[str]] = None) -> Dict[str, torch.Tensor]:
+def get_gaussian_noise(model: "BaseModel", layers) -> Dict[str, torch.Tensor]:
     """_summary_
 
     Args:
@@ -92,38 +111,26 @@ def get_gaussian_noise(model: "BaseModel", noise_seed: int = None, dont_perturb_
     Returns:
         Dict[str, torch.Tensor]: _description_
     """
-    def _get_noise_dct():
-        model.zero_grad()
-        noise_dct = dict()
-        for name, param in model.named_parameters():
-            if not param.requires_grad or not _should_perturb_parameter(name, dont_perturb_patterns):
-                logger.info(f"Not generating any noise for parameter ({name}).")
-                noise_dct[name] = torch.zeros_like(param)
-                continue
-
-            fan_in = 1.
-            if param.ndim >= 2 :
-                fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(param)
-                
-            noise = torch.empty_like(param)
-            std = 1. / math.sqrt(fan_in)
-            with torch.no_grad():
-                torch.nn.init.normal_(noise, 0, std)
-            noise_dct[name] = noise
-        model.zero_grad()
-        return noise_dct
-
-    if noise_seed is not None:
-        with temp_seed(noise_seed):
-            noise_dct = _get_noise_dct()
-    else:
-        noise_dct = _get_noise_dct()
+    model.zero_grad()
+    std = model.get_init_stds()
+    noise_dct = dict()
+    for name, param in model.named_parameters():
+        if name not in layers:
+            logger.info(f"Not generating any noise for parameter ({name}).")
+            noise_dct[name] = torch.zeros_like(param)
+            continue
+        noise = torch.empty_like(param)
+        with torch.no_grad():
+            torch.nn.init.normal_(noise, 0, std[name])
+        noise_dct[name] = noise
+    model.zero_grad()
     return noise_dct
-    
 
 
 @torch.no_grad()
-def perturb_model(model: nn.Module, noise_dct: OrderedDict, noise_multiplier: float = 1., inplace: bool = True) -> nn.Module:
+def perturb_model(
+    model: nn.Module, noise_dct: Dict[str, torch.Tensor], inplace: bool = True
+) -> nn.Module:
     perturb_params = dict()
     for n, p in model.named_parameters():
         if not p.requires_grad:
@@ -131,8 +138,8 @@ def perturb_model(model: nn.Module, noise_dct: OrderedDict, noise_multiplier: fl
             continue
         with torch.no_grad():
             param_noise = noise_dct[n]
-            perturb_params[n] = p + param_noise*noise_multiplier
-    if inplace: 
+            perturb_params[n] = p + param_noise
+    if inplace:
         model.load_state_dict(perturb_params)
     else:
         model = deepcopy(model)
@@ -140,14 +147,68 @@ def perturb_model(model: nn.Module, noise_dct: OrderedDict, noise_multiplier: fl
     return model
 
 
-def get_noise_l2(noise_dct: OrderedDict[str, torch.Tensor]) -> float:
-    return torch.linalg.norm(parameters_to_vector(noise_dct.values()))
+def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
+    if isinstance(noise, dict):
+        noise = parameters_to_vector(noise.values())
+    return torch.linalg.norm(noise)
 
 
-def normalize_noise(noise_dct: OrderedDict[str, torch.Tensor], l2: float):
-    """ Normalize the noise dict to have a total l2 length """
-    total_norm = get_noise_l2(noise_dct)
-    norm_factor = l2 / total_norm
+def get_all_init_l2s(model, layers) -> Tuple[float, Dict[str, float]]:
+    """Return standard deviation of specified layers at init,
+    i.e. the expected L2 norm of the parameters minus their mean at init"""
+    init_stds = {}
+    total_sqsum = 0
+    stds = model.get_init_stds()
+    for k, v in model.named_parameters():
+        if k in layers:
+            sqsum = stds[k]**2 * v.nelement()
+            init_stds[k] = sqsum**0.5
+            total_sqsum += sqsum
+    return total_sqsum**0.5, init_stds
+
+
+def scale_noise(
+    noise_dct: Dict[str, torch.Tensor], scale: float, normalize_l2: bool, model, layers
+):
+    """Normalize the noise dict to have a total l2 length"""
+    log_dct = {}
+    # log expected l2 (std) and per-layer std
+    expected_l2, expected_layer_l2 = get_all_init_l2s(model, layers)
+    log_dct["init_std"] = expected_l2
+    for k, v in expected_layer_l2.items():
+        log_dct[f"init_std/{k}"] = v
+    # log l2 of noise before scaling
+    actual_norm = get_l2(noise_dct)
+    log_dct["l2"] = actual_norm
+    # do the scaling
+    if normalize_l2:
+        scale *= expected_l2 / actual_norm
     for name, n in noise_dct.items():
-        noise_dct[name] = n * norm_factor
-    return noise_dct
+        noise_dct[name] = n * scale
+    # log l2 and per-layer l2 of scaled noise
+    log_dct["l2-scaled"] = get_l2(noise_dct)
+    for k, v in noise_dct.items():
+        log_dct[f"l2-scaled/{k}"] = get_l2(v)
+    return noise_dct, log_dct
+
+
+def sample_noise_and_perturb(
+    config: PerturbedTrainer, model, perturb_seed: int, loss_fn: nn.Module
+):
+    layers = get_perturbed_layers(model, config.dont_perturb_module_patterns)
+    if config.perturb_mode == "batch":
+        dl = setup_loader(
+            config.data,
+            train=True,
+            evaluate=False,
+            loader_seed=perturb_seed,
+        )
+        noise = get_batch_noise(model, dataloader=dl, loss_fn=loss_fn, layers=layers)
+    elif config.perturb_mode == "gaussian":
+        with temp_seed(perturb_seed):
+            noise = get_gaussian_noise(model, layers=layers)
+    noise, log_dct = scale_noise(
+        noise, config.perturb_scale, config.normalize_perturb, model, layers
+    )
+    perturb_model(model, noise)
+    return log_dct

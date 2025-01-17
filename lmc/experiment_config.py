@@ -338,7 +338,7 @@ class PerturbedTrainer(Trainer):
     same_steps_pperturb: bool = True
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
-    sample_noise_at: Literal["init", "perturb"] = "init"
+    sample_noise_at: Literal["init", "perturb"] = "perturb"  #TODO does nothing, always sample at perturb time, kept for backwards compatibility
     dont_perturb_module_patterns: List[str] = field(init=True, default_factory=lambda: [])
     perturb_debug_dummy_run: bool = False
 
