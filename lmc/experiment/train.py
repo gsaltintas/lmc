@@ -107,6 +107,7 @@ class TrainingRunner(ExperimentManager):
         self.on_train_end(ep)
 
     def on_epoch_end(self, ep: int, log_dct: dict):
+        log_dct["lr/global_step"] = self.global_step
         self.eval_epoch(
             ep,
             log_dct,
@@ -153,6 +154,7 @@ class TrainingRunner(ExperimentManager):
 
 
     def step_element(self, element, batch, ep, ckpt_steps: List[int] = [], i: int = 1):
+        element.curr_step += 1
         # Get learning rate
         if element.scheduler is None:
             lr = element.opt.param_groups[0]["lr"]
@@ -161,7 +163,8 @@ class TrainingRunner(ExperimentManager):
         
         if self.config.logger.use_wandb:
             wandb.log({f"lr/model{i}": lr})
-        if (element.curr_step + 1) % self.config.trainer.gradient_accumulation_steps == 0:
+            wandb.log({f"lr/step/model{i}": element.curr_step})
+        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             element.opt.zero_grad()
         if self.config.data.is_language_dataset():
             loss = self._step_element_language(element, batch)
@@ -219,7 +222,7 @@ class TrainingRunner(ExperimentManager):
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
     
-        if (element.curr_step + 1) % self.config.trainer.gradient_accumulation_steps == 0:
+        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             loss.backward()
             if (clip_val := self.config.trainer.opt.gradient_clip_val):
                 torch.nn.utils.clip_grad_norm_(
@@ -229,7 +232,6 @@ class TrainingRunner(ExperimentManager):
             element.opt.step()
             if element.scheduler is not None:
                 element.scheduler.step()
-        element.curr_step += 1
 
         # Update metrics based on task
         with torch.no_grad():
@@ -272,7 +274,6 @@ class TrainingRunner(ExperimentManager):
         element.opt.step()
         if element.scheduler is not None:
             element.scheduler.step()
-        element.curr_step += 1
 
         # update metrics
         acc, topk = mixup_topk_accuracy(

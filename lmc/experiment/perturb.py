@@ -6,17 +6,14 @@ from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
 
 import wandb
-from lmc.butterfly.butterfly import (get_average_grad_norm, get_batch_noise,
-                                     get_gaussian_noise, get_noise_l2,
-                                     normalize_noise, perturb_model)
+from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
+                                     get_noise_l2, normalize_noise,
+                                     perturb_model)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.seeds import seed_everything
 from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
-                                      setup_loader, setup_model_dir,
-                                      setup_wandb)
+                                      setup_loader)
 from lmc.utils.step import Step
 
 
@@ -50,12 +47,6 @@ class PerturbedTrainingRunner(TrainingRunner):
           
 
     def setup(self) -> None:
-        if self.config.perturb_debug_dummy_run:
-            setup_model_dir(self.config)  # give a place to save wandb run summary
-            # make outcome deterministic for debugging
-            seed_everything(self.config.seeds.seed1)
-            setup_wandb(self.config)
-            return  # speed up testing by only doing the above
         super().setup()
         if self.config.sample_noise_at == "init":
             self.create_noise_dicts()

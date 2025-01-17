@@ -3,22 +3,30 @@
 PERTURB_STEP=$1
 SCALE=$2
 REPLICATE=$3
-DETERMINISTIC=$4
+MODEL=$4
+BATCH_SIZE=$5
+LR=$6
+WARMUP_RATIO=$7
+DONT_PERTURB_PATTERNS=$8
+GROUP=$9
 
-MODEL=resnet20-32
 DATASET="cifar10"
 NORM="layernorm"
-PERTURB_TYPE="gaussian"
+PERTURB_TYPE="batch"
 
-SEED=$REPLICATE
-RUN_NAME="$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE-d$DETERMINISTIC"
-echo $RUN_NAME
+SEED=$RANDOM
+LOADER_SEED=$RANDOM
+PERTURB_SEED=$RANDOM
+RUN_NAME="$GROUP-$MODEL-$PERTURB_TYPE-p$PERTURB_STEP-s$SCALE-r$REPLICATE"
+echo "[small_butterfly_single.sh] run name: $RUN_NAME"
+echo "[small_butterfly_single.sh] seeds: training $SEED loader $LOADER_SEED perturb $PERTURB_SEED"
 
 source $HOME/ssetup-uv.sh $DATASET
 
 python main.py perturb  \
     --project="$SSETUP_PROJECT_NAME-$SSETUP_EXP_NAME"  \
         --run_name=$RUN_NAME  \
+        --group=$GROUP  \
         --path=$SLURM_TMPDIR/data/$DATASET  \
         --log_dir=$SSETUP_OUTPUT_DIR  \
         --save_early_iters=false  \
@@ -30,11 +38,13 @@ python main.py perturb  \
     --dataset=$DATASET  \
         --hflip=true  \
         --random_rotation=10  \
+        --random_crop=false  \
     --optimizer=sgd  \
         --training_steps=50ep  \
-        --lr=0.1   \
+        --batch_size=$BATCH_SIZE  \
+        --lr=$LR   \
         --lr_scheduler=triangle  \
-        --warmup_ratio=0.02  \
+        --warmup_ratio=$WARMUP_RATIO  \
         --momentum=0.9  \
     --n_models=2  \
         --perturb_mode=$PERTURB_TYPE  \
@@ -42,9 +52,14 @@ python main.py perturb  \
         --perturb_step=$PERTURB_STEP  \
         --perturb_inds=1  \
         --same_steps_pperturb=false  \
-    --deterministic=$DETERMINISTIC  \
+        --normalize_perturb=false  \
+    --deterministic=true  \
         --seed1=$SEED  \
         --seed2=$SEED  \
-        --loader_seed1=$SEED  \
-        --loader_seed2=$SEED  \
-        --perturb_seed1=$SEED  \
+        --loader_seed1=$LOADER_SEED  \
+        --loader_seed2=$LOADER_SEED  \
+        --perturb_seed1=$PERTURB_SEED  \
+    --lmc_check_perms=false  \
+        --lmc_on_epoch_end=false  \
+        --lmc_on_train_end=true  \
+    --dont_perturb_module_patterns=$DONT_PERTURB_PATTERNS  \

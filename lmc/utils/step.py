@@ -36,7 +36,7 @@ class Step:
         if not self.value.endswith("ep") and not self.value.endswith(
             "st"
         ):
-            raise ValueError(f"Please specify {self._name} steps as either X | Xst or Xep.")
+            raise ValueError(f"Please specify {self._name} steps as either X | Xst or Xep: current value {self.value}.")
 
     @property
     def suffix(self):

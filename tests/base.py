@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from glob import glob
@@ -25,16 +26,17 @@ class BaseTest(unittest.TestCase):
             --dataset {dataset}  \
                 --hflip true  \
                 --random_rotation 10  \
-                --random_crop false  \
+                --random_translate 0  \
+                --cutout 0  \
             --optimizer sgd  \
-                --training_steps 2ep  \
+                --training_steps {training_steps}  \
                 --lr 0.1   \
                 --lr_scheduler triangle  \
                 --warmup_ratio 0.02  \
                 --momentum 0.9  \
                 --rewind_lr {rewind_lr}  \
             --n_models 2  \
-                --perturb_mode gaussian  \
+                --perturb_mode {perturb_mode}  \
                 --perturb_step {perturb_step}  \
                 --perturb_inds {perturb_inds}  \
                 --perturb_scale {perturb_scale}  \
@@ -79,9 +81,11 @@ class BaseTest(unittest.TestCase):
         seed2=SEED_2,
         perturb_step=0,
         perturb_scale=0,
+        perturb_mode="batch",
         deterministic=True,
         model_name="mlp/128x3",
         dataset="mnist",
+        training_steps="2ep",
         perturb_inds=[1],
         rewind_lr="false",
         use_wandb="false",
@@ -100,11 +104,13 @@ class BaseTest(unittest.TestCase):
             seed2=seed2,
             perturb_step=perturb_step,
             perturb_scale=perturb_scale,
+            perturb_mode=perturb_mode,
             deterministic=deterministic,
             log_dir=self.log_dir,
             data_dir=self.data_dir,
             model_name=model_name,
             dataset=dataset,
+            training_steps=training_steps,
             perturb_inds=" ".join(str(x) for x in perturb_inds),
             rewind_lr=rewind_lr,
             use_wandb=use_wandb,
@@ -152,4 +158,9 @@ class BaseTest(unittest.TestCase):
                     if l1 != l2:
                         print(f"Lines differ, {i}:\n{l1}\n{l2}")
                         return False
-        return True
+
+    @staticmethod
+    def get_summary_value(model_dir, key):
+        with open(Path(model_dir) / "wandb_summary.json", "r") as f:
+            value = json.load(f)[key]
+        return value

@@ -29,14 +29,12 @@ python main.py logreg  \
         --save_early_iters=false  \
         --cleanup_after=false  \
         --use_wandb=true  \
-        --wandb_offline=true  \
         --zip_and_save_source=false  \
     --model_name=$MODEL  \
         --norm=$NORM  \
-    --dataset=cifar10  \
+    --dataset=$DATASET  \
         --hflip=true  \
         --random_rotation=10  \
-        --random_crop=false  \
     --optimizer=sgd  \
         --training_steps=50ep  \
         --lr=0.1   \

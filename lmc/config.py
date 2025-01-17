@@ -393,8 +393,7 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = Step("1ep") #field(init=True, default_factory=lambda: Step("1ep"))
-    # save_freq: str = "1ep"
+    save_freq: Step = field(init=True, default_factory=lambda: Step("1ep"))
     save_early_iters: bool = False
     save_best: bool = True
     use_scaler: bool = False
@@ -445,9 +444,9 @@ class DataConfig(Config):
     cutmix: float = 0.0
     gaussian_blur: bool = False
     random_rotation: float = 0.0
+    random_crop: bool = False  #TODO this does nothing, only kept here to preserve backwards compatibility
     random_translate: float = 0.0
-    random_crop: bool = False
-    cutout: Optional[int] = None
+    cutout: int = 0
 
     # Language-specific configurations
     tokenizer_name: Optional[str] = None
