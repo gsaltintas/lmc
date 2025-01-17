@@ -9,6 +9,15 @@ from tests.base import BaseTest
 
 
 class TestTrainingRunner(BaseTest):
+    def test_training_steps(self):
+        # check if an arbitrary number of training steps can run
+        for step in [9, 392]:
+            with self.subTest(f"training steps: {step}"):
+                model_dir = self.log_dir / f"test-training-steps-{step}"
+                command = self.get_test_command(model_name="resnet20-8", dataset="cifar10", training_steps=f"{step}st", lmc_on_train_end="true", use_wandb="true", model_dir=model_dir)
+                result = run_command(command, print_output=True)
+                self.assertFalse(command_result_is_error(result))
+                self.assertEqual(self.get_summary_value(model_dir, "lr/global_step"), step)
 
     def test_butterfly_deterministic(self):
         # check whether model pairs are same or not

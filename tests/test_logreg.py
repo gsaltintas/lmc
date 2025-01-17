@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 import unittest
 import numpy as np
 
@@ -80,9 +78,7 @@ class TestTrainingRunner(BaseTest):
             )
             result = run_command(command, print_output=True)
             self.assertFalse(command_result_is_error(result))
-            with open(self.log_dir / model_dir / "wandb_summary.json", "r") as f:
-                value = json.load(f)["logreg/max_entropy_x"]
-            return value
+            return self.get_summary_value("logreg/max_entropy_x")
 
         run_1 = run_dummy_logreg("test-logreg-1")
         # dummy runs draw logreg_y uniformly from [0, perturb_step)

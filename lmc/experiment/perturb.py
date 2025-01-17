@@ -4,7 +4,6 @@ import torch
 from torch.nn.utils import parameters_to_vector
 import wandb
 
-from lmc.utils.seeds import seed_everything
 from lmc.butterfly.butterfly import (
     get_batch_noise,
     get_gaussian_noise,
@@ -20,8 +19,6 @@ from lmc.utils.setup_training import (
     TrainingElement,
     configure_lr_scheduler,
     setup_loader,
-    setup_model_dir,
-    setup_wandb,
 )
 from lmc.utils.step import Step
 
