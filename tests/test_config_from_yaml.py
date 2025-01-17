@@ -1,5 +1,4 @@
 from copy import deepcopy
-import json
 import unittest
 from pathlib import Path
 from typing import Any, Dict
@@ -49,7 +48,12 @@ class TestConfig(BaseTest):
 
     def test_cmd_same_as_yaml(self):
         # run from command line to generate config file first
-        command = self.get_test_command(model_dir=self.log_dir / "test-config-base", lmc_on_train_end="true", use_wandb="true", perturb_scale=1)
+        command = self.get_test_command(
+            model_dir=self.log_dir / "test-config-base",
+            lmc_on_train_end="true",
+            use_wandb="true",
+            perturb_scale=1,
+        )
         result = run_command(command, print_output=True)
         self.assertFalse(command_result_is_error(result))
         base_run = self.log_dir / "test-config-base"
@@ -73,29 +77,37 @@ class TestConfig(BaseTest):
             self._check_nested_dict(config_yaml, base_config)
             match_1 = self.ckpts_match(ckpt_1, base_ckpt_1)
             match_2 = self.ckpts_match(ckpt_2, base_ckpt_2)
-            with open(run_dir / "wandb_summary.json", "r") as f:
-                value = json.load(f)["lmc-0-1/lmc/loss/weighted/barrier_train"]
+            value = self.get_summary_value("lmc-0-1/lmc/loss/weighted/barrier_train")
             return match_1, match_2, value
 
         with self.subTest("cmd: run from command line passing config file"):
             config = copy_config("test-config-cmd")
             config.save(self.log_dir / "test-config-cmd-yaml", zip_code_base=False)
             result = run_command(
-                f"python main.py perturb --config_file {self.log_dir / 'test-config-cmd-yaml' / 'config.yaml'}", print_output=True
+                f"python main.py perturb --config_file {self.log_dir / 'test-config-cmd-yaml' / 'config.yaml'}",
+                print_output=True,
             )
             self.assertFalse(command_result_is_error(result))
-            ckpts_match_1, ckpts_match_2, value_cmd = get_last_run_results("test-config-cmd")
+            ckpts_match_1, ckpts_match_2, value_cmd = get_last_run_results(
+                "test-config-cmd"
+            )
             self.assertTrue(ckpts_match_1 and ckpts_match_2)
 
-        with self.subTest("obj: run programmatically using config object, and change hparams"):
+        with self.subTest(
+            "obj: run programmatically using config object, and change hparams"
+        ):
             base_config.seeds.seed1 += 1
             exp = PerturbedTrainingRunner(copy_config("test-config-obj"))
             self.assertTrue(exp.run_experiment())
-            ckpts_match_1, ckpts_match_2, value_obj = get_last_run_results("test-config-obj")
+            ckpts_match_1, ckpts_match_2, value_obj = get_last_run_results(
+                "test-config-obj"
+            )
             self.assertFalse(ckpts_match_1)
             self.assertTrue(ckpts_match_2)
 
-        with self.subTest("regression test perturb experiment: check that barriers haven't changed"):
+        with self.subTest(
+            "regression test perturb experiment: check that barriers haven't changed"
+        ):
             self.assertEqual(value_cmd, 0.8919784092326959)
             self.assertEqual(value_obj, 1.5229564649641514)
 

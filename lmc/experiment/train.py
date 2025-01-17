@@ -83,6 +83,7 @@ class TrainingRunner(ExperimentManager):
             self.on_epoch_end(ep, log_dct)
 
     def on_epoch_end(self, ep: int, log_dct: dict):
+        log_dct["lr/global_step"] = self.global_step
         self.eval_epoch(
             ep,
             log_dct,
@@ -126,6 +127,7 @@ class TrainingRunner(ExperimentManager):
         return ckpts
 
     def step_element(self, element, x, y, ep, ckpt_steps: List[int] = [], i: int = 1):
+        element.curr_step += 1
         # stop runs if nan
         if element.scheduler is None:
             lr = element.opt.param_groups[0]["lr"]
@@ -133,6 +135,7 @@ class TrainingRunner(ExperimentManager):
             lr = element.scheduler.get_last_lr()[-1]
         if self.config.logger.use_wandb:
             wandb.log({f"lr/model{i}": lr})
+            wandb.log({f"lr/step/model{i}": element.curr_step})
 
         element.opt.zero_grad()
         x = x.to(self.device)
@@ -145,7 +148,6 @@ class TrainingRunner(ExperimentManager):
         element.opt.step()
         if element.scheduler is not None:
             element.scheduler.step()
-        element.curr_step += 1
 
         # update metrics
         acc, topk = mixup_topk_accuracy(

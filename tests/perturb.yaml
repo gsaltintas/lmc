@@ -1,7 +1,7 @@
 data:
   batch_size: 128
   cutmix: 0.0
-  cutout: null
+  cutout: 0
   dataset: cifar10
   download: false
   gaussian_blur: false
@@ -9,8 +9,8 @@ data:
   mixup: 0.0
   num_workers: 1
   path: data
-  random_crop: false
   random_rotation: 10.0
+  random_translate: 0.0
   test_batch_size: 1024
 deterministic: false
 lmc:

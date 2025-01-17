@@ -417,8 +417,9 @@ class DataConfig(Config):
     cutmix: float = 0.0
     gaussian_blur: bool = False
     random_rotation: float = 0.0
-    random_crop: bool = False
-    cutout: Optional[int] = None
+    random_crop: bool = False  #TODO this does nothing, only kept here to preserve backwards compatibility
+    random_translate: float = 0.0
+    cutout: int = 0
     num_workers: int = 4
 
     _hflip: str = "Pass true to perform random horizontal flip with probability 0.5."
