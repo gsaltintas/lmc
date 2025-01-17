@@ -113,7 +113,7 @@ class TrainingRunner(ExperimentManager):
             self.global_step
             # self.steps_per_epoch * ep,
         )
-        if not self.config.data.is_language_dataset() and self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
+        if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
             check_lmc(
                 self.training_elements,
                 self.config,

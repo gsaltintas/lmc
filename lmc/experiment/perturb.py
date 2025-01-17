@@ -3,6 +3,7 @@ from typing import Dict
 
 import torch
 from torch.nn.utils import parameters_to_vector
+from transformers import AutoTokenizer
 
 import wandb
 from lmc.butterfly.butterfly import (get_average_grad_norm, get_batch_noise,
@@ -124,12 +125,13 @@ class PerturbedTrainingRunner(TrainingRunner):
             reset_base_lrs(element.opt, current_lr, element.scheduler)
             # reset_base_lrs(element.opt, current_lr, element.scheduler)
 
-    def get_train_loader(self, seed: int = None):
+    def get_train_loader(self, seed: int = None, tokenizer: AutoTokenizer = None):
         return setup_loader(
                         self.config.data,
                         train=True,
                         evaluate=False,
                         loader_seed=seed,
+                        tokenizer=tokenizer
                     )
         
     def create_noise_dicts(self):
@@ -139,7 +141,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if (
                     self.config.perturb_mode == "batch"
                 ):  # TODO: here double check if the seed messes up somethings
-                    dl = self.get_train_loader(el.perturb_seed)
+                    dl = self.get_train_loader(el.perturb_seed, el.tokenizer)
                     self.noise_dct[ind] = get_batch_noise(
                         el.model,
                         dataloader=dl,
@@ -169,9 +171,10 @@ class PerturbedTrainingRunner(TrainingRunner):
             perturb_scale = 1. if self.config.normalize_perturb else self.config.perturb_scale
             perturb_model(el.model, self.noise_dct[ind], perturb_scale)
             for num_data_points in [1, 5, -1]:
-                dl = self.get_train_loader(el.loader_seed)
-                avg_grad_norm = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
+                dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
+                avg_grad_norm, grad_count = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
                 log_dct[self.wandb_registry.get_metric(f"grad_norm_{ind}_on_{num_data_points}").log_name] =  avg_grad_norm
+                log_dct[self.wandb_registry.get_metric(f"grad_count_{ind}").log_name] =  grad_count
                 del dl
             noise_l2 = get_noise_l2(self.noise_dct[ind])
             self.logger.info(

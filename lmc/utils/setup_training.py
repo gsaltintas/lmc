@@ -399,6 +399,7 @@ def configure_lr_scheduler(
     else:
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
+
 def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, data_conf: DataConfig, evaluate: bool) -> Callable:
     """Returns the appropriate preprocessing function for the given task type."""
     
@@ -568,10 +569,10 @@ def setup_nlp_loader(
         g.manual_seed(loader_seed)
     
     dataset_conf = data_conf.dataset_info
-    task_type = data_conf.task_type
+    task_type = dataset_conf.task_type
     
     # Determine split based on dataset
-    splits = data_conf.splits
+    splits = dataset_conf.splits
     if train:
         split = splits["train"]
     else:
@@ -715,8 +716,9 @@ def setup_device(config: Experiment) -> torch.device:
         # set env variable for use_deterministic_algorithms
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
         torch.use_deterministic_algorithms(True)
+    else:
+        torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.benchmark = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}.")
     return device
@@ -785,6 +787,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
         tokenizer = None
+        seed_everything(seed)
         
         if is_nlp_task:
             model, tokenizer = configure_nlp_model(config, model_dir, device)
@@ -793,16 +796,15 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             test_loader = setup_nlp_loader(config.data, train=False, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
         else:
             model = configure_model(config, model_dir, device, model_ind=i)
-            train_loader = setup_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
-            train_eval_loader = setup_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
-            test_loader = setup_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
+            train_loader = setup_vision_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
+            train_eval_loader = setup_vision_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
+            test_loader = setup_vision_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
         
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
         # config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        # seed_everything(seed)
         # if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
         #     ## TODO: do this, resume_epoch not implemented
         #     config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
