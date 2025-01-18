@@ -1,18 +1,20 @@
 import abc
-import json
 import argparse
+import json
 import logging
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-import traceback
 from typing import Union
 
+import torch
+import torch.autograd.profiler as profiler
 from rich.logging import RichHandler
 from torch import nn
+
 import wandb
 from lmc.experiment_config import Experiment
 from lmc.utils.setup_training import cleanup
-
 
 FORMAT = "%(name)s - %(levelname)s: %(message)s"
 
@@ -80,7 +82,12 @@ class ExperimentManager(abc.ABC):
     def run_experiment(self):
         try:
             self.setup()
-            self.run()
+            if self.config.logger.profile:
+                with profiler.profile(use_cuda=torch.cuda.is_available()) as prof:
+                    self.run()
+                print(prof.key_averages().table(sort_by="cuda_time_total"))
+            else:
+                self.run()
             self.finish()
             return True
         except Exception:

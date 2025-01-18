@@ -169,16 +169,21 @@ class Experiment:
     n_models: int = 1  
     deterministic: bool = False
     zip_and_save_source: bool = True
+    resume_from: Optional[str] = None
+    resume_epoch: Optional[int] = -1
+    log_to_same_experiment: Optional[bool] = False
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
     model_dir: Path = None
     _resume_from: str = "Pass the model_dir or wandb run (wandb:project/username/run_id) to continue training from, the following model dir must exist in the current file system."
+    _log_to_same_experiment: str = "If true"
     _name_prefix: str = field(init=True, default="")
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
     _description: str = field(init=True, default="")
     _deterministic: str = "If true, make CUDA exactly deterministic."
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
+    _resume_from: str = "Directory to load and resume checkpoint or wandb run by specifying wandb:ENTITY/PROJECT/PROJECT_ID"
 
     def __init__(self, *args, **kwargs):
         # Call Trainer's constructor so that 'model', 'data' etc. are set up
@@ -222,7 +227,6 @@ class Experiment:
             if field_.name.startswith("_"):
                 continue
             conf = field_.type
-
             if conf is USE_DEFAULT_FACTORY:
                 conf = field_.default_factory()
             if isinstance(conf, type) and issubclass(conf, Config):
@@ -311,6 +315,20 @@ class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
+
+@dataclass(init=False)
+class Finetuner(Trainer):
+    _name_prefix: str = "finetuner"
+    _description: str = "Run a finetuning script."
+
+    # todo something wrong here
+    frozen_layers: List[str] = field(init=True, default_factory=list)
+    _frozen_layers: str = "List of frozen layers or regex patterns"
+    
+    def __init__(self, *args, **kwargs):
+        self.frozen_layers = kwargs.get("frozen_layers", [])
+        super().__init__(*args, **kwargs)
+        
 
 @dataclass
 class PerturbSeeds(Config):

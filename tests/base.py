@@ -1,9 +1,9 @@
-from glob import glob
 import json
 import os
+import unittest
+from glob import glob
 from pathlib import Path
 from shutil import rmtree
-import unittest
 
 import torch
 
@@ -12,11 +12,13 @@ class BaseTest(unittest.TestCase):
     TEST_COMMAND = """python main.py {experiment} {model_dir}  \
             --project test-project  \
                 --run_name test-{experiment}  \
-                --path {data_dir}/{dataset}  \
+                --path {data_dir} \
                 --log_dir {log_dir}  \
                 --save_early_iters false  \
                 --cleanup_after false  \
                 --use_wandb {use_wandb}  \
+                    --project {project} \
+                    --run_name {run_name}
                 --wandb_offline {wandb_offline}  \
                 --zip_and_save_source false  \
             --model_name {model_name}  \
@@ -90,6 +92,8 @@ class BaseTest(unittest.TestCase):
         wandb_offline="true",
         same_steps_pperturb="false",
         lmc_on_train_end="false",
+        project="lmc-test",
+        run_name=None,
         model_dir=None,
         args=[],
     ):
@@ -113,6 +117,8 @@ class BaseTest(unittest.TestCase):
             wandb_offline=wandb_offline,
             same_steps_pperturb=same_steps_pperturb,
             lmc_on_train_end=lmc_on_train_end,
+            project=project,
+            run_name=run_name,
             model_dir="" if model_dir is None else f"--model_dir {model_dir}",
             args=args if isinstance(args, str) else " ".join(args),
         )

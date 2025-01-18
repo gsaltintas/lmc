@@ -1,11 +1,13 @@
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 from rich.console import Console
 from rich.table import Table
 from tabulate import tabulate
+
+from lmc.data.data_stats import TaskType
 
 
 def mixup_topk_accuracy(
@@ -49,7 +51,6 @@ def mixup_topk_accuracy(
         )
 
         return acc_shuffled, topk_shuffled
-        return torch.maximum(acc, acc_shuffled), torch.maximum(topk, topk_shuffled)
     return acc, topk
 
 class AverageMeter(object):
@@ -75,9 +76,23 @@ class AverageMeter(object):
         self.count += n
 
     def get_avg(self, percentage=False):
-        return self.sum / self.count if not percentage else self.sum * 100 / self.count
+        cnt = self.count if self.count != 0 else 1
+        return self.sum / cnt if not percentage else self.sum * 100 / cnt
 
+### Language metrics
+def compute_qa_metrics(predictions, references, tokenizer):
+    """Compute QA metrics (Exact Match and F1)"""
+    from datasets import load_metric
+    metric = load_metric("squad")
+    results = metric.compute(predictions=predictions, references=references)
+    return results["exact_match"], results["f1"]
 
+def compute_classification_metrics(predictions, references):
+    """Compute classification metrics"""
+    from datasets import load_metric
+    metric = load_metric("accuracy")
+    results = metric.compute(predictions=predictions, references=references)
+    return results["accuracy"]
 
 @dataclass
 class Metrics:
@@ -85,21 +100,77 @@ class Metrics:
     total_topk: AverageMeter = field(default_factory=AverageMeter)
     total_loss: AverageMeter = field(default_factory=AverageMeter)
     cross_entropy: AverageMeter = field(default_factory=AverageMeter)
+    
+    # New NLP-specific metrics
+    perplexity: AverageMeter = field(default_factory=AverageMeter)
+    exact_match: AverageMeter = field(default_factory=AverageMeter)
+    f1_score: AverageMeter = field(default_factory=AverageMeter)
 
     def reset(self):
         self.total_acc.reset()
         self.total_topk.reset()
         self.total_loss.reset()
         self.cross_entropy.reset()
+        self.perplexity.reset()
+        self.exact_match.reset()
+        self.f1_score.reset()
 
-    def update(self, total_acc: float = None, total_topk: float = None, total_loss: float = None, cross_entropy: float = None, n: int = 1):
-        self.total_acc.update(total_acc, n)
-        self.total_topk.update(total_topk, n)
-        self.total_loss.update(total_loss, n)
-        self.cross_entropy.update(cross_entropy, n)
-        # print(cross_entropy, n, self.cross_entropy.count)
+    def update(self, 
+               total_acc: Optional[float] = None, 
+               total_topk: Optional[float] = None, 
+               total_loss: Optional[float] = None, 
+               cross_entropy: Optional[float] = None,
+               perplexity: Optional[float] = None,
+               exact_match: Optional[float] = None,
+               f1_score: Optional[float] = None,
+               n: int = 1):
+        """
+        Update metrics based on task type:
+        - Classification/NLI: accuracy, cross_entropy
+        - Generation: perplexity, loss
+        - QA: exact_match, f1_score
+        """
+        if total_acc is not None:
+            self.total_acc.update(total_acc, n)
+        if total_topk is not None:
+            self.total_topk.update(total_topk, n)
+        if total_loss is not None:
+            self.total_loss.update(total_loss, n)
+        if cross_entropy is not None:
+            self.cross_entropy.update(cross_entropy, n)
+        if perplexity is not None:
+            self.perplexity.update(perplexity, n)
+        if exact_match is not None:
+            self.exact_match.update(exact_match, n)
+        if f1_score is not None:
+            self.f1_score.update(f1_score, n)
 
-
+    def get_metrics(self, task_type: TaskType = TaskType.CLASSIFICATION) -> Dict[str, float]:
+        """Get relevant metrics based on task type"""
+        metrics = {'loss': self.total_loss.avg}
+        
+        if task_type == TaskType.GENERATION:
+            metrics.update({
+                'perplexity': self.perplexity.avg,
+                'cross_entropy': self.cross_entropy.avg
+            })
+        
+        elif task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
+            metrics.update({
+                'accuracy': self.total_acc.avg,
+                'cross_entropy': self.cross_entropy.avg
+            })
+            if self.total_topk.count > 0:
+                metrics['top_k_accuracy'] = self.total_topk.avg
+                
+        elif task_type == TaskType.QUESTION_ANSWERING:
+            metrics.update({
+                'exact_match': self.exact_match.avg,
+                'f1_score': self.f1_score.avg
+            })
+            
+        return metrics
+    
 def report_results(log_dct, epoch: int, n_models: int = 1):
     """ given the log_dct, generates and prints a nice looking summary of the training results for the given epoch """
     for prefix, key_prefix in [

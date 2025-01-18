@@ -23,13 +23,14 @@ INIT_STRATEGIES = get_args(get_args(Inits)[0])
 
 class BaseModel(nn.Module):
     _name: str = None
+    is_language_model: bool = False
 
     def __init__(
         self,
         output_dim: int = ...,
         initialization_strategy: Inits = ...,
         act: Activations = "relu",
-        norm: Norms = None
+        norm: Norms = None,
     ) -> None:
         super().__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -96,7 +97,7 @@ class BaseModel(nn.Module):
         model_ = self
         if not inplace:
             model_ = deepcopy(self)
-        model_.model.load_state_dict(permuted_dct)
+        model_.model.load_state_dict(permuted_dct, strict=not self.is_language_model)
         return model_
         return permute_model(self.model, self.permutation_spec(), perms, inplace)
 

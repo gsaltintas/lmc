@@ -97,10 +97,10 @@ def plot_perturb_barrier(
     tmp = tmp[tmp["perturb_mode"] == perturb_method]
     path = out_dir.joinpath(f"{perturb_method}-{base_metric.prefix}").with_suffix(".pdf")
     if zoom == "first":
-        tmp = tmp[tmp["perturb_step"] <= zoom_first_step]
+        tmp = tmp[tmp[x] <= zoom_first_step]
         path = path.with_stem(f"{path.stem}-zoom-first")
     elif zoom == "last":
-        tmp = tmp[tmp["perturb_step"] > zoom_last_step]
+        tmp = tmp[tmp[x] > zoom_last_step]
         path = path.with_stem(f"{path.stem}-zoom-last")
 
     # Plot

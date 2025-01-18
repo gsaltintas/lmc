@@ -4,14 +4,6 @@ from contextlib import contextmanager
 import numpy as np
 import torch
 
-def seed_worker(loader_seed):
-    def seed_worker_(worker_id):
-        worker_seed = loader_seed + worker_id
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
-        torch.manual_seed(worker_seed)
-    return seed_worker_
-
 
 def seed_worker(loader_seed):
     def seed_worker_(worker_id):
@@ -21,6 +13,12 @@ def seed_worker(loader_seed):
         torch.manual_seed(worker_seed)
     return seed_worker_
 
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 @contextmanager
 def temp_seed(seed: int):
@@ -59,9 +57,3 @@ def temp_seed(seed: int):
         if torch.cuda.is_available():
             torch.cuda.set_rng_state_all(state_cuda)
 
-
-def seed_everything(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)

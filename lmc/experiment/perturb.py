@@ -1,25 +1,19 @@
 from dataclasses import dataclass, field
 from typing import Dict
+
 import torch
 from torch.nn.utils import parameters_to_vector
-import wandb
+from transformers import AutoTokenizer
 
-from lmc.butterfly.butterfly import (
-    get_batch_noise,
-    get_gaussian_noise,
-    get_noise_l2,
-    normalize_noise,
-    perturb_model,
-)
+import wandb
+from lmc.butterfly.butterfly import (get_average_grad_norm, get_batch_noise,
+                                     get_gaussian_noise, get_noise_l2,
+                                     normalize_noise, perturb_model)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
-from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.setup_training import (
-    TrainingElement,
-    configure_lr_scheduler,
-    setup_loader,
-)
+from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
+                                      setup_loader)
 from lmc.utils.step import Step
 
 
@@ -50,34 +44,7 @@ class PerturbedTrainingRunner(TrainingRunner):
     @staticmethod
     def description():
         return "Train n model(s) with perturbations."
-
-    def create_noise_dicts(self):
-        self._noise_created = True
-        for ind, el in enumerate(self.training_elements, start=1):
-            if ind in self.config.perturb_inds:
-                if (
-                    self.config.perturb_mode == "batch"
-                ):  # TODO: here double check if the seed messes up somethings
-                    dl = setup_loader(
-                        self.config.data,
-                        train=True,
-                        evaluate=False,
-                        loader_seed=el.perturb_seed,
-                    )
-                    self.noise_dct[ind] = get_batch_noise(
-                        el.model,
-                        dataloader=dl,
-                        noise_seed=el.perturb_seed,
-                        loss_fn=el.loss_fn,
-                        dont_perturb_patterns=self.config.dont_perturb_module_patterns
-                    )
-                elif self.config.perturb_mode == "gaussian":
-                    self.noise_dct[ind] = get_gaussian_noise(
-                        el.model, noise_seed=el.perturb_seed, dont_perturb_patterns=self.config.dont_perturb_module_patterns
-                    )
-                if self.config.normalize_perturb:
-                    # normalize to self.config.perturb_scale
-                    self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
+          
 
     def setup(self) -> None:
         super().setup()
@@ -149,6 +116,39 @@ class PerturbedTrainingRunner(TrainingRunner):
             reset_base_lrs(element.opt, current_lr, element.scheduler)
             # reset_base_lrs(element.opt, current_lr, element.scheduler)
 
+    def get_train_loader(self, seed: int = None, tokenizer: AutoTokenizer = None):
+        return setup_loader(
+                        self.config.data,
+                        train=True,
+                        evaluate=False,
+                        loader_seed=seed,
+                        tokenizer=tokenizer
+                    )
+        
+    def create_noise_dicts(self):
+        self._noise_created = True
+        for ind, el in enumerate(self.training_elements, start=1):
+            if ind in self.config.perturb_inds:
+                if (
+                    self.config.perturb_mode == "batch"
+                ):  # TODO: here double check if the seed messes up somethings
+                    dl = self.get_train_loader(el.perturb_seed, el.tokenizer)
+                    self.noise_dct[ind] = get_batch_noise(
+                        el.model,
+                        dataloader=dl,
+                        noise_seed=el.perturb_seed,
+                        loss_fn=el.loss_fn,
+                        dont_perturb_patterns=self.config.dont_perturb_module_patterns
+                    )
+                    del dl
+                elif self.config.perturb_mode == "gaussian":
+                    self.noise_dct[ind] = get_gaussian_noise(
+                        el.model, noise_seed=el.perturb_seed, dont_perturb_patterns=self.config.dont_perturb_module_patterns
+                    )
+                if self.config.normalize_perturb:
+                    # normalize to self.config.perturb_scale
+                    self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
+      
     def perturb_model(self, log_dct: dict):
         for ind, el in enumerate(self.training_elements, start=1):
             if ind not in self.config.perturb_inds:
@@ -161,7 +161,12 @@ class PerturbedTrainingRunner(TrainingRunner):
                 )
             perturb_scale = 1. if self.config.normalize_perturb else self.config.perturb_scale
             perturb_model(el.model, self.noise_dct[ind], perturb_scale)
-
+            for num_data_points in [1, 5, -1]:
+                dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
+                avg_grad_norm, grad_count = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
+                log_dct[self.wandb_registry.get_metric(f"grad_norm_{ind}_on_{num_data_points}").log_name] =  avg_grad_norm
+                log_dct[self.wandb_registry.get_metric(f"grad_count_{ind}").log_name] =  grad_count
+                del dl
             noise_l2 = get_noise_l2(self.noise_dct[ind])
             self.logger.info(
                 "Model %d perturbed with %f scaling, absolute l2 %f.",
@@ -169,8 +174,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                 perturb_scale,
                 noise_l2,
             )
-            log_dct[f"static/noise/{ind}-l2"] = noise_l2
-            log_dct[f"static/noise/{ind}-l2-scaled"] = noise_l2 * (
+            log_dct[self.wandb_registry.get_metric(f"noise_l2_{ind}").log_name] = noise_l2
+            log_dct[self.wandb_registry.get_metric(f"noise_l2_scaled_{ind}").log_name] = noise_l2 * (
                 perturb_scale**2
             )
             if self.config.same_steps_pperturb:
@@ -219,7 +224,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 ):
                     self.perturb_model(log_dct=log_dct)
                 self.global_step += 1
-                for element_ind, (x, y) in enumerate(batches):
+                for element_ind, batch in enumerate(batches):
                     element = self.training_elements[element_ind]
                     if element.curr_step >= element.max_steps.get_step(
                         self.steps_per_epoch
@@ -229,8 +234,7 @@ class PerturbedTrainingRunner(TrainingRunner):
 
                     self.step_element(
                         element,
-                        x,
-                        y,
+                        batch,
                         ep,
                         early_iter_ckpt_steps,
                         i=element_ind + 1,
@@ -241,23 +245,6 @@ class PerturbedTrainingRunner(TrainingRunner):
 
     def on_epoch_end(self, ep: int, log_dct: dict):
         super().on_epoch_end(ep, log_dct)
-
-    def on_train_end(self, ep: int):
-        log_dct = dict(epoch=ep)
-        if (
-            self.config.n_models > 1
-            and self.config.lmc.lmc_on_train_end
-            and not self.config.lmc.lmc_on_epoch_end
-        ):
-            check_lmc(
-                self.training_elements,
-                self.config,
-                ep,
-                log_dct,
-                check_perms=self.config.lmc.lmc_check_perms,
-            )
-        if self.config.logger.use_wandb:
-            wandb.log(log_dct)
 
     def dummy_run(self):
         # for testing and debugging logreg, this avoids having to do multiple training runs

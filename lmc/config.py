@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import os
 from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
@@ -10,6 +11,9 @@ from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
 from rich.console import Console
 from rich.table import Table
 
+from lmc.data.data_stats import (MAX_SEQ_LENGTH_DICT, TASK_MAPPING,
+                                 DatasetRegistry, LanguageConfig, TaskType,
+                                 VisionConfig)
 from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
                                          Inits, Norms)
 from lmc.utils.step import Step
@@ -394,6 +398,7 @@ class TrainerConfig(Config):
     save_best: bool = True
     use_scaler: bool = False
     label_smoothing: float = 0.0
+    gradient_accumulation_steps: int = 1
 
     _training_steps = "Total number of steps (st) or epochs (ep), specify as Xep or Xst"
     _save_freq = "Frequency to save checkpoints during training in steps (st) or epochs (ep), specify as Xep or Xst"
@@ -405,13 +410,35 @@ class TrainerConfig(Config):
 
 @dataclass
 class DataConfig(Config):
-    dataset: Literal["cifar10", "mnist", "cifar100", "tiny-imagenet"]
+    # Dataset choices including both vision and language datasets
+    dataset: Literal[
+        # Vision datasets
+        "cifar10", "mnist", "cifar100", "tiny-imagenet",  "cinic10", "imagenet",
+        
+        # Language datasets - Text Classification/Regression (CR)
+        "snli", "scitail", "glue",
+        
+        # Language datasets - Question Answering (QA)
+        "squad_v1", "squad_v2", "newsqa", "hotpotqa", 
+        "duorc", "drop", "wikihop", "boolq", "comqa",
+        
+        # Language datasets - Sequence Labeling (SL)
+        "conll2003", "ptb", "conj",
+        
+        # Language datasets - Language Modeling
+        "wikitext-2", "wikitext-103", "cord", "cord-v2",
+        "webtext", "c4", "pile", "bookcorpus"
+    ]
 
+
+    # General configurations
     batch_size: int = 128
     test_batch_size: int = 1024
     path: Path = Path("./data")
     download: bool = False
+    num_workers: int = 4
 
+    # Vision-specific augmentations
     hflip: bool = True
     mixup: float = 0.0
     cutmix: float = 0.0
@@ -420,17 +447,131 @@ class DataConfig(Config):
     random_crop: bool = False  #TODO this does nothing, only kept here to preserve backwards compatibility
     random_translate: float = 0.0
     cutout: int = 0
-    num_workers: int = 4
 
+    # Language-specific configurations
+    tokenizer_name: Optional[str] = None
+    max_seq_length: int = 512
+    min_seq_length: int = 4
+    padding_side: str = "right"
+    truncation_side: str = "right"
+    pad_to_multiple_of: Optional[int] = 8
+
+    # Text preprocessing flags
+    lowercase: bool = True
+    remove_punctuation: bool = False
+    strip_accents: bool = True
+    add_special_tokens: bool = True
+    
+    # Language augmentation settings
+    token_dropout_prob: float = 0.0
+    word_dropout_prob: float = 0.0
+    whole_word_masking: bool = False
+    masking_probability: float = 0.15
+    span_length: int = 3
+    enable_back_translation: bool = False
+    translation_languages: List[str] = field(default_factory=lambda: ["de", "fr"])
+    
+    # GLUE specific settings
+    glue_task: Optional[str] = None
+
+    # Dataset splits
+    validation_split: float = 0.1
+    test_split: float = 0.1
+    shuffle_dataset: bool = True
+
+    # Documentation fields
     _hflip: str = "Pass true to perform random horizontal flip with probability 0.5."
     _name = "data"
-    _description = "Data and augmentations configuration"
+    _description = "Data and augmentations configuration for both vision and language tasks"
 
     def __post_init__(self):
         self.path = Path(self.path).resolve().absolute()
+
+        # Validate language-specific configurations when using language datasets
+        if self.is_language_dataset():
+            if not self.tokenizer_name:
+                raise ValueError("Must provide tokenizer_name for language datasets")
+            
+            if self.max_seq_length < self.min_seq_length:
+                raise ValueError("max_seq_length must be greater than min_seq_length")
+
+            if self.masking_probability > 1.0 or self.masking_probability < 0.0:
+                raise ValueError("masking_probability must be between 0 and 1")
+
+        self.max_seq_length = MAX_SEQ_LENGTH_DICT.get(self.dataset, 128)
         return super().__post_init__()
+    
+    def is_language_dataset(self) -> bool:
+        """Check if the selected dataset is a language dataset"""
+        return not isinstance(
+            DatasetRegistry.get_dataset_info(self.dataset),
+            VisionConfig
+        )
+        
+    
+    @property
+    def task_type(self) -> TaskType:
+        """Get the task type for the dataset"""
+        return DatasetRegistry.get_dataset_info(self.dataset).task_type
 
+    def is_sequence_labeling(self) -> bool:
+        """Check if the current dataset is a sequence labeling task"""
+        return self.task_type == TaskType.SEQUENCE_LABELING
 
+    def is_question_answering(self) -> bool:
+        """Check if the current dataset is a QA task"""
+        return self.task_type == TaskType.QUESTION_ANSWERING
+
+    def is_classification(self) -> bool:
+        """Check if the current dataset is a classification task"""
+        return self.task_type in [
+            TaskType.CLASSIFICATION,
+            TaskType.NATURAL_LANGUAGE_INFERENCE
+        ]
+
+    def get_num_labels(self) -> int:
+        """Get number of labels/classes for the dataset"""
+        config :Union[VisionConfig, LanguageConfig]= DatasetRegistry.get_dataset_info(self.dataset)
+        if self.dataset == "glue" and self.glue_task:
+            return DatasetRegistry.glue.get(f"glue/{self.glue_task}").classes
+        return config.classes
+    
+    def get_num_in_channels(self) -> int:
+        """Get number of input channels for vision datasets."""
+        if self.is_language_dataset():
+            raise ValueError(f"Cannot get number of channels for language dataset {self.dataset}")
+        
+        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
+        
+        return config.channels
+
+    def get_default_res(self) -> int:
+        """Get default resolution for vision datasets."""
+        if self.is_language_dataset():
+            raise ValueError(f"Cannot get resolution for language dataset {self.dataset}")
+            
+        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
+        
+        return config.resolution
+    
+    
+    def get_hf_path(self) -> str:
+        config: LanguageConfig = DatasetRegistry.get_dataset_info(self.dataset)
+        if not isinstance(config, VisionConfig):
+            raise ValueError(f"Dataset {self.dataset} is not a language dataset")
+        return  config.hf_config
+    @property
+    def dataset_info(self) -> Union[VisionConfig, LanguageConfig]:
+        """Get complete dataset configuration"""
+        return DatasetRegistry.get_dataset_info(self.dataset)
+    
+    def get_steps_per_epoch(self) -> int:
+        return math.ceil(self.dataset_info.samples / self.batch_size)
+    
 @dataclass
 class LoggerConfig(Config):
     _name = "logger"
@@ -455,6 +596,7 @@ class LoggerConfig(Config):
     log_dir: Path = Path("../experiments")
     cleanup_after: bool = False
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
+    profile: bool = False
 
     _cleanup_after: str = (
         "Pass true only if you want to delete the experiment directory after experiment is finished."
@@ -481,19 +623,21 @@ class Model:
 
 @dataclass
 class ModelConfig_(Config):
-    model_name: str
+    model_name: str = field(init=True, kw_only=True)
 
     norm: Norms = None
     act: Activations = "relu"
     initialization_strategy: Inits = "kaiming_normal"
     ckpt_path: Optional[Path] = None
+    gradient_checkpointing: bool = True
 
-    _model_name = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
-    _initialization_strategy = "Initialization strategy for the model's layers"
-
-    _name = "model"
-    _description = ""
-    _add_prefix = False
+    _model_name: str = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
+    _initialization_strategy: str = "Initialization strategy for the model's layers"
+    _gradient_checkpointing: str = "Only implemented for HuggingFace models, disable by passing false"
+    
+    _name: str = "model"
+    _description: str = ""
+    _add_prefix: str = False
 
     def __post_init__(self):
         correct_name = pattern_matched(self.model_name, MODEL_NAME_PATTERNS)
@@ -516,7 +660,7 @@ class ResNetConfig(ModelConfig_):
     _width: str = "Output channels of the first convolution"
 
 @dataclass
-class BertConfig(ModelConfig_):
+class NLPModelConfig(ModelConfig_):
     pass
 
 @dataclass
@@ -540,18 +684,14 @@ def make_model_config(**kwargs) -> Type:
         model_cls = MLPConfig
     elif "resnet" in model_name:
         model_cls = ResNetConfig
+    elif "bert" in model_name:
+        model_cls = NLPModelConfig
+    elif "t5" in model_name:
+        model_cls = NLPModelConfig
     fields_ = [(f.name, f.type, f) for f in fields(model_cls) if not f.name.startswith("_")] +  [(f.name, f.type, f) for f in fields(model_cls) if f.name.startswith("_")]
     
     return make_dataclass("ModelConfig", fields_ , bases=(model_cls, ))
 
-    # model: Union[MLPConfig, ResNetConfig] = field(
-    #     init=True,
-    #     default_factory=field_factory(
-    #         "model_name",
-    #         mapping={"mlp": MLPConfig, "resnet": ResNetConfig},
-    #         default_val="mlp",
-    #     ),
-    # )
 @dataclass
 class ModelConfig(Config):
     pass

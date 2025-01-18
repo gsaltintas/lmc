@@ -1,11 +1,10 @@
 import unittest
 from glob import glob
 
-from lmc.experiment_config import PerturbedTrainer
 from lmc.experiment.perturb import PerturbedTrainingRunner
+from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.run import command_result_is_error, run_command
 from tests.base import BaseTest
-
 
 
 class TestTrainingRunner(BaseTest):
