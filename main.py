@@ -5,7 +5,6 @@ from typing import Type
 
 from lmc.config import maybe_get_arg
 from lmc.experiment.base import ExperimentManager
-from lmc.experiment.finetune import FinetuningRunner
 from lmc.experiment.logreg import ActiveLearningLogisticRegressionSearch
 from lmc.experiment.perturb import PerturbedTrainingRunner
 from lmc.experiment.train import TrainingRunner
@@ -17,7 +16,6 @@ logger = logging.getLogger("")
 managers = dict(
     train=TrainingRunner,
     perturb=PerturbedTrainingRunner,
-    finetune=FinetuningRunner,
     logreg=ActiveLearningLogisticRegressionSearch,
 )
 
