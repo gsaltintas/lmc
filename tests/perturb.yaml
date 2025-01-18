@@ -46,7 +46,7 @@ model:
   width: 16
 model_dir: tests/tmp/model1234
 n_models: 2
-norm_perturb: false
+normalize_perturb: false
 perturb_inds:
 - 1
 perturb_mode: gaussian
@@ -61,6 +61,7 @@ resume_from: null
 rewind_lr: false
 same_steps_pperturb: true
 sample_noise_at: perturb
+scale_to_init_if_normalized: true
 seeds:
   loader_seed1: 42
   loader_seed2: 41

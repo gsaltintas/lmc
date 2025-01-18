@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from copy import deepcopy
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -38,21 +38,21 @@ def _should_perturb_parameter(
 
 def get_perturbed_layers(
     model, dont_perturb_module_patterns: Optional[List[str]] = None
-) -> Set[str]:
+) -> List[str]:
     """
     Returns a set of parameter names that should be perturbed
     """
-    layers = set()
+    layers = []
     for name, param in model.named_parameters():
         if param.requires_grad and _should_perturb_parameter(
             name, dont_perturb_module_patterns
         ):
-            layers.add(name)
+            layers.append(name)
     return layers
 
 
 def get_batch_noise(
-    model: "BaseModel", dataloader: DataLoader, loss_fn: nn.Module, layers
+    model: "BaseModel", dataloader: DataLoader, loss_fn: nn.Module, layers: List[str]
 ) -> Dict[str, torch.Tensor]:
     """
     Get a random (based on the seed) batch from the dataloader and compute noise as the gradient
@@ -101,7 +101,7 @@ def get_batch_noise(
 
 
 @torch.no_grad()
-def get_gaussian_noise(model: "BaseModel", layers) -> Dict[str, torch.Tensor]:
+def get_gaussian_noise(model: "BaseModel", layers: List[str]) -> Dict[str, torch.Tensor]:
     """_summary_
 
     Args:
@@ -112,7 +112,14 @@ def get_gaussian_noise(model: "BaseModel", layers) -> Dict[str, torch.Tensor]:
         Dict[str, torch.Tensor]: _description_
     """
     model.zero_grad()
-    std = model.get_init_stds()
+    std = model.get_init_stds(include_constant_params=True)
+    # we want to be able to perturb the norm weights and biases, so use the next layer's fan_in std
+    # reasoning: noise should be scaled according to distribution, each neuron is the sum of fan_in products of form w*x
+    # x is the output of a normalization layer with 0 mean, 1 std at init
+    # w is scaled proportional to sqrt(fan_in), so that variance of the sum is 1
+    # we want the noise effect to be the same in x as in w
+    # when adding noise to w, (w+n)*x = wx + xn has scale proportional to w
+    # when adding noise to x, w*(x+n) = wx + wn should also have the same scale
     noise_dct = dict()
     for name, param in model.named_parameters():
         if name not in layers:
@@ -153,27 +160,26 @@ def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
     return torch.linalg.norm(noise)
 
 
-def get_all_init_l2s(model, layers) -> Tuple[float, Dict[str, float]]:
+def get_all_init_l2s(model) -> Tuple[float, Dict[str, float]]:
     """Return standard deviation of specified layers at init,
     i.e. the expected L2 norm of the parameters minus their mean at init"""
-    init_stds = {}
+    init_l2s = {}
     total_sqsum = 0
-    stds = model.get_init_stds()
+    stds = model.get_init_stds(include_constant_params=False)
     for k, v in model.named_parameters():
-        if k in layers:
-            sqsum = stds[k]**2 * v.nelement()
-            init_stds[k] = sqsum**0.5
-            total_sqsum += sqsum
-    return total_sqsum**0.5, init_stds
+        sqsum = stds[k]**2 * v.nelement()
+        init_l2s[k] = sqsum**0.5
+        total_sqsum += sqsum
+    return total_sqsum**0.5, init_l2s
 
 
 def scale_noise(
-    noise_dct: Dict[str, torch.Tensor], scale: float, normalize_l2: bool, model, layers
+    noise_dct: Dict[str, torch.Tensor], model, scale: float, normalize: bool, scale_to_init_if_normalized: bool
 ):
-    """Normalize the noise dict to have a total l2 length"""
+    """Normalize the noise dict to have a fixed total l2 length"""
     log_dct = {}
     # log expected l2 (std) and per-layer std
-    expected_l2, expected_layer_l2 = get_all_init_l2s(model, layers)
+    expected_l2, expected_layer_l2 = get_all_init_l2s(model)
     log_dct["init_std"] = expected_l2
     for k, v in expected_layer_l2.items():
         log_dct[f"init_std/{k}"] = v
@@ -181,8 +187,10 @@ def scale_noise(
     actual_norm = get_l2(noise_dct)
     log_dct["l2"] = actual_norm
     # do the scaling
-    if normalize_l2:
-        scale *= expected_l2 / actual_norm
+    if normalize:
+        scale /= actual_norm
+        if scale_to_init_if_normalized:
+            scale *= expected_l2
     for name, n in noise_dct.items():
         noise_dct[name] = n * scale
     # log l2 and per-layer l2 of scaled noise
@@ -208,7 +216,8 @@ def sample_noise_and_perturb(
         with temp_seed(perturb_seed):
             noise = get_gaussian_noise(model, layers=layers)
     noise, log_dct = scale_noise(
-        noise, config.perturb_scale, config.normalize_perturb, model, layers
+        noise, model, config.perturb_scale, config.normalize_perturb, config.scale_to_init_if_normalized
     )
     perturb_model(model, noise)
+    log_dct["layers"] = layers
     return log_dct

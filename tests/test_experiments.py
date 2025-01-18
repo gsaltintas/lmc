@@ -7,21 +7,40 @@ from lmc.utils.run import command_result_is_error, run_command
 from tests.base import BaseTest
 
 
-
 class TestTrainingRunner(BaseTest):
-
     def test_training_steps(self):
         # check if an arbitrary number of training steps can run
         for step in [9, 392]:
             with self.subTest(f"training steps: {step}"):
-                n_steps = self.run_command_and_return_result(f"test-training-steps-{step}", "lr/global_step", model_name="resnet20-8", dataset="cifar10", training_steps=f"{step}st", lmc_on_train_end="true")
+                n_steps = self.run_command_and_return_result(
+                    f"test-training-steps-{step}",
+                    "lr/global_step",
+                    model_name="resnet20-8",
+                    dataset="cifar10",
+                    training_steps=f"{step}st",
+                    lmc_on_train_end="true",
+                )
                 self.assertEqual(n_steps, step)
 
     def test_batch_perturb_seed(self):
         # check batch perturb seed doesn't mess up other dataloaders
         # do this by setting perturb_scale = 0 and comparing gaussian vs batch, they should be the same
-        batch = self.run_command_and_return_result(f"test-perturb-seed-batch", "lmc-0-1/lmc/loss/weighted/barrier_train", perturb_mode="batch",  perturb_scale=0, perturb_seed1=99, perturb_seed2=98)
-        gaussian = self.run_command_and_return_result(f"test-perturb-seed-batch", "lmc-0-1/lmc/loss/weighted/barrier_train", perturb_mode="batch",  perturb_scale=1, perturb_seed1=99, perturb_seed2=98)
+        batch = self.run_command_and_return_result(
+            f"test-perturb-seed-batch",
+            "model1/train/cross_entropy",
+            perturb_mode="batch",
+            perturb_scale=0,
+            perturb_seed1=99,
+            perturb_seed2=98,
+        )
+        gaussian = self.run_command_and_return_result(
+            f"test-perturb-seed-gaussian",
+            "model1/train/cross_entropy",
+            perturb_mode="gaussian",
+            perturb_scale=0,
+            perturb_seed1=99,
+            perturb_seed2=98,
+        )
         self.assertEqual(batch, gaussian)
 
     def test_butterfly_deterministic(self):

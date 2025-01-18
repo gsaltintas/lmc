@@ -189,8 +189,9 @@ def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> Non
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
 
-def configure_model(config: Trainer, device: torch.device, print_output=True) -> 'BaseModel':
+def configure_model(config: Trainer, device: torch.device, seed: int=None, print_output=True) -> 'BaseModel':
     """ creates a model given the configuration """
+    seed_everything(seed)
     conf = config.model
     out = CLASS_DICT[config.data.dataset]
     #TODO: load checkpoints
@@ -467,9 +468,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         test_loader = setup_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
 
-        config.trainer.seed = seed
+        # config.trainer.seed = seed  #TODO delete this?
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        seed_everything(seed)
+        seed_everything(seed)  #TODO may no longer be necessary as we do this in configure_model
         if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
@@ -483,7 +484,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
             ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
-        model = configure_model(config, device)
+        model = configure_model(config, device, seed)
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)
