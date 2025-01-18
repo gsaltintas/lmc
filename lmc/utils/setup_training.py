@@ -288,7 +288,6 @@ def configure_vision_model(config: Trainer, model_dir: Path, device: torch.devic
         if conf.model_name == "resnet":
             if config.data.dataset.lower() == "cifar10":
                 conf.model_name = "resnet20"
-                print("hello")
 
         print(config.model.model_name, conf.model_name)
         model = ResNet.get_model_from_code(model_code=conf.model_name, output_dim=out, initialization_strategy=conf.initialization_strategy, norm=conf.norm)
@@ -304,13 +303,18 @@ def configure_vision_model(config: Trainer, model_dir: Path, device: torch.devic
     return model
 
         
-def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
+def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> Tuple['BaseModel', Optional[AutoTokenizer]]:
     """ creates a model given the configuration """
-    conf = config.model
+    tokenizer = None
     if config.data.is_language_dataset():
-        return configure_nlp_model(config, model_dir, device)
+        model, tokenizer = configure_nlp_model(config, model_dir, device)
     else:
-        return configure_vision_model(config, model_dir, device, return_perms, model_ind)
+        model = configure_vision_model(config, model_dir, device, return_perms, model_ind)
+    if ckpt_path := config.model.ckpt_path:
+        assert Path(ckpt_path).resolve().absolute().exists(), ValueError(f"Provided ckpt path doesn't exist {ckpt_path}")
+        load_model_from_checkpoint(model, ckpt_path)
+        logger.info("Model loaded from checkpoint %s.", ckpt_path)
+    return model, tokenizer
 
 def configure_optimizer(config: Trainer, model: 'BaseModel'):
     opt_conf = config.trainer.opt
@@ -761,12 +765,11 @@ def setup_wandb(config: Experiment) -> None:
             entity = url_parts[-3]
             project = url_parts[-2]
             run_id = url_parts[-1]
-            run = wandb.init(resume="allow",
-                entity=entity,
-                project=project,
-                id=run_id,
-                dir=WANDB_DIR
-                )
+            wandb_kwargs = dict(entity=entity, project=project, dir=WANDB_DIR)
+            if config.log_to_same_experiment:
+                wandb_kwargs["resume"] = "allow"
+                wandb_kwargs["run_id"] = run_id
+            run = wandb.init(**wandb_kwargs)
 
         else:
             run = wandb.init(
@@ -810,16 +813,30 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
-        tokenizer = None
         seed_everything(seed)
+        if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
+            if config.resume_from.startswith("wandb:"):
+                raise NotImplementedError("Resuming from wandb is under development")
+                # TODO: parse the model dir, load config from there
+            ## TODO: do this, resume_epoch not implemented
+            config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
+                ".ckpt"
+            )
+            if not config.model.ckpt_path.exists():
+                config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"{config.resume_epoch}").with_suffix(
+                    ".ckpt"
+                )
+            logger.info("Model will be loaded from %s.", config.model.ckpt_path)
+            assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
+            ckpt = torch.load(config.model.ckpt_path, map_location=device)
+
+        model, tokenizer = configure_model(config, model_dir, device, model_ind=i)
         
         if is_nlp_task:
-            model, tokenizer = configure_nlp_model(config, model_dir, device)
             train_loader = setup_nlp_loader(config.data, train=True, evaluate=False, tokenizer=tokenizer, loader_seed=loader_seed)
             train_eval_loader = setup_nlp_loader(config.data, train=True, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
             test_loader = setup_nlp_loader(config.data, train=False, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
         else:
-            model = configure_model(config, model_dir, device, model_ind=i)
             train_loader = setup_vision_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
             train_eval_loader = setup_vision_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
             test_loader = setup_vision_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
@@ -827,21 +844,8 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
-        # config.trainer.seed = seed
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        # if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
-        #     ## TODO: do this, resume_epoch not implemented
-        #     config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
-        #         ".ckpt"
-        #     )
-        #     if not config.model.ckpt_path.exists():
-        #         config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"{config.resume_epoch}").with_suffix(
-        #             ".ckpt"
-        #         )
-        #     logger.info("Model will be loaded from %s.", config.model.ckpt_path)
-        #     assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
-        #     ckpt = torch.load(config.model.ckpt_path, map_location=device)
-
+        
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)

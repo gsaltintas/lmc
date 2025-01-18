@@ -6,9 +6,9 @@ from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
 
 import wandb
-from lmc.butterfly.butterfly import (get_batch_noise, get_gaussian_noise,
-                                     get_noise_l2, normalize_noise,
-                                     perturb_model)
+from lmc.butterfly.butterfly import (get_average_grad_norm, get_batch_noise,
+                                     get_gaussian_noise, get_noise_l2,
+                                     normalize_noise, perturb_model)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.opt import get_lr, reset_base_lrs

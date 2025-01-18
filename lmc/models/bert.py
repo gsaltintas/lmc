@@ -12,7 +12,9 @@ from .type_declaration import PATTERNS
 
 
 class Bert(BaseModel):
-    _name = "BERT"
+    _name: str = "BERT"
+    is_language_model: bool = True
+    
     def __init__(
         self,
         model_name: str = "bert-base-uncased",
