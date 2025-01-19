@@ -49,53 +49,39 @@ class TestTrainingRunner(BaseTest):
             --logreg_reseed_every_run true  \
     """
 
-    def get_test_command(self, is_dummy_run, logreg_y, logreg_n, model_dir=None):
+    def _run_logreg(self, model_dir, is_dummy_run):
         perturb_debug_dummy_run = "true" if is_dummy_run else "false"
+        logreg_y = "test/dummyvalue" if is_dummy_run else "lmc-0-1/lmc/loss/weighted/increase_end0_train"
+        logreg_n = 10 if is_dummy_run else 1
         args = str.format(
             self.LOGREG_ARGS,
             perturb_debug_dummy_run=perturb_debug_dummy_run,
             logreg_y=logreg_y,
             logreg_n=logreg_n,
         )
-        return super().get_test_command(
+        return self.run_command_and_return_result(
+            model_dir,
+            "logreg/max_entropy_x",
             experiment="logreg",
             perturb_scale=0.1,
             perturb_step=390,
-            use_wandb="true",
             lmc_on_train_end="true",
-            model_dir=model_dir,
             args=args,
         )
 
     def test_dummy_logreg(self):
         # logic test: check that logistic regression over dummy values works
-        def run_dummy_logreg(model_dir):
-            command = self.get_test_command(
-                is_dummy_run=True,
-                logreg_y="test/dummyvalue",
-                logreg_n=10,
-                model_dir=self.log_dir / model_dir,
-            )
-            result = run_command(command, print_output=True)
-            self.assertFalse(command_result_is_error(result))
-            return self.get_summary_value("logreg/max_entropy_x")
-
-        run_1 = run_dummy_logreg("test-logreg-1")
+        run_1 = self._run_logreg("test-logreg-1", True)
         # dummy runs draw logreg_y uniformly from [0, perturb_step)
         # so a threshold of 0.5 should result in predicted perturb_step near 1
         self.assertAlmostEqual(run_1, 1, 0)
         # repeat and check that the result is the same due to same seeds
-        self.assertEqual(run_dummy_logreg("test-logreg-2"), run_1)
+        run_2 = self._run_logreg("test-logreg-2", True)
+        self.assertEqual(run_1, run_2)
 
     def test_logreg(self):
         # integration test: check that running perturb works
-        command = self.get_test_command(
-            is_dummy_run=False,
-            logreg_y="lmc-0-1/lmc/loss/weighted/increase_end0_train",
-            logreg_n=1,
-        )
-        result = run_command(command, print_output=True)
-        self.assertFalse(command_result_is_error(result))
+        self._run_logreg("test-logreg", False)
 
 
 if __name__ == "__main__":

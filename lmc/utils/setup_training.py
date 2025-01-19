@@ -236,7 +236,7 @@ def freeze_layers(model, frozen_layers: List):
     if frozen_count > 0:
         logger.info(f"Froze {frozen_count}/{total_params} layers based on {len(frozen_layers)} patterns")
 
-def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) -> torch.nn.Module:
+def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Module:
     """Configure model for NLP tasks"""
     conf = config.model
     
@@ -272,12 +272,10 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
     
     model = model.to(device)
     logger.info(f"Created NLP model: {conf.model_name}")
-    print(model)
-    
     return model, tokenizer
 
 
-def configure_vision_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> 'BaseModel':
+def configure_vision_model(config: Trainer, device: torch.device) -> 'BaseModel':
     """ creates a model given the configuration """
     conf = config.model
     out = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
@@ -288,33 +286,33 @@ def configure_vision_model(config: Trainer, model_dir: Path, device: torch.devic
         if conf.model_name == "resnet":
             if config.data.dataset.lower() == "cifar10":
                 conf.model_name = "resnet20"
-
-        print(config.model.model_name, conf.model_name)
         model = ResNet.get_model_from_code(model_code=conf.model_name, output_dim=out, initialization_strategy=conf.initialization_strategy, norm=conf.norm)
 
     # if config.resume_from: 5279952
 
     logger.info("Model created.")
     # logger.info
-    print(model)
     model = model.to(device)
     logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
-    model = model.to(device)
     return model
 
-        
-def configure_model(config: Trainer, model_dir: Path, device: torch.device, return_perms: bool=False, model_ind: int = 1) -> Tuple['BaseModel', Optional[AutoTokenizer]]:
+
+def configure_model(config: Trainer, device: torch.device, seed: int=None, print_output=True) -> Tuple['BaseModel', Optional[AutoTokenizer]]:
+    seed_everything(seed)
     """ creates a model given the configuration """
     tokenizer = None
     if config.data.is_language_dataset():
-        model, tokenizer = configure_nlp_model(config, model_dir, device)
+        model, tokenizer = configure_nlp_model(config, device)
     else:
-        model = configure_vision_model(config, model_dir, device, return_perms, model_ind)
+        model = configure_vision_model(config, device)
     if ckpt_path := config.model.ckpt_path:
         assert Path(ckpt_path).resolve().absolute().exists(), ValueError(f"Provided ckpt path doesn't exist {ckpt_path}")
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
+    if print_output:
+        print(model)
     return model, tokenizer
+
 
 def configure_optimizer(config: Trainer, model: 'BaseModel'):
     opt_conf = config.trainer.opt
@@ -335,7 +333,7 @@ def configure_lr_scheduler(
     optimizer: optim.Optimizer,
     training_steps: int,
     lr_scheduler: str = None,
-    warmup_ratio: int = 0,
+    warmup_ratio: float = 0,
     lr_schedule: dict = None,
     global_step: int = 0,
     warmup_steps: int = None,
@@ -665,14 +663,11 @@ def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, load
     dataset = data_conf.dataset
     dataset_conf = data_conf.dataset_info
     w = dataset_conf.resolution
-    mean, std = dataset_conf.mean, dataset_conf.std
+    mean, std = list(dataset_conf.mean), list(dataset_conf.std)
     transforms_ = [transforms.Resize((w, w))]
     if not evaluate:
         if data_conf.hflip:
             transforms_.append(transforms.RandomHorizontalFlip())
-        if data_conf.random_translate:
-            t = data_conf.random_translate / w
-            transforms_.append(transforms.RandomAffine(degrees=0, translate=(t, t), scale=(0.02, 1), shear=0, fill=mean))
         if (rot := data_conf.random_rotation):
             transforms_.append(transforms.RandomRotation(rot))
         if data_conf.random_translate:
@@ -680,9 +675,6 @@ def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, load
             transforms_.append(transforms.RandomAffine(degrees=0, translate=(t, t), fill=mean))
         if data_conf.gaussian_blur:
             transforms_.append(transforms.GaussianBlur(kernel_size=3))
-        if data_conf.cutout:
-            scale = data_conf.cutout / w
-            transforms_.append(transforms.RandomErasing(scale=(0.02, scale), ratio=(1, 1), value=mean))
     # put ToTensor here because RandomErasing needs it (can't move it earlier as that would break regression tests due to reordering transforms)
     transforms_.append(transforms.ToTensor())
     if not evaluate:
@@ -830,7 +822,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
             ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
-        model, tokenizer = configure_model(config, model_dir, device, model_ind=i)
+        model, tokenizer = configure_model(config, device, seed=seed)
         
         if is_nlp_task:
             train_loader = setup_nlp_loader(config.data, train=True, evaluate=False, tokenizer=tokenizer, loader_seed=loader_seed)

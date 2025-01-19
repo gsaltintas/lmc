@@ -343,6 +343,15 @@ class WandbMetricsRegistry(MetricsRegistry):
                         category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
                     ),
                 )
+            self.add_metric(
+                f"grad_count_{model_idx}",  # Using model_idx to track per model
+                WandbMetric(
+                    f"static/grad_count/{model_idx}",  # log_name following your convention
+                    f"Parameter Count for Model {model_idx}",  # ylabel
+                    f"grad_count_{model_idx}",  # prefix
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
 
     def has_metric(self, metric_name: str) -> bool:
         if metric_name in self.metrics.keys():
