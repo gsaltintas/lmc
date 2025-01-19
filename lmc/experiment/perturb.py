@@ -58,6 +58,15 @@ class PerturbedTrainingRunner(TrainingRunner):
                 )
             }
         )
+        # save per-layer L2s
+        for i, el in enumerate(self.training_elements, start=1):
+            log_dct.update(
+                {
+                    f"static/l2_at_init/layers/{i}/{k}": torch.norm(v.flatten()).item()
+                    for k, v in el.model.named_parameters()
+                    if v.requires_grad
+                }
+            )
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
@@ -107,8 +116,9 @@ class PerturbedTrainingRunner(TrainingRunner):
                         loader_seed=seed,
                         tokenizer=tokenizer
                     )
-        
-    def perturb_model(self, log_dct: dict):
+
+    def perturb_model(self):
+        log_dct = {"step/global": self.global_step}
         for ind, el in enumerate(self.training_elements, start=1):
             if ind not in self.config.perturb_inds:
                 continue
@@ -116,7 +126,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                 self.config, el.model, el.perturb_seed, el.loss_fn
             )
             noise_stats = {f"static/noise/{ind}-{k}": v for k, v in noise_stats.items()}
-            log_dct = {**log_dct, **noise_stats}
+            log_dct.update(noise_stats)
+            log_dct[f"step/model{ind}"] = el.curr_step
             for num_data_points in [1, 5, -1]:
                 dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
                 avg_grad_norm, grad_count = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
@@ -124,8 +135,9 @@ class PerturbedTrainingRunner(TrainingRunner):
                 log_dct[self.wandb_registry.get_metric(f"grad_count_{ind}").log_name] =  grad_count
                 del dl
             self.logger.info(
-                "Model %d perturbed with %f scaling, absolute l2 %f.",
+                "Model %d perturbed at %i with %f scaling, absolute l2 %f.",
                 ind,
+                el.curr_step,
                 self.config.perturb_scale,
                 log_dct[f"static/noise/{ind}-l2"],
             )
@@ -145,6 +157,8 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if el.scheduler is not None:
                     self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
                     self.logger.info("Model %d lr schedule reset.", ind)
+        if self.config.logger.use_wandb:
+            wandb.log(log_dct)
 
     def run(self):
         if self.config.perturb_debug_dummy_run:
@@ -161,7 +175,6 @@ class PerturbedTrainingRunner(TrainingRunner):
         self.on_train_start()
         while not self.training_finished(self.training_elements):
             ### train epoch
-            log_dct = dict(epoch=ep)
             self.on_epoch_start()
             self.training_elements.on_epoch_start()
             train_loaders = [iter(el.train_loader) for el in self.training_elements]
@@ -173,8 +186,9 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if self.global_step == self.config.perturb_step.get_step(
                     self.steps_per_epoch
                 ):
-                    self.perturb_model(log_dct=log_dct)
+                    self.perturb_model()
                 self.global_step += 1
+                log_dct = {"step/global": self.global_step}
                 for element_ind, batch in enumerate(batches):
                     element = self.training_elements[element_ind]
                     if element.curr_step >= element.max_steps.get_step(
@@ -183,19 +197,18 @@ class PerturbedTrainingRunner(TrainingRunner):
                         continue
                     element.train_iterator.update()
 
-                    self.step_element(
+                    log_dct.update(self.step_element(
                         element,
                         batch,
                         ep,
                         early_iter_ckpt_steps,
                         i=element_ind + 1,
-                    )
-            self.on_epoch_end(ep, log_dct)
+                    ))
+                if self.config.logger.use_wandb:
+                    wandb.log(log_dct)
+            self.on_epoch_end(ep)
             ep += 1
         self.on_train_end(ep)
-
-    def on_epoch_end(self, ep: int, log_dct: dict):
-        super().on_epoch_end(ep, log_dct)
 
     def dummy_run(self):
         # for testing and debugging logreg, this avoids having to do multiple training runs

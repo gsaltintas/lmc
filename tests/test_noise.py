@@ -92,7 +92,7 @@ class TestNoise(BaseTest):
         self._check_init_std("resnet20-16", "kaiming_normal")
 
     def test_perturbed_layers(self):
-        for n_unperturbed, dont_perturb in [(0, []), (43, [".*norm.*", "model.fc.bias"]), (23, ['^((?!norm).)*$']), (64, ['^((?!model.fc.weight).)*$'])]:
+        for n_unperturbed, dont_perturb in [(0, []), (43, [".*norm.*|.*bias.*"]), (23, ['^((?!norm).)*$']), (64, ['^((?!model.fc.weight).)*$'])]:
             with self.subTest(dont_perturb):
                 layers = get_perturbed_layers(self.model, dont_perturb)
                 self.assertEqual(len(layers), 65 - n_unperturbed)
@@ -108,7 +108,7 @@ class TestNoise(BaseTest):
                 if mode == "gaussian" and len(dont_perturb) > 0:
                     self.assertAlmostEqual(v, self.expected_l2_per_layer[k] * scale, places=0)
 
-        for dont_perturb in [[], [".*norm.*", "model.fc.bias"]]:
+        for dont_perturb in [[], [".*norm.*|.*bias.*"]]:
             for mode in ["batch", "gaussian"]:
                 with self.subTest(f"{mode} normalized only {dont_perturb}"):
                     noise_l2, per_layer_l2 = self._get_noise(mode=mode, normalize_perturb=True, scale_to_init_if_normalized=False, dont_perturb_module_patterns=dont_perturb)
@@ -122,7 +122,7 @@ class TestNoise(BaseTest):
             noise_l2, per_layer_l2 = self._get_noise(mode="gaussian", normalize_perturb=False, dont_perturb_module_patterns=[])
             self.assertAlmostEqual(noise_l2, self.expected_l2, places=0)
         with self.subTest(f"gaussian unnormalized no norm layers"):
-            noise_l2, per_layer_l2 = self._get_noise(mode="gaussian", normalize_perturb=False, dont_perturb_module_patterns=[".*norm.*", "model.fc.bias"])
+            noise_l2, per_layer_l2 = self._get_noise(mode="gaussian", normalize_perturb=False, dont_perturb_module_patterns=[".*norm.*|.*bias.*"])
             self.assertAlmostEqual(noise_l2, self.expected_l2, places=0)
             assert_noise_not_zero(per_layer_l2, [".*norm.*", "model.fc.bias"], "gaussian", 1)
         # these values are recorded for regression testing purposes

@@ -61,6 +61,8 @@ class BaseTest(unittest.TestCase):
     SEED_2 = 41
 
     def setUp(self):
+        # suppress wandb messages to console as it covers up the test results
+        os.environ["WANDB_SILENT"] = "True"
         test_path = Path(
             os.path.relpath(os.path.dirname(os.path.realpath(__file__)), os.getcwd())
         )

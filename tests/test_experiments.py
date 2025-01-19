@@ -16,7 +16,7 @@ class TestTrainingRunner(BaseTest):
             with self.subTest(f"training steps: {step}"):
                 n_steps = self.run_command_and_return_result(
                     f"test-training-steps-{step}",
-                    "lr/global_step",
+                    "step/global",
                     model_name="resnet20-8",
                     dataset="cifar10",
                     training_steps=f"{step}st",

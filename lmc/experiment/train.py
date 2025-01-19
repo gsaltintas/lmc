@@ -124,7 +124,6 @@ class TrainingRunner(ExperimentManager):
             )
 
         if self.config.logger.use_wandb:
-            print("loggin")
             wandb.log(log_dct)
         if self.config.logger.print_summary and log_dct:
             report_results(log_dct, ep, self.config.n_models)
@@ -162,8 +161,7 @@ class TrainingRunner(ExperimentManager):
             lr = element.scheduler.get_last_lr()[-1]
         
         if self.config.logger.use_wandb:
-            wandb.log({f"lr/model{i}": lr})
-            wandb.log({f"lr/step/model{i}": element.curr_step})
+            wandb.log({f"lr/model{i}": lr, f"lr/step/model{i}": element.curr_step})
         if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             element.opt.zero_grad()
         if self.config.data.is_language_dataset():
