@@ -6,9 +6,8 @@ from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
 
 import wandb
-from lmc.butterfly.butterfly import (get_average_grad_norm, get_batch_noise,
-                                     get_gaussian_noise, get_noise_l2,
-                                     normalize_noise, perturb_model)
+from lmc.butterfly.butterfly import (get_average_grad_norm,
+                                     sample_noise_and_perturb)
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.opt import get_lr, reset_base_lrs
@@ -33,27 +32,11 @@ def is_same_model(training_elements):
 @dataclass
 class PerturbedTrainingRunner(TrainingRunner):
     config: PerturbedTrainer = field(init=True, default=PerturbedTrainer)
-    noise_dct: Dict[int, Dict[str, torch.Tensor]] = None
     _name: str = "perturbed-trainer"
-    _noise_created: bool = False
-
-    def __post_init__(self):
-        self.noise_dct = dict()
-        return super().__post_init__()
 
     @staticmethod
     def description():
         return "Train n model(s) with perturbations."
-          
-
-    def setup(self) -> None:
-        super().setup()
-        if self.config.sample_noise_at == "init":
-            self.create_noise_dicts()
-            self.logger.info(
-                "Noise created for models %s at initialization.",
-                self.config.perturb_inds,
-            )
 
     def on_train_start(self):
         super().on_train_start()
@@ -125,58 +108,26 @@ class PerturbedTrainingRunner(TrainingRunner):
                         tokenizer=tokenizer
                     )
         
-    def create_noise_dicts(self):
-        self._noise_created = True
-        for ind, el in enumerate(self.training_elements, start=1):
-            if ind in self.config.perturb_inds:
-                if (
-                    self.config.perturb_mode == "batch"
-                ):  # TODO: here double check if the seed messes up somethings
-                    dl = self.get_train_loader(el.perturb_seed, el.tokenizer)
-                    self.noise_dct[ind] = get_batch_noise(
-                        el.model,
-                        dataloader=dl,
-                        noise_seed=el.perturb_seed,
-                        loss_fn=el.loss_fn,
-                        dont_perturb_patterns=self.config.dont_perturb_module_patterns
-                    )
-                    del dl
-                elif self.config.perturb_mode == "gaussian":
-                    self.noise_dct[ind] = get_gaussian_noise(
-                        el.model, noise_seed=el.perturb_seed, dont_perturb_patterns=self.config.dont_perturb_module_patterns
-                    )
-                if self.config.normalize_perturb:
-                    # normalize to self.config.perturb_scale
-                    self.noise_dct[ind] = normalize_noise(self.noise_dct[ind], self.config.perturb_scale)
-      
     def perturb_model(self, log_dct: dict):
         for ind, el in enumerate(self.training_elements, start=1):
             if ind not in self.config.perturb_inds:
                 continue
-            if not self._noise_created:
-                self.create_noise_dicts()
-                self.logger.info(
-                    "Noise created for models %s at perturbance time.",
-                    self.config.perturb_inds,
-                )
-            perturb_scale = 1. if self.config.normalize_perturb else self.config.perturb_scale
-            perturb_model(el.model, self.noise_dct[ind], perturb_scale)
+            noise_stats = sample_noise_and_perturb(
+                self.config, el.model, el.perturb_seed, el.loss_fn
+            )
+            noise_stats = {f"static/noise/{ind}-{k}": v for k, v in noise_stats.items()}
+            log_dct = {**log_dct, **noise_stats}
             for num_data_points in [1, 5, -1]:
                 dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
                 avg_grad_norm, grad_count = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
                 log_dct[self.wandb_registry.get_metric(f"grad_norm_{ind}_on_{num_data_points}").log_name] =  avg_grad_norm
                 log_dct[self.wandb_registry.get_metric(f"grad_count_{ind}").log_name] =  grad_count
                 del dl
-            noise_l2 = get_noise_l2(self.noise_dct[ind])
             self.logger.info(
                 "Model %d perturbed with %f scaling, absolute l2 %f.",
                 ind,
-                perturb_scale,
-                noise_l2,
-            )
-            log_dct[self.wandb_registry.get_metric(f"noise_l2_{ind}").log_name] = noise_l2
-            log_dct[self.wandb_registry.get_metric(f"noise_l2_scaled_{ind}").log_name] = noise_l2 * (
-                perturb_scale**2
+                self.config.perturb_scale,
+                log_dct[f"static/noise/{ind}-l2"],
             )
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:

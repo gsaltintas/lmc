@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import logging
 from abc import abstractmethod
 from copy import deepcopy
@@ -132,3 +133,74 @@ class BaseModel(nn.Module):
     @property
     def device(self):
         return next(self.parameters()).device
+
+    @abstractmethod
+    def get_init_stds(self, include_constant_params=False) -> OrderedDict[str, float]:
+        """Returns dict of per-layer standard deviations for each parameter in the layer at initialization.
+        The expected L2 norm of each layer is thus standard deviation * sqrt(number of parameters)"""
+        # heuristic approach based on pytorch defaults
+        std = OrderedDict()
+        # work backwards so that we have std of next layer (assuming parameters are in order)
+        last_randinit_layer = None
+        last_randinit_inputs = 0
+        for k, v in reversed(list(self.named_parameters())):
+            # bias or norm weight/bias
+            if k.endswith(".bias") or (k.endswith(".weight") and v.dim() == 1):
+                # if we need to assign some noise to a constant layer, use the same scaling as the next non-constant layer
+                # if this is the last layer, use 1/sqrt(n) as scaling instead
+                if include_constant_params:
+                    if last_randinit_layer is None:
+                        self.logger.info("{k} has constant init but is not followed by another layer, assume 1/sqrt(n) std")
+                        std[k] = 1 / v.shape[0]**0.5
+                    else:
+                        # check that output dims matches input dims of weight layer
+                        assert last_randinit_inputs == v.shape[0]
+                        std[k] = std[last_randinit_layer]
+                else:
+                    std[k] = 0.0
+            # conv or linear weight
+            elif k.endswith(".weight") and v.dim() > 1:
+                if self.initialization_strategy in ("xavier_uniform", "glorot_uniform"):
+                    std[k] = xavier_uniform_std(v)
+                elif self.initialization_strategy in ("xavier_normal", "glorot_normal"):
+                    std[k] = xavier_normal_std(v)
+                elif self.initialization_strategy in ("kaiming_uniform", "he_uniform"):
+                    std[k] = kaiming_uniform_std(v)
+                elif self.initialization_strategy in ("kaiming_normal", "he_normal"):
+                    std[k] = kaiming_normal_std(v)
+                # ignore shortcut layers when saving next input layer
+                if "shortcut" not in k:
+                    last_randinit_layer = k
+                    last_randinit_inputs = v.shape[1]
+            else:
+                raise ValueError(f"Unknown layer type and std: name={k} shape={v.shape}")
+        reversed_std = OrderedDict()
+        for k, v in reversed(std.items()):
+            reversed_std[k] = v
+        return reversed_std
+
+
+def fan_in(tensor):
+    k = 1
+    # multiply everything except output size, which is first dim
+    for d in tensor.shape[1:]:
+        k *= d
+    return k
+
+
+def xavier_uniform_std(tensor) -> float:
+    raise NotImplementedError()
+
+
+def xavier_normal_std(tensor) -> float:
+    raise NotImplementedError()
+
+
+def kaiming_uniform_std(tensor) -> float:
+    # kaiming uniform(-1/sqrt(k), 1/sqrt(k)), where k = weight.size(1) * prod(*kernel_size)
+    # std is 1/sqrt(12)*(b-a), where b-a = 2/sqrt(k)
+    return 2 / (12 * fan_in(tensor))**0.5
+
+
+def kaiming_normal_std(tensor) -> float:
+    return (2 / fan_in(tensor))**0.5
