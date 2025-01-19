@@ -1,32 +1,17 @@
 from dataclasses import dataclass, field
-from typing import Dict
 
 import torch
 from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
-
 import wandb
-from lmc.butterfly.butterfly import (get_average_grad_norm,
-                                     sample_noise_and_perturb)
+
+from lmc.butterfly.butterfly import get_average_grad_norm, sample_noise_and_perturb
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.setup_training import (TrainingElement, configure_lr_scheduler,
-                                      setup_loader)
+from lmc.utils.training_element import TrainingElement
+from lmc.utils.setup_training import configure_lr_scheduler, setup_loader
 from lmc.utils.step import Step
-
-
-def is_same_model(training_elements):
-    same_models = True
-    for (n1, p1), (n2, p2) in zip(
-        training_elements[0].model.named_parameters(),
-        training_elements[1].model.named_parameters(),
-    ):
-        same_models = same_models and torch.allclose(p1, p2)
-        if not same_models:
-            return False
-
-    return same_models
 
 
 @dataclass
@@ -40,6 +25,7 @@ class PerturbedTrainingRunner(TrainingRunner):
 
     def on_train_start(self):
         super().on_train_start()
+        print("Running perturbed training.")
         self.models_at_init = [
             parameters_to_vector(el.model.parameters()) for el in self.training_elements
         ]
@@ -110,12 +96,12 @@ class PerturbedTrainingRunner(TrainingRunner):
 
     def get_train_loader(self, seed: int = None, tokenizer: AutoTokenizer = None):
         return setup_loader(
-                        self.config.data,
-                        train=True,
-                        evaluate=False,
-                        loader_seed=seed,
-                        tokenizer=tokenizer
-                    )
+            self.config.data,
+            train=True,
+            evaluate=False,
+            loader_seed=seed,
+            tokenizer=tokenizer,
+        )
 
     def perturb_model(self):
         log_dct = {"step/global": self.global_step}
@@ -130,9 +116,17 @@ class PerturbedTrainingRunner(TrainingRunner):
             log_dct[f"step/model{ind}"] = el.curr_step
             for num_data_points in [1, 5, -1]:
                 dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
-                avg_grad_norm, grad_count = get_average_grad_norm(el.model, dl, num_datapoints=num_data_points)
-                log_dct[self.wandb_registry.get_metric(f"grad_norm_{ind}_on_{num_data_points}").log_name] =  avg_grad_norm
-                log_dct[self.wandb_registry.get_metric(f"grad_count_{ind}").log_name] =  grad_count
+                avg_grad_norm, grad_count = get_average_grad_norm(
+                    el.model, dl, num_datapoints=num_data_points
+                )
+                log_dct[
+                    self.wandb_registry.get_metric(
+                        f"grad_norm_{ind}_on_{num_data_points}"
+                    ).log_name
+                ] = avg_grad_norm
+                log_dct[
+                    self.wandb_registry.get_metric(f"grad_count_{ind}").log_name
+                ] = grad_count
                 del dl
             self.logger.info(
                 "Model %d perturbed at %i with %f scaling, absolute l2 %f.",
@@ -163,52 +157,14 @@ class PerturbedTrainingRunner(TrainingRunner):
     def run(self):
         if self.config.perturb_debug_dummy_run:
             return self.dummy_run()
-        # TPDP: make training step as Step
-        print(self.config.display)
-        print("Running perturbed training.")
-        early_iter_ckpt_steps = self.get_early_iter_ckpt_steps(
-            self.steps_per_epoch, n_ckpts=10
-        )
-        ep: int = 1
-        if is_same_model(self.training_elements):
-            self.logger.info("Models are the same at initialization.")
-        self.on_train_start()
-        while not self.training_finished(self.training_elements):
-            ### train epoch
-            self.on_epoch_start()
-            self.training_elements.on_epoch_start()
-            train_loaders = [iter(el.train_loader) for el in self.training_elements]
-            for batch_ind, batches in enumerate(zip(*train_loaders)):
-                if self.global_step >= self.training_elements.max_steps.get_step(
-                    self.steps_per_epoch
-                ):
-                    break
-                if self.global_step == self.config.perturb_step.get_step(
-                    self.steps_per_epoch
-                ):
-                    self.perturb_model()
-                self.global_step += 1
-                log_dct = {"step/global": self.global_step}
-                for element_ind, batch in enumerate(batches):
-                    element = self.training_elements[element_ind]
-                    if element.curr_step >= element.max_steps.get_step(
-                        self.steps_per_epoch
-                    ):
-                        continue
-                    element.train_iterator.update()
+        return super().run()
 
-                    log_dct.update(self.step_element(
-                        element,
-                        batch,
-                        ep,
-                        early_iter_ckpt_steps,
-                        i=element_ind + 1,
-                    ))
-                if self.config.logger.use_wandb:
-                    wandb.log(log_dct)
-            self.on_epoch_end(ep)
-            ep += 1
-        self.on_train_end(ep)
+    def step_all_training_elements(self, batches):
+        if self.global_step == self.config.perturb_step.get_step(
+            self.steps_per_epoch
+        ):
+            self.perturb_model()
+        return super().step_all_training_elements(batches)
 
     def dummy_run(self):
         # for testing and debugging logreg, this avoids having to do multiple training runs
@@ -216,3 +172,4 @@ class PerturbedTrainingRunner(TrainingRunner):
             # randomly draw from uniform [0, perturb_step)
             value = torch.rand(1).item() * self.config.perturb_scale
             wandb.log({"test/dummyvalue": value})
+

@@ -1,176 +1,58 @@
 import logging
 import re
-from typing import Callable, Dict, Optional, Tuple
-
-import torch
-import torchvision
-from datasets import load_dataset
-from torch.utils.data import DataLoader
-from transformers import (AutoModelForCausalLM,
-                          AutoModelForSequenceClassification, AutoTokenizer,
-                          DataCollatorForLanguageModeling,
-                          DataCollatorWithPadding, PreTrainedTokenizer)
-
-from lmc.models.bert import Bert
-from lmc.models.t5 import T5
-
-torchvision.disable_beta_transforms_warning()
-import logging
 import math
 import os
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
-from typing import Dict, List, Mapping, Tuple, Union
+from typing import List, Union, Callable, Dict, Optional, Tuple
 
 import numpy as np
 import torch
-import torchvision.transforms as transforms
-import wandb.sync
-from torch import nn, optim
 from torch.utils.data import DataLoader
+from torch import nn, optim
 from tqdm import tqdm
+import torchvision.transforms as transforms
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+    DataCollatorWithPadding,
+    PreTrainedTokenizer,
+)
+from datasets import load_dataset
 
+from lmc.models.bert import Bert
+from lmc.models.t5 import T5
 import wandb
+
 from lmc.config import DataConfig
 from lmc.data.data_stats import DatasetRegistry, TaskType
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.utils import count_parameters
-from lmc.utils.metrics import Metrics
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
+from lmc.utils.training_element import TrainingElement, TrainingElements, Iterator
+
 
 logger = logging.getLogger("setup")
 
 WANDB_DIR = os.environ.get("SCRATCH", os.environ.get("TMPDIR"))
 
 
-class Iterator(tqdm):
-    """ dummy iterator class to use when tqdm is disabled """
-    def set_description_str(self, s):
-        pass
-    
-    def update(self, n: float | None = 1) -> bool | None:
-        pass
-    
-    def reset(self, total: float | None = None) -> None:
-        pass
-    
-    def set_postfix(self, ordered_dict: Mapping[str, object] | None = None, refresh: bool | None = True, **kwargs) -> None:
-        pass
-    def refresh(self, nolock: bool = False, lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = None) -> None:
-        pass
-
-@dataclass
-class TrainingElement(object):
-    """ dataclass holding everything pertaining to the training elements, models, loaders, optimizers steps, etc. """
-    model: nn.Module
-    opt: optim.Optimizer
-    train_loader: DataLoader
-    train_eval_loader: DataLoader
-    test_loader: DataLoader
-    element_ind: int = None
-    scheduler: optim.lr_scheduler.LRScheduler = None
-    seed: int = 42
-    loader_seed: int = 42
-    aug_seed: int = 42
-    perturb_seed: int = None
-    optimal_acc: float = -1
-    optimal_path: Path = None
-    permutation = None
-    prev_perm_wm = None
-    prev_perm_am = None
-    max_steps: Step = None
-    curr_step: int = 0 # not sure if this is the best way?
-    save_freq_step: Step = None
-    model_dir: Path = None
-    train_iterator: tqdm = Iterator()
-    test_iterator: tqdm = Iterator()
-    train_eval_iterator: tqdm = Iterator()
-    extra_iterator: tqdm = Iterator()
-    metrics: Metrics = field(init=True, default_factory=Metrics)
-    # TODO: later add the loss func for nlp models
-    loss_fn: callable = nn.CrossEntropyLoss()
-    tokenizer: AutoTokenizer = None
-
-    def on_epoch_start(self):
-        """ call on epoch start to prepare for training the epoch """
-        self.opt.zero_grad()
-        self.model.train()
-        self.metrics.reset()
-
-    def on_epoch_end(self):
-        """ call on epoch end to prepare for the evaluations"""
-        self.model.eval()
-        self.metrics.reset()
-
-class TrainingElements(object):
-    """ container for training elements"""
-    _elements: List[TrainingElement]
-
-    def __init__(self, *elements: List[TrainingElement]):
-        self._elements = []
-        cnt = 0
-        for i, el in enumerate(elements):
-            self._elements.append(el)
-            setattr(self, str(i), el)
-            cnt += 0
-
-        self.n_elements = cnt
-
-    @property
-    def count(self):
-        return len(self._elements)
-    
-    def add_element(self, element: TrainingElement):
-        self.n_elements += 1
-        setattr(self, str(self.n_elements), element)
-        self._elements.append(element)
-        
-    def __dict__(self):
-        return {i: getattr(self, i) for i in range(self.n_elements)}
-    
-    @property
-    def max_steps(self) -> Step:
-        max_step = None
-        for el in self._elements:
-            if max_step is None:
-                max_step = el.max_steps
-                continue
-            if max_step.get_step() < el.max_steps.get_step():
-                max_step = el.max_steps
-        return max_step
-
-    def on_epoch_start(self):
-        for el in self._elements:
-            el.on_epoch_start()
-            el.train_iterator.reset()
-            el.train_iterator.set_description_str(f"Training model {el.element_ind} - epoch: ")
-
-    def on_epoch_end(self):
-        for el in self._elements:
-            el.on_epoch_end()
-
-    def __iter__(self):
-        for el in self._elements:
-            yield(el)
-
-    def __getitem__(self, i: int):
-        return self._elements[i]
-    
-    def __len__(self):
-        return len(self._elements)
-
 def load_model_from_checkpoint(model: nn.Module, path: Union[Path, str]) -> None:
-    """ given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model """
+    """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
     assert path.exists(), f"Path {path} doesn't exist."
     d = torch.load(path, map_location=model.device)
     model.load_state_dict(d["state_dict"], strict=False)
 
-def load_training(training_element: TrainingElement, path: Path, load_opt: bool = True) -> None:
-    """ loads a saved training element from the given path """
+
+def load_training(
+    training_element: TrainingElement, path: Path, load_opt: bool = True
+) -> None:
+    """loads a saved training element from the given path"""
     assert path.exists(), f"Path {path} doesn't exist."
     assert training_element.model is not None
     d = torch.load(path, map_location=training_element.model.device)
@@ -179,17 +61,21 @@ def load_training(training_element: TrainingElement, path: Path, load_opt: bool 
         training_element.opt.load_state_dict(d["optimizer_state_dict"])
         if training_element.scheduler:
             training_element.scheduler.load_state_dict(d["scheduler_state_dict"])
-        elif training_element.scheduler is None and d["scheduler_state_dict"] is not None:
-            logger.warn("Scheduler saved in the checkpoint but the training element doesn't have any scheduler.")
+        elif (
+            training_element.scheduler is None and d["scheduler_state_dict"] is not None
+        ):
+            logger.warn(
+                "Scheduler saved in the checkpoint but the training element doesn't have any scheduler."
+            )
     training_element.curr_step = d.get("step", 0)
-    
+
 
 def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> None:
     if config.command == "resume-from-wandb":
         api = wandb.Api()
         ckpt = config.resume_from.split("/")[-1]
         artifact = api.artifact(
-            f'{config.logger.wandb.get("project")}/model-{ckpt}:latest', type="model"
+            f"{config.logger.wandb.get('project')}/model-{ckpt}:latest", type="model"
         )
         artifact_dir = artifact.download()
         ckpt_path = str(Path(artifact_dir) / "model.ckpt")
@@ -221,83 +107,109 @@ def should_freeze_layer(layer_name: str, pattern: str) -> bool:
         return pattern in layer_name
     return False
 
+
 def freeze_layers(model, frozen_layers: List):
     """Freeze layers matching either exact names or regex patterns"""
     frozen_count = 0
     total_params = 0
-    
+
     for name, param in model.named_parameters():
         total_params += 1
         if any(should_freeze_layer(name, pattern) for pattern in frozen_layers):
             param.requires_grad = False
             frozen_count += 1
             logger.info(f"Frozen layer: {name}")
-                    
+
     if frozen_count > 0:
-        logger.info(f"Froze {frozen_count}/{total_params} layers based on {len(frozen_layers)} patterns")
+        logger.info(
+            f"Froze {frozen_count}/{total_params} layers based on {len(frozen_layers)} patterns"
+        )
+
 
 def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Module:
     """Configure model for NLP tasks"""
     conf = config.model
-    
+
     # Setup tokenizer first
     tokenizer = AutoTokenizer.from_pretrained(
         config.data.tokenizer_name,
         cache_dir=str(config.data.path),
         model_max_length=config.data.max_seq_length,
         padding_side=config.data.padding_side,
-        truncation_side=config.data.truncation_side
+        truncation_side=config.data.truncation_side,
     )
     if config.data.dataset not in DatasetRegistry.get_available_datasets():
         raise ValueError(f"Unkown output dimension for dataset {config.data.dataset}")
-    out = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
-    
+    out = (
+        config.data.get_num_labels()
+    )  # This will already raise an appropriate error if dataset not found
+
     if "t5" in conf.model_name.lower():
         model = T5(conf.model_name)
     elif "bert" in conf.model_name.lower():
         model = Bert(conf.model_name, output_dim=out)
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
-        num_labels = 1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
+        num_labels = (
+            1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
+        )
         model = AutoModelForSequenceClassification.from_pretrained(
-            conf.model_name,
-            num_labels=num_labels,
-            cache_dir=str(config.data.path)
+            conf.model_name, num_labels=num_labels, cache_dir=str(config.data.path)
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
-            conf.model_name,
-            cache_dir=str(config.data.path)
+            conf.model_name, cache_dir=str(config.data.path)
         )
-    
+
     model = model.to(device)
     logger.info(f"Created NLP model: {conf.model_name}")
     return model, tokenizer
 
 
-def configure_vision_model(config: Trainer, device: torch.device) -> 'BaseModel':
-    """ creates a model given the configuration """
+def configure_vision_model(config: Trainer, device: torch.device) -> "BaseModel":
+    """creates a model given the configuration"""
     conf = config.model
-    out = config.data.get_num_labels()  # This will already raise an appropriate error if dataset not found
-    #TODO: load checkpoints
+    out = (
+        config.data.get_num_labels()
+    )  # This will already raise an appropriate error if dataset not found
+    # TODO: load checkpoints
     if "mlp" in conf.model_name:
-        model = MLP.get_model_from_code(conf.model_name, output_dim=out, input_dim=config.data.get_num_in_channels() * config.data.get_default_res() ** 2, initialization_strategy=conf.initialization_strategy, norm=conf.norm, act=conf.act, hidden_dim=conf.width, depth=conf.num_hidden_layers+1)
+        model = MLP.get_model_from_code(
+            conf.model_name,
+            output_dim=out,
+            input_dim=config.data.get_num_in_channels()
+            * config.data.get_default_res() ** 2,
+            initialization_strategy=conf.initialization_strategy,
+            norm=conf.norm,
+            act=conf.act,
+            hidden_dim=conf.width,
+            depth=conf.num_hidden_layers + 1,
+        )
     elif "resnet" in conf.model_name:
         if conf.model_name == "resnet":
             if config.data.dataset.lower() == "cifar10":
                 conf.model_name = "resnet20"
-        model = ResNet.get_model_from_code(model_code=conf.model_name, output_dim=out, initialization_strategy=conf.initialization_strategy, norm=conf.norm)
+        model = ResNet.get_model_from_code(
+            model_code=conf.model_name,
+            output_dim=out,
+            initialization_strategy=conf.initialization_strategy,
+            norm=conf.norm,
+        )
 
     # if config.resume_from: 5279952
 
     logger.info("Model created.")
     # logger.info
     model = model.to(device)
-    logger.info(f"Total number of trainable parameters {count_parameters(model)/1e6} (M).")
+    logger.info(
+        f"Total number of trainable parameters {count_parameters(model) / 1e6} (M)."
+    )
     return model
 
 
-def configure_model(config: Trainer, device: torch.device, seed: int=None, print_output=True) -> Tuple['BaseModel', Optional[AutoTokenizer]]:
+def configure_model(
+    config: Trainer, device: torch.device, seed: int = None, print_output=True
+) -> Tuple["BaseModel", Optional[AutoTokenizer]]:
     seed_everything(seed)
     """ creates a model given the configuration """
     tokenizer = None
@@ -306,7 +218,9 @@ def configure_model(config: Trainer, device: torch.device, seed: int=None, print
     else:
         model = configure_vision_model(config, device)
     if ckpt_path := config.model.ckpt_path:
-        assert Path(ckpt_path).resolve().absolute().exists(), ValueError(f"Provided ckpt path doesn't exist {ckpt_path}")
+        assert Path(ckpt_path).resolve().absolute().exists(), ValueError(
+            f"Provided ckpt path doesn't exist {ckpt_path}"
+        )
         load_model_from_checkpoint(model, ckpt_path)
         logger.info("Model loaded from checkpoint %s.", ckpt_path)
     if print_output:
@@ -314,18 +228,32 @@ def configure_model(config: Trainer, device: torch.device, seed: int=None, print
     return model, tokenizer
 
 
-def configure_optimizer(config: Trainer, model: 'BaseModel'):
+def configure_optimizer(config: Trainer, model: "BaseModel"):
     opt_conf = config.trainer.opt
     if opt_conf.optimizer.lower() == "sgd":
-        opt = optim.SGD(model.parameters(), lr=opt_conf.lr, momentum=opt_conf.momentum,
-                            weight_decay=opt_conf.weight_decay)
+        opt = optim.SGD(
+            model.parameters(),
+            lr=opt_conf.lr,
+            momentum=opt_conf.momentum,
+            weight_decay=opt_conf.weight_decay,
+        )
     elif opt_conf.optimizer.lower() == "adam":
-        opt = optim.Adam(model.parameters(), lr=opt_conf.lr, betas=opt_conf.betas, weight_decay=opt_conf.weight_decay)
+        opt = optim.Adam(
+            model.parameters(),
+            lr=opt_conf.lr,
+            betas=opt_conf.betas,
+            weight_decay=opt_conf.weight_decay,
+        )
     elif opt_conf.optimizer.lower() == "adamw":
-        opt = optim.AdamW(model.parameters(), lr=opt_conf.lr, betas=opt_conf.betas, weight_decay=opt_conf.weight_decay)
+        opt = optim.AdamW(
+            model.parameters(),
+            lr=opt_conf.lr,
+            betas=opt_conf.betas,
+            weight_decay=opt_conf.weight_decay,
+        )
     else:
         raise NotImplementedError(f"Optimizer ({opt_conf.optimizer}) not mplemented.")
-    
+
     return opt
 
 
@@ -422,9 +350,15 @@ def configure_lr_scheduler(
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
     return scheduler
 
-def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, data_conf: DataConfig, evaluate: bool) -> Callable:
+
+def get_task_preprocessor(
+    task_type: TaskType,
+    tokenizer: PreTrainedTokenizer,
+    data_conf: DataConfig,
+    evaluate: bool,
+) -> Callable:
     """Returns the appropriate preprocessing function for the given task type."""
-    
+
     def preprocess_classification(examples):
         tokenizer_kwargs = {
             "padding": True if evaluate else False,
@@ -432,7 +366,7 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "max_length": data_conf.max_seq_length,
         }
         # Handle both single strings and lists of strings
-        text = examples.get('text', examples.get('sentence', ''))
+        text = examples.get("text", examples.get("sentence", ""))
         if data_conf.lowercase:
             # Handle both single string and list of strings
             if isinstance(text, str):
@@ -448,9 +382,9 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "max_length": data_conf.max_seq_length,
         }
         # Make sure we get lists of strings
-        text1 = examples.get('sentence1', examples.get('question', []))
-        text2 = examples.get('sentence2', examples.get('context', []))
-        
+        text1 = examples.get("sentence1", examples.get("question", []))
+        text2 = examples.get("sentence2", examples.get("context", []))
+
         if data_conf.lowercase:
             text1 = [t.lower() for t in text1]
             text2 = [t.lower() for t in text2]
@@ -463,11 +397,11 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "max_length": data_conf.max_seq_length,
         }
         # Make sure we get a list of strings
-        if isinstance(examples['text'], str):
-            text = [examples['text']]
+        if isinstance(examples["text"], str):
+            text = [examples["text"]]
         else:
-            text = examples['text']
-            
+            text = examples["text"]
+
         if data_conf.lowercase:
             text = [t.lower() for t in text]
         return tokenizer(text, **tokenizer_kwargs)
@@ -477,18 +411,18 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "padding": True if evaluate else False,
             "truncation": True,
             "max_length": data_conf.max_seq_length,
-            "return_offsets_mapping": True
+            "return_offsets_mapping": True,
         }
         # Make sure we get lists of strings
-        questions = examples['question']
-        contexts = examples['context']
-        
+        questions = examples["question"]
+        contexts = examples["context"]
+
         # Handle possible single string inputs
         if isinstance(questions, str):
             questions = [questions]
         if isinstance(contexts, str):
             contexts = [contexts]
-            
+
         if data_conf.lowercase:
             questions = [q.lower() for q in questions]
             contexts = [c.lower() for c in contexts]
@@ -500,28 +434,32 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "truncation": True,
             "max_length": data_conf.max_seq_length,
         }
-        
+
         # Get labels
-        labels = examples.get('label', examples.get('labels', None))
+        labels = examples.get("label", examples.get("labels", None))
         # Filter out -1 labels or map them to a valid class
-        labels = [l if l != -1 else 0 for l in labels]  # Map -1 to 0 or handle as needed
-        
+        labels = [
+            l if l != -1 else 0 for l in labels
+        ]  # Map -1 to 0 or handle as needed
+
         if labels is None:
-            raise ValueError("No labels found in dataset (looking for 'label' or 'labels' field)")
-        
+            raise ValueError(
+                "No labels found in dataset (looking for 'label' or 'labels' field)"
+            )
+
         # NLI typically has premise and hypothesis
-        premise = examples.get('premise', examples.get('sentence1', []))
-        hypothesis = examples.get('hypothesis', examples.get('sentence2', []))
-        
+        premise = examples.get("premise", examples.get("sentence1", []))
+        hypothesis = examples.get("hypothesis", examples.get("sentence2", []))
+
         if data_conf.lowercase:
             premise = [p.lower() for p in premise]
             hypothesis = [h.lower() for h in hypothesis]
         # Tokenize inputs
         tokenized = tokenizer(premise, hypothesis, **tokenizer_kwargs)
-        
+
         # Add labels to the tokenized output
-        tokenized['labels'] = labels
-        
+        tokenized["labels"] = labels
+
         return tokenized
 
     def preprocess_sequence_labeling(examples):
@@ -530,22 +468,18 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
             "truncation": True,
             "max_length": data_conf.max_seq_length,
             "return_offsets_mapping": True,
-            "return_special_tokens_mask": True
+            "return_special_tokens_mask": True,
         }
         # Get the text and labels
-        tokens = examples.get('tokens', examples.get('words', []))
-        labels = examples.get('tags', examples.get('labels', []))
-        
+        tokens = examples.get("tokens", examples.get("words", []))
+        labels = examples.get("tags", examples.get("labels", []))
+
         if data_conf.lowercase:
             tokens = [[t.lower() for t in seq] for seq in tokens]
-            
+
         # Tokenize the text
-        tokenized = tokenizer(
-            tokens,
-            is_split_into_words=True,
-            **tokenizer_kwargs
-        )
-        
+        tokenized = tokenizer(tokens, is_split_into_words=True, **tokenizer_kwargs)
+
         if labels is not None:
             # Align labels with wordpiece tokens
             aligned_labels = []
@@ -559,11 +493,13 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
                     elif word_idx != previous_word_idx:
                         label_ids.append(label[word_idx])
                     else:
-                        label_ids.append(-100 if not data_conf.label_all_tokens else label[word_idx])
+                        label_ids.append(
+                            -100 if not data_conf.label_all_tokens else label[word_idx]
+                        )
                     previous_word_idx = word_idx
                 aligned_labels.append(label_ids)
             tokenized["labels"] = aligned_labels
-            
+
         return tokenized
 
     preprocessors = {
@@ -572,27 +508,28 @@ def get_task_preprocessor(task_type: TaskType, tokenizer: PreTrainedTokenizer, d
         TaskType.GENERATION: preprocess_generation,
         TaskType.QUESTION_ANSWERING: preprocess_qa,
         TaskType.NATURAL_LANGUAGE_INFERENCE: preprocess_nli,
-        TaskType.SEQUENCE_LABELING: preprocess_sequence_labeling
+        TaskType.SEQUENCE_LABELING: preprocess_sequence_labeling,
     }
-    
+
     return preprocessors[task_type]
 
+
 def setup_nlp_loader(
-    data_conf: DataConfig, 
-    train: bool, 
-    evaluate: bool, 
+    data_conf: DataConfig,
+    train: bool,
+    evaluate: bool,
     tokenizer: PreTrainedTokenizer,
-    loader_seed: Optional[int] = None
+    loader_seed: Optional[int] = None,
 ) -> DataLoader:
     """Setup data loader for NLP tasks"""
     if loader_seed is not None:
         torch.manual_seed(loader_seed)
         g = torch.Generator()
         g.manual_seed(loader_seed)
-    
+
     dataset_conf = data_conf.dataset_info
     task_type = dataset_conf.task_type
-    
+
     # Determine split based on dataset
     splits = dataset_conf.splits
     if train:
@@ -604,62 +541,60 @@ def setup_nlp_loader(
         elif "test" in splits:
             split = splits["test"]
         else:
-            logger.warning(f"Dataset {data_conf.dataset} has no validation/test split, using train split")
+            logger.warning(
+                f"Dataset {data_conf.dataset} has no validation/test split, using train split"
+            )
             split = splits["train"]
-    
+
     # Load dataset
     dataset_config = dataset_conf.hf_config
     load_kwargs = {
         "cache_dir": str(data_conf.path),
         "split": split,
-        "name": dataset_config
+        "name": dataset_config,
     }
-    
+
     dataset = load_dataset(dataset_conf.hf_path, **load_kwargs)
-    
+
     # Debug: print first example
     logger.debug(f"First example from dataset: {dataset[0]}")
     logger.debug(f"Dataset features: {dataset.features}")
-    
+
     # Get appropriate preprocessor
     preprocessor = get_task_preprocessor(task_type, tokenizer, data_conf, evaluate)
-    
+
     # Transform dataset
     tokenized_dataset = dataset.map(
-        preprocessor,
-        batched=True,
-        remove_columns=dataset.column_names
+        preprocessor, batched=True, remove_columns=dataset.column_names
     )
-    
+
     # Setup data collator based on task
     if task_type == TaskType.GENERATION and data_conf.whole_word_masking:
         data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=True,
-            mlm_probability=data_conf.masking_probability
+            tokenizer=tokenizer, mlm=True, mlm_probability=data_conf.masking_probability
         )
     else:
         data_collator = DataCollatorWithPadding(tokenizer)
-    
+
     batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
-    loader_kwargs=dict(
-        
-    )
+    loader_kwargs = dict()
     return DataLoader(
         tokenized_dataset,
         batch_size=batch_size,
         shuffle=train and not evaluate,
         num_workers=data_conf.num_workers,
         collate_fn=data_collator,
-        generator=g if loader_seed is not None else None, 
+        generator=g if loader_seed is not None else None,
         worker_init_fn=seed_worker,
         pin_memory=True,
-        prefetch_factor=2 if data_conf.num_workers>0 else None,
-        persistent_workers=True if data_conf.num_workers>0 else False,
+        prefetch_factor=2 if data_conf.num_workers > 0 else None,
+        persistent_workers=True if data_conf.num_workers > 0 else False,
     )
-  
-  
-def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None) -> DataLoader:
+
+
+def setup_vision_loader(
+    data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int = None
+) -> DataLoader:
     dataset = data_conf.dataset
     dataset_conf = data_conf.dataset_info
     w = dataset_conf.resolution
@@ -668,11 +603,13 @@ def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, load
     if not evaluate:
         if data_conf.hflip:
             transforms_.append(transforms.RandomHorizontalFlip())
-        if (rot := data_conf.random_rotation):
+        if rot := data_conf.random_rotation:
             transforms_.append(transforms.RandomRotation(rot))
         if data_conf.random_translate:
             t = data_conf.random_translate / w
-            transforms_.append(transforms.RandomAffine(degrees=0, translate=(t, t), fill=mean))
+            transforms_.append(
+                transforms.RandomAffine(degrees=0, translate=(t, t), fill=mean)
+            )
         if data_conf.gaussian_blur:
             transforms_.append(transforms.GaussianBlur(kernel_size=3))
     # put ToTensor here because RandomErasing needs it (can't move it earlier as that would break regression tests due to reordering transforms)
@@ -680,40 +617,64 @@ def setup_vision_loader(data_conf: DataConfig, train: bool, evaluate: bool, load
     if not evaluate:
         if data_conf.cutout:
             scale = data_conf.cutout / w
-            transforms_.append(transforms.RandomErasing(p=0.5, scale=(0.02, scale), ratio=(0.3, 3.3), value=mean))
+            transforms_.append(
+                transforms.RandomErasing(
+                    p=0.5, scale=(0.02, scale), ratio=(0.3, 3.3), value=mean
+                )
+            )
         # TODO: do the cutmix/mixup
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = dataset_conf.torch_dataset
-    dataset = dataset_cls(root=data_conf.path, train=train, transform=transforms_, download=data_conf.download)
+    dataset = dataset_cls(
+        root=data_conf.path,
+        train=train,
+        transform=transforms_,
+        download=data_conf.download,
+    )
 
-    batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size 
+    batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size
 
     g = torch.Generator()
     if loader_seed is not None:
         g.manual_seed(loader_seed)
 
     loader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=train, 
-        num_workers=data_conf.num_workers, 
-        generator=g, worker_init_fn=seed_worker
+        dataset,
+        batch_size=batch_size,
+        shuffle=train,
+        num_workers=data_conf.num_workers,
+        generator=g,
+        worker_init_fn=seed_worker,
     )
     return loader
 
-def setup_loader(data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int=None, tokenizer:AutoTokenizer = None) -> DataLoader:
+
+def setup_loader(
+    data_conf: DataConfig,
+    train: bool,
+    evaluate: bool,
+    loader_seed: int = None,
+    tokenizer: AutoTokenizer = None,
+) -> DataLoader:
     if data_conf.is_language_dataset():
-        return setup_nlp_loader(data_conf, train, evaluate, tokenizer=tokenizer, loader_seed=loader_seed)
+        return setup_nlp_loader(
+            data_conf, train, evaluate, tokenizer=tokenizer, loader_seed=loader_seed
+        )
     return setup_vision_loader(data_conf, train, evaluate, loader_seed=loader_seed)
+
 
 def setup_model_dir(config: Trainer) -> Path:
     """
     Set up the model directory for saving training artifacts.
-     
+
     Raises:
         FileNotFoundError: If the specified `log_dir` does not exist.
     """
     if not config.logger.log_dir.exists():
-        raise FileNotFoundError(f"Must provide an existing log_dir ({config.logger.log_dir})")
+        raise FileNotFoundError(
+            f"Must provide an existing log_dir ({config.logger.log_dir})"
+        )
     if config.model_dir is None:
         hashname = config.hashname
         now = datetime.now()
@@ -727,6 +688,7 @@ def setup_model_dir(config: Trainer) -> Path:
     config.save(config.model_dir, zip_code_base=config.zip_and_save_source)
 
     return config.model_dir
+
 
 def setup_device(config: Experiment) -> torch.device:
     """
@@ -745,7 +707,7 @@ def setup_device(config: Experiment) -> torch.device:
 
 
 def setup_wandb(config: Experiment) -> None:
-    """ given the configuration, sets up the wandb project"""
+    """given the configuration, sets up the wandb project"""
     if config.logger.use_wandb:
         conf_dct = config.wandb_dct()
         if config.resume_from:
@@ -753,7 +715,7 @@ def setup_wandb(config: Experiment) -> None:
                 wandb_url = config.resume_from[6:]
             else:
                 wandb_url = config.model_dir.joinpath("wandb").read_text()
-            url_parts = wandb_url.split('/')
+            url_parts = wandb_url.split("/")
             entity = url_parts[-3]
             project = url_parts[-2]
             run_id = url_parts[-1]
@@ -783,6 +745,7 @@ def setup_wandb(config: Experiment) -> None:
                 url = run.url
             Path(config.model_dir).joinpath("wandb.txt").write_text(url)
 
+
 def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
     """Creates all necessary elements. models, datamodules, etc."""
@@ -801,52 +764,94 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         perturb_seed = seed
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
-        
-        
+
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
         seed_everything(seed)
-        if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
+        if (
+            hasattr(config, "resume_from")
+            and (config.resume_from)
+            and (config.resume_epoch > 0)
+        ):
             if config.resume_from.startswith("wandb:"):
                 raise NotImplementedError("Resuming from wandb is under development")
                 # TODO: parse the model dir, load config from there
             ## TODO: do this, resume_epoch not implemented
-            config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"epoch_{config.resume_epoch}").with_suffix(
-                ".ckpt"
-            )
+            config.model.ckpt_path = model_dir_.joinpath(
+                "checkpoints", f"epoch_{config.resume_epoch}"
+            ).with_suffix(".ckpt")
             if not config.model.ckpt_path.exists():
-                config.model.ckpt_path = model_dir_.joinpath("checkpoints", f"{config.resume_epoch}").with_suffix(
-                    ".ckpt"
-                )
+                config.model.ckpt_path = model_dir_.joinpath(
+                    "checkpoints", f"{config.resume_epoch}"
+                ).with_suffix(".ckpt")
             logger.info("Model will be loaded from %s.", config.model.ckpt_path)
-            assert config.model.ckpt_path.exists(), f"Path {config.model.ckpt_path} doesn't exist."
+            assert config.model.ckpt_path.exists(), (
+                f"Path {config.model.ckpt_path} doesn't exist."
+            )
             ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
         model, tokenizer = configure_model(config, device, seed=seed)
-        
+
         if is_nlp_task:
-            train_loader = setup_nlp_loader(config.data, train=True, evaluate=False, tokenizer=tokenizer, loader_seed=loader_seed)
-            train_eval_loader = setup_nlp_loader(config.data, train=True, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
-            test_loader = setup_nlp_loader(config.data, train=False, evaluate=True, tokenizer=tokenizer, loader_seed=loader_seed)
+            train_loader = setup_nlp_loader(
+                config.data,
+                train=True,
+                evaluate=False,
+                tokenizer=tokenizer,
+                loader_seed=loader_seed,
+            )
+            train_eval_loader = setup_nlp_loader(
+                config.data,
+                train=True,
+                evaluate=True,
+                tokenizer=tokenizer,
+                loader_seed=loader_seed,
+            )
+            test_loader = setup_nlp_loader(
+                config.data,
+                train=False,
+                evaluate=True,
+                tokenizer=tokenizer,
+                loader_seed=loader_seed,
+            )
         else:
-            train_loader = setup_vision_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed)
-            train_eval_loader = setup_vision_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed)
-            test_loader = setup_vision_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed)
-        
+            train_loader = setup_vision_loader(
+                config.data, train=True, evaluate=False, loader_seed=loader_seed
+            )
+            train_eval_loader = setup_vision_loader(
+                config.data, train=True, evaluate=True, loader_seed=loader_seed
+            )
+            test_loader = setup_vision_loader(
+                config.data, train=False, evaluate=True, loader_seed=loader_seed
+            )
+
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
         model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
-        
+
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         steps_per_epoch = len(train_loader)
-        max_steps = Step(f"{config.trainer.training_steps.get_step(steps_per_epoch)}st", steps_per_epoch)
+        max_steps = Step(
+            f"{config.trainer.training_steps.get_step(steps_per_epoch)}st",
+            steps_per_epoch,
+        )
         save_freq = config.trainer.save_freq
         seed_everything(seed)
         opt = configure_optimizer(config, model)
-        scheduler = configure_lr_scheduler(opt, max_steps.get_step(steps_per_epoch), config.trainer.opt.lr_scheduler, config.trainer.opt.warmup_ratio, {})
-        if hasattr(config, "resume_from") and (config.resume_from) and (config.resume_epoch > 0):
+        scheduler = configure_lr_scheduler(
+            opt,
+            max_steps.get_step(steps_per_epoch),
+            config.trainer.opt.lr_scheduler,
+            config.trainer.opt.warmup_ratio,
+            {},
+        )
+        if (
+            hasattr(config, "resume_from")
+            and (config.resume_from)
+            and (config.resume_epoch > 0)
+        ):
             opt.load_state_dict(ckpt["optimizer_state_dict"])
             logger.info("Optimizer loaded from ckpt")
             if scheduler is not None:
@@ -859,49 +864,59 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         # if not hasattr(config, f"model{i}_dir"):
         setattr(config, f"model{i}_dir", model_dir_)
         model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
-        training_elements.add_element(TrainingElement(
-            element_ind=i,
-            model=model,
-            opt=opt,
-            scheduler=scheduler,
-            model_dir=model_dir_,
-            seed=seed,
-            loader_seed=loader_seed,
-            train_loader=train_loader,
-            train_eval_loader=train_eval_loader,
-            test_loader=test_loader,
-            max_steps=max_steps,
-            save_freq_step=save_freq,
-            perturb_seed=perturb_seed,
-            tokenizer=tokenizer
-        ))
+        training_elements.add_element(
+            TrainingElement(
+                element_ind=i,
+                model=model,
+                opt=opt,
+                scheduler=scheduler,
+                model_dir=model_dir_,
+                seed=seed,
+                loader_seed=loader_seed,
+                train_loader=train_loader,
+                train_eval_loader=train_eval_loader,
+                test_loader=test_loader,
+                max_steps=max_steps,
+                save_freq_step=save_freq,
+                perturb_seed=perturb_seed,
+                tokenizer=tokenizer,
+            )
+        )
     seed_everything(first_seed)
     if config.logger.use_tqdm:
         setup_iterators(training_elements, use_tqdm=True)
-    logger.info("Model setups complete, switching seed to %d, which is passed to the first model.", first_seed)
+    logger.info(
+        "Model setups complete, switching seed to %d, which is passed to the first model.",
+        first_seed,
+    )
 
     return training_elements, device
 
 
 def cleanup(config: Experiment):
-    """ if script is called with cleanup_after, deletes the model_dir and all checkpoints created"""
+    """if script is called with cleanup_after, deletes the model_dir and all checkpoints created"""
     if config.logger.cleanup_after:
-        if not config.hashname in config.model_dir.as_posix():
-            logger.info(f"Not sure if the model_dir is an outer directory, cleanup manually ({config.model_dir})")
+        if config.hashname not in config.model_dir.as_posix():
+            logger.info(
+                f"Not sure if the model_dir is an outer directory, cleanup manually ({config.model_dir})"
+            )
             return
 
         logger.info("Deleting the experiment directory (%s)", config.model_dir)
         rmtree(config.model_dir)
 
 
-
-def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, step: int = None):
+def save_model_opt(
+    model, opt, path: Path, epoch: int = None, scheduler=None, step: int = None
+):
     """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
     torch.save(
         {
             "state_dict": model.state_dict(),
             "optimizer_state_dict": opt.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+            "scheduler_state_dict": scheduler.state_dict()
+            if scheduler is not None
+            else None,
             "epoch": epoch,
             "step": step,
         },
@@ -911,13 +926,17 @@ def save_model_opt(model, opt, path: Path, epoch: int = None, scheduler = None, 
 
 
 # something wrong with the steps
-def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int = None) -> None:
+def save_training(
+    el: TrainingElement, path: Path, epoch: int = None, step: int = None
+) -> None:
     """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
     torch.save(
         {
             "state_dict": el.model.state_dict(),
             "optimizer_state_dict": el.opt.state_dict(),
-            "scheduler_state_dict": el.scheduler.state_dict() if el.scheduler is not None else None,
+            "scheduler_state_dict": el.scheduler.state_dict()
+            if el.scheduler is not None
+            else None,
             "epoch": epoch,
             "step": step,
         },
@@ -928,7 +947,10 @@ def save_training(el: TrainingElement, path: Path, epoch: int = None, step: int 
 
 COLORS = ["#75507b", "#4f42b5", "#808080"]
 
-def setup_iterators(training_elements: Dict[int, TrainingElement], use_tqdm: bool = True):
+
+def setup_iterators(
+    training_elements: Dict[int, TrainingElement], use_tqdm: bool = True
+):
     tqdm_cls = tqdm if use_tqdm else Iterator
     for i, el in enumerate(training_elements):
         color = COLORS[i % len(COLORS)]
@@ -956,7 +978,9 @@ def setup_iterators(training_elements: Dict[int, TrainingElement], use_tqdm: boo
             # leave=False, disable=None,
             colour=color,
         )
-        el.extra_iterator = tqdm_cls(position=2 + 2 * i, desc="Extra iterator used for anything", colour="white")
+        el.extra_iterator = tqdm_cls(
+            position=2 + 2 * i, desc="Extra iterator used for anything", colour="white"
+        )
         el.train_iterator = train_iterator
         el.test_iterator = test_iterator
         el.train_eval_iterator = train_eval_iterator
