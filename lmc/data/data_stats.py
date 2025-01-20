@@ -457,7 +457,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.CLASSIFICATION,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="cola",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "sst2": LanguageConfig(
@@ -465,7 +466,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.CLASSIFICATION,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="sst2",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "mrpc": LanguageConfig(
@@ -473,7 +475,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="mrpc",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "qqp": LanguageConfig(
@@ -481,7 +484,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="qqp",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "mnli": LanguageConfig(
@@ -489,15 +493,17 @@ class GLUERegistry(BaseRegistry):
             classes=3,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
-            splits={"train": "train", "validation": "validation", "test": "test"},
+            hf_path="nyu-mll/glue",
+            hf_config="mnli",
+            splits={"train": "train", "validation": "validation_matched", "test": "test_matched"},
         ),
         "qnli": LanguageConfig(
             samples=104743,
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="qnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "rte": LanguageConfig(
@@ -505,7 +511,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="rte",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "wnli": LanguageConfig(
@@ -513,7 +520,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="wnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "stsb": LanguageConfig(
@@ -521,8 +529,9 @@ class GLUERegistry(BaseRegistry):
             classes=1,  # Regression task
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
-            splits={"train": "train", "validation": "validation", "test": "test"},
+            hf_path="nyu-mll/glue",
+            hf_config="stsb",
+            splits={"train": "train", "validation": "validation_matched", "test": "test_matched"},
         ),
     }
 
