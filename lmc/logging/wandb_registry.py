@@ -19,6 +19,7 @@ class MetricCategory(Enum):
     CROSS_ENTROPY = "cross_entropy"
     LEARNING_RATE = "lr"
     L2_DISTANCE = "l2_distance"
+    COUNT = "count"
     NOISE = "noise"
     LMC_ACCURACY = "barrier"
     # TODO: not sure how these are logged
@@ -26,6 +27,9 @@ class MetricCategory(Enum):
     LMC_LOSS = "loss/weighted/barrier"
     LMC_MAXINT = "maxint"
     LMC_LOSS_MAXINT = "loss/weighted/maxint"
+    ## LANGUAGE
+    PERPLEXITY = "perplexity"
+    LOSS = "loss"
 
 
 class Split(Enum):
@@ -188,6 +192,29 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             }
         )
+        ## language
+        self._templates.update(
+            {
+                "perplexity": MetricTemplate(
+                    "model{}/{}/perplexity",
+                    "$\\mathrm{{Perplexity}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                    "model{}-perplexity",
+                    MetricCategory.PERPLEXITY,
+                ),
+                "top3_accuracy": MetricTemplate(
+                    "model{}/{}/top_3_accuracy",
+                    "$\\mathrm{{Top\\ 3\\ Acc}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                    "model{}-top3-acc",
+                    MetricCategory.TOP_3_ACCURACY,
+                ),
+                "cross_entropy": MetricTemplate(
+                    "model{}/{}/cross_entropy",
+                    "$\\mathrm{{CE}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                    "model{}-ce",
+                    MetricCategory.CROSS_ENTROPY,
+                ),
+            }
+        )
         self._lmc_templates.update(
             {
                 "barrier": MetricTemplate(
@@ -332,7 +359,15 @@ class WandbMetricsRegistry(MetricsRegistry):
                     category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
                 ),
             )
-
+            self.add_metric(
+                    f"grad_count_{model_idx}",  # Using model_idx to track per model
+                    WandbMetric(
+                        f"static/avg_grad_count/{model_idx}",  # log_name following your convention
+                        f"Total number of parameters with gradient for Model {model_idx}",  # ylabel
+                        f"grad_count_{model_idx}",  # prefix
+                        category=MetricCategory.COUNT,  # Using L2_DISTANCE category since it's a norm
+                    ),
+                )
             for datapoints in [1, 5, -1]:
                 self.add_metric(
                     f"grad_norm_{model_idx}_on_{datapoints}",  # Using model_idx to track per model
