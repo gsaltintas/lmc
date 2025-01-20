@@ -2,21 +2,17 @@ import gc
 import time
 from collections import OrderedDict
 from copy import deepcopy
-from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Tuple, Union
 
 import pandas as pd
 import torch
-from matplotlib import pyplot as plt
 from torch import nn
 from torchmetrics import Accuracy
 from tqdm import tqdm
 
 from lmc.config import Config
-from lmc.data.data_stats import DatasetRegistry
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.alignment_methods import weight_matching
-from lmc.utils.setup_training import Iterator
 
 
 @torch.no_grad()
