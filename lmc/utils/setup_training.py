@@ -755,6 +755,13 @@ def setup_model_dir(config: Trainer) -> Path:
         formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
         config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
         logger.info(f"Created model dir: {config.model_dir}")
+    elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
+        now = datetime.now()
+        short_id = str(now.microsecond)[-4:]
+        config.model_dir = Path(str(config.model_dir) + "_" + short_id)
+        logger.info(
+            f"enforce_new_model_dir True, creating a new model dir: {config.model_dir}"
+        )
     config.model_dir.mkdir(exist_ok=True)
     config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
 

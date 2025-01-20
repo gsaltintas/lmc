@@ -668,8 +668,10 @@ class LoggerConfig(Config):
     cleanup_after: bool = False
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
     profile: bool = False
+    enforce_new_model_dir: bool = True
 
     _cleanup_after: str = "Pass true only if you want to delete the experiment directory after experiment is finished."
+    _enforce_new_model_dir: str = "If true, creates a new model dir if model_dir already exists (helpful for finetuning settings)."
 
     def __post_init__(self):
         s = self.slurm_job_id
