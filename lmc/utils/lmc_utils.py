@@ -13,7 +13,9 @@ from tqdm import tqdm
 
 from lmc.config import Config
 from lmc.models.base_model import BaseModel
+from lmc.permutations import get_cost
 from lmc.permutations.activation_alignment import activation_matching
+from lmc.permutations.perm_stability import sinkhorn_kl
 from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
 from lmc.utils.setup_training import Iterator
@@ -322,9 +324,11 @@ def check_lmc(
                         res_df = results_perm_act_aligned
 
                     if config.logger.report_permutation_stats:
+                        ## TODO: log costs
                         d = {
                             "fixed_points_ratio": get_fixed_points_ratio(perm),
                             "fixed_points_count": get_fixed_points_count(perm),
+                            "sinkhorn_kl": sum(list(sinkhorn_kl(perm).values())),
                         }
                         log_dct.update(
                             {
