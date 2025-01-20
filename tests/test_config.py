@@ -165,6 +165,7 @@ class TestConfig(unittest.TestCase):
             "kaiming_normal",
             "Default argument not set correctly",
         )
+        self.assertEqual(config.model.norm, "layernorm", "model.norm not set")
 
     def test_from_dict(self):
         config = PerturbedTrainer.from_dict(

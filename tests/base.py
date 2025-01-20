@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import unittest
 from glob import glob
@@ -7,12 +8,14 @@ from shutil import rmtree
 
 import torch
 
+from lmc.utils.run import command_result_is_error, run_command
+
 
 class BaseTest(unittest.TestCase):
     TEST_COMMAND = """python main.py {experiment} {model_dir}  \
             --project test-project  \
                 --run_name test-{experiment}  \
-                --path {data_dir} \
+                --path {data_dir}/{dataset} \
                 --log_dir {log_dir}  \
                 --save_early_iters false  \
                 --cleanup_after false  \
@@ -44,10 +47,10 @@ class BaseTest(unittest.TestCase):
             --deterministic {deterministic}  \
                 --seed1 {seed1}  \
                 --seed2 {seed2}  \
-                --loader_seed1 {seed1}  \
-                --loader_seed2 {seed2}  \
-                --perturb_seed1 {seed1}  \
-                --perturb_seed2 {seed2}  \
+                --loader_seed1 {loader_seed1}  \
+                --loader_seed2 {loader_seed2}  \
+                --perturb_seed1 {perturb_seed1}  \
+                --perturb_seed2 {perturb_seed2}  \
             --lmc_check_perms false  \
                 --lmc_on_epoch_end false  \
                 --lmc_on_train_end {lmc_on_train_end}  \
@@ -58,6 +61,8 @@ class BaseTest(unittest.TestCase):
     SEED_2 = 41
 
     def setUp(self):
+        # suppress wandb messages to console as it covers up the test results
+        os.environ["WANDB_SILENT"] = "True"
         test_path = Path(
             os.path.relpath(os.path.dirname(os.path.realpath(__file__)), os.getcwd())
         )
@@ -79,6 +84,10 @@ class BaseTest(unittest.TestCase):
         experiment="perturb",
         seed1=SEED_1,
         seed2=SEED_2,
+        loader_seed1=None,
+        loader_seed2=None,
+        perturb_seed1=None,
+        perturb_seed2=None,
         perturb_step=0,
         perturb_scale=0,
         perturb_mode="batch",
@@ -102,6 +111,10 @@ class BaseTest(unittest.TestCase):
             experiment=experiment,
             seed1=seed1,
             seed2=seed2,
+            loader_seed1=seed1 if loader_seed1 is None else loader_seed1,
+            loader_seed2=seed2 if loader_seed2 is None else loader_seed2,
+            perturb_seed1=seed1 if perturb_seed1 is None else perturb_seed1,
+            perturb_seed2=seed2 if perturb_seed2 is None else perturb_seed2,
             perturb_step=perturb_step,
             perturb_scale=perturb_scale,
             perturb_mode=perturb_mode,
@@ -161,6 +174,16 @@ class BaseTest(unittest.TestCase):
 
     @staticmethod
     def get_summary_value(model_dir, key):
+        if key is None:
+            return None
         with open(Path(model_dir) / "wandb_summary.json", "r") as f:
             value = json.load(f)[key]
         return value
+
+    def run_command_and_return_result(self, model_dir, key_to_return, **kwargs):
+        model_dir = self.log_dir / model_dir
+        command = self.get_test_command(model_dir=model_dir, use_wandb=True, **kwargs)
+        result = run_command(command)
+        self.assertFalse(command_result_is_error(result))
+        return self.get_summary_value(model_dir, key_to_return)
+

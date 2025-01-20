@@ -361,10 +361,11 @@ class PerturbedTrainer(Trainer):
     perturb_mode: Literal["gaussian", "batch"] = "gaussian"
     perturb_scale: float = 0
     normalize_perturb: bool = False
+    scale_to_init_if_normalized: bool = True
     same_steps_pperturb: bool = True
     rewind_lr: bool = False
     perturb_seeds: make_perturb_seeds_class() = field(default_factory=make_perturb_seeds_class, init=True)
-    sample_noise_at: Literal["init", "perturb"] = "init"
+    sample_noise_at: Literal["init", "perturb"] = "perturb"  #TODO does nothing, always sample at perturb time, kept for backwards compatibility
     dont_perturb_module_patterns: List[str] = field(init=True, default_factory=lambda: [])
     perturb_debug_dummy_run: bool = False
 
@@ -387,7 +388,8 @@ class PerturbedTrainer(Trainer):
         self.perturb_step = kwargs.get("perturb_step", 0)
         self.perturb_mode = kwargs.get("perturb_mode", "gaussian")
         self.perturb_scale = kwargs.get("perturb_scale", 0)
-        self.norm_perturb = kwargs.get("norm_perturb", False)
+        self.normalize_perturb = kwargs.get("normalize_perturb", False)
+        self.scale_to_init_if_normalized = kwargs.get("scale_to_init_if_normalized", True)
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
