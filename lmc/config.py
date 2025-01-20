@@ -6,6 +6,7 @@ from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
 from pprint import pformat
 from typing import (
+    Any,
     Dict,
     List,
     Literal,
@@ -108,7 +109,7 @@ def field_factory(
 def add_basic_args(
     parser: argparse.ArgumentParser,
     cls: Type,
-    defaults: "Config" = None,
+    defaults: Union["Config", Dict[str, Any]] = None,
     prefix: str = None,
     name: str = None,
     description: str = None,
@@ -147,14 +148,23 @@ def add_basic_args(
 
         arg_name = f"--{field_.name}" if prefix is None else f"--{prefix}_{field_.name}"
 
-        if defaults:
-            default = getattr(defaults, field_.name, None)
-        elif field_.default is not MISSING:
-            default = field_.default
-        elif field_.default_factory is not MISSING:
-            default = field_.default_factory()
-        else:
-            default = None
+        default = None
+        if defaults is not None:
+            if isinstance(defaults, dict):
+                flat_key = (
+                    f"{field_.name}" if prefix is None else f"{prefix}_{field_.name}"
+                )
+                default = defaults.get(flat_key)
+            else:
+                default = getattr(defaults, field_.name, None)
+
+        if default is None:
+            if field_.default is not MISSING:
+                default = field_.default
+            elif field_.default_factory is not MISSING:
+                default = field_.default_factory()
+            else:
+                default = None
 
         required = (
             field_.default is MISSING
@@ -256,7 +266,7 @@ class Config:
     def add_args(
         cls,
         parser: argparse.ArgumentParser,
-        defaults: "Config" = None,
+        defaults: Union["Config", Dict[str, Any]] = None,
         prefix: str = None,
         name: str = None,
         description: str = None,
