@@ -762,6 +762,7 @@ def setup_model_dir(config: Trainer) -> Path:
         logger.info(
             f"enforce_new_model_dir True, creating a new model dir: {config.model_dir}"
         )
+    config.model_dir = Path(config.model_dir)
     config.model_dir.mkdir(exist_ok=True)
     config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
 

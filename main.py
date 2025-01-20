@@ -46,20 +46,35 @@ if __name__ == "__main__":
     # Add the arguments for that command.
     experiment_class = get_experiment(manager_name)
 
-    usage = "main.py {} [...] => {}".format(manager_name, experiment_class.description)
-    usage += "\n" + "=" * 82 + "\n"
-    parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
+    if config_file is None:
+        usage = "main.py {} [...] => {}".format(
+            manager_name, experiment_class.description
+        )
+        usage += "\n" + "=" * 82 + "\n"
+        parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
+        parser.add_argument("subcommand")
+        # Add arguments for the various managers.
+        experiment_class.add_args(parser)
 
-    # Load defaults from config file if provided
-    defaults = None
-    if config_file:
-        parser.add_argument("--config_file")
-        defaults = experiment_class.create_from_file(config_file)
+        args = parser.parse_args()
+        experiment_manager = experiment_class.create_from_args(args)
+    else:
+        if len(sys.argv) > 4:
+            ## check if there are additional arguments passed to
+            usage = "main.py {} [...] => {}".format(
+                manager_name, experiment_class.description
+            )
+            usage += "\n" + "=" * 82 + "\n"
+            parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
 
-    parser.add_argument("subcommand")
-    # Add arguments for the various managers.
-    experiment_class.add_args(parser, defaults=defaults)
+            parser.add_argument("subcommand")
+            parser.add_argument("--config_file")
+            # Load defaults from config file if provided
+            defaults = experiment_class.create_from_file(config_file)
+            experiment_class.add_args(parser, defaults=defaults)
+            args = parser.parse_args()
+            experiment_manager = experiment_class.create_from_args(args)
+        else:
+            experiment_manager = experiment_class.create_from_file(config_file)
 
-    args = parser.parse_args()
-    experiment_manager = experiment_class.create_from_args(args)
     experiment_manager.run_experiment()
