@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import re
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
@@ -15,10 +16,14 @@ from datasets import load_dataset
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import (AutoModelForCausalLM,
-                          AutoModelForSequenceClassification, AutoTokenizer,
-                          DataCollatorForLanguageModeling,
-                          DataCollatorWithPadding, PreTrainedTokenizer)
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    DataCollatorForLanguageModeling,
+    DataCollatorWithPadding,
+    PreTrainedTokenizer,
+)
 
 import wandb
 from lmc.config import DataConfig
@@ -30,19 +35,85 @@ from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
-from lmc.utils.training_element import (Iterator, TrainingElement,
-                                        TrainingElements)
+from lmc.utils.training_element import Iterator, TrainingElement, TrainingElements
 
 logger = logging.getLogger("setup")
 
 WANDB_DIR = os.environ.get("SCRATCH", os.environ.get("TMPDIR"))
 
 
-def load_model_from_checkpoint(model: nn.Module, path: Union[Path, str]) -> None:
-    """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
-    assert path.exists(), f"Path {path} doesn't exist."
+# def load_model_from_checkpoint(
+#     model: nn.Module, path: Union[Path, str], strict: bool = False
+# ) -> None:
+#     """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
+#     assert path.exists(), f"Path {path} doesn't exist."
+#     d = torch.load(path, map_location=model.device)
+#     model.load_state_dict(d["state_dict"], strict=False)
+
+
+def load_model_from_checkpoint(
+    model: nn.Module, path: Union[Path, str], ignore_mismatched_sizes: bool = True
+) -> None:
+    """
+    Load weights from a checkpoint into a model, gracefully handling missing or mismatched keys.
+    Similar to HuggingFace's approach, where missing keys retain their random initialization.
+
+    Args:
+        model: PyTorch model to load weights into
+        path: Path to checkpoint file
+        ignore_mismatched_sizes: Whether to skip loading weights with mismatched sizes
+    """
+    assert Path(path).exists(), f"Path {path} doesn't exist."
+
+    # Load checkpoint
     d = torch.load(path, map_location=model.device)
-    model.load_state_dict(d["state_dict"], strict=False)
+    checkpoint_state_dict = d["state_dict"]
+    model_state_dict = model.state_dict()
+
+    # Track different types of keys
+    missing_keys = []
+    unexpected_keys = []
+    mismatched_keys = []
+    to_be_loaded = OrderedDict()
+
+    # Load matching keys
+    for k, v in checkpoint_state_dict.items():
+        if k not in model_state_dict:
+            unexpected_keys.append(k)
+            continue
+
+        if v.shape != model_state_dict[k].shape:
+            if ignore_mismatched_sizes:
+                print(k)
+                mismatched_keys.append(k)
+                continue
+            else:
+                raise ValueError(
+                    f"Size mismatch for {k}: checkpoint has {v.shape}, model has {model_state_dict[k].shape}"
+                )
+
+        to_be_loaded[k] = v
+
+    # Identify missing keys
+    missing_keys = [k for k in model_state_dict.keys() if k not in to_be_loaded]
+
+    # Load the matching weights
+    model.load_state_dict(to_be_loaded, strict=False)
+
+    # Log informative messages
+    if unexpected_keys:
+        logger.info("Keys in checkpoint but not in model: %s", unexpected_keys)
+
+    if mismatched_keys:
+        logger.info("Keys skipped due to size mismatch: %s", mismatched_keys)
+
+    if missing_keys:
+        keys_str = ", ".join(missing_keys)
+        logger.warning(
+            "Some weights are newly initialized and should be trained: %s\n"
+            "You should TRAIN these layers to ensure good performance!",
+            keys_str,
+        )
 
 
 def load_training(
@@ -147,9 +218,7 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
         model = AutoModelForSequenceClassification.from_pretrained(
-            conf.model_name,
-            num_labels=out,
-            cache_dir=str(config.data.path)
+            conf.model_name, num_labels=out, cache_dir=str(config.data.path)
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -624,8 +693,8 @@ def setup_vision_loader(
     if isinstance(dataset_cls, str):
         func = dataset_cls.split(".")[-1]
         module = ".".join(dataset_cls.split(".")[:-1])
-        dataset_cls = getattr(importlib.import_module(module), func) 
-        
+        dataset_cls = getattr(importlib.import_module(module), func)
+
     dataset = dataset_cls(
         root=data_conf.path,
         train=train,
@@ -647,7 +716,7 @@ def setup_vision_loader(
         generator=g,
         worker_init_fn=seed_worker,
         pin_memory=True,
-        prefetch_factor=2
+        prefetch_factor=2,
     )
     return loader
 
@@ -678,8 +747,8 @@ def setup_model_dir(config: Trainer) -> Path:
             config.logger.log_dir.mkdir()
         else:
             raise FileNotFoundError(
-            f"Must provide an existing log_dir ({config.logger.log_dir})"
-        )
+                f"Must provide an existing log_dir ({config.logger.log_dir})"
+            )
     if config.model_dir is None:
         hashname = config.hashname
         now = datetime.now()
@@ -770,6 +839,11 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
 
+        ## setup individual model dir
+        model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
+        setattr(config, f"model{i}_dir", model_dir_)
+        model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
+
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
         seed_everything(seed)
@@ -783,7 +857,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 # TODO: parse the model dir, load config from there
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath(
-                "checkpoints", f"epoch_{config.resume_epoch}"
+                "checkpoints", f"ep-{config.resume_epoch}"
             ).with_suffix(".ckpt")
             if not config.model.ckpt_path.exists():
                 config.model.ckpt_path = model_dir_.joinpath(
@@ -833,7 +907,6 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
-        model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
 
         logger.info("Setup model %d with seed=%d.", i, seed)
 
@@ -866,9 +939,6 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             logger.info("Optimizer %d - %s", i, opt)
             logger.info("Scheduler %d - %s", i, scheduler)
 
-        # if not hasattr(config, f"model{i}_dir"):
-        setattr(config, f"model{i}_dir", model_dir_)
-        model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
         training_elements.add_element(
             TrainingElement(
                 element_ind=i,
