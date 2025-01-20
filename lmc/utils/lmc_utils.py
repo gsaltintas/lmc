@@ -7,12 +7,45 @@ from typing import Dict, Tuple, Union
 import pandas as pd
 import torch
 from torch import nn
+from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
 from tqdm import tqdm
 
 from lmc.config import Config
+from lmc.models.base_model import BaseModel
+from lmc.permutations import get_cost
 from lmc.permutations.activation_alignment import activation_matching
-from lmc.permutations.alignment_methods import weight_matching
+from lmc.permutations.perm_stability import sinkhorn_kl
+from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
+from lmc.permutations.weight_alignment import weight_matching
+from lmc.utils.setup_training import Iterator
+
+
+@torch.no_grad()
+def repair(model: BaseModel, loader: DataLoader) -> nn.Module:
+    cnt = 0
+    for m in model.modules():
+        if isinstance(m, nn.BatchNorm2d):
+            m.momentum = None  # use simple average
+            m.reset_running_stats()
+            cnt += 1
+    if cnt == 0:
+        return model
+    model.train()
+    with torch.no_grad():
+        for batch in loader:
+            if model.is_language_model:
+                batch = {
+                    k: v.to(model.device, non_blocking=True)
+                    if isinstance(v, torch.Tensor)
+                    else v
+                    for k, v in batch.items()
+                }
+                output = model(**batch)
+            else:
+                images, _ = batch
+                output = model(images.to(model.device, non_blocking=True))
+    return model
 
 
 @torch.no_grad()
@@ -33,14 +66,14 @@ def interpolate_models(
         model2.named_parameters(),
     ):
         assert name1 == name2, f"Model parameters do not have matching names at {name}."
-        assert (
-            param1.shape == param2.shape
-        ), f"Model parameters do not have matching shapes at {name}."
+        assert param1.shape == param2.shape, (
+            f"Model parameters do not have matching shapes at {name}."
+        )
         if not param.requires_grad:
             d[name] = param
-            assert torch.allclose(
-                param1, param2
-            ), f"Parameter ({name}) doesn't require grad, hence we are not interpolating, ensure that these parameters are the same."
+            assert torch.allclose(param1, param2), (
+                f"Parameter ({name}) doesn't require grad, hence we are not interpolating, ensure that these parameters are the same."
+            )
             continue
         with torch.no_grad():
             new_param = (1.0 - alpha) * param1 + alpha * param2
@@ -114,8 +147,8 @@ def get_empty_df() -> pd.DataFrame:
 
 
 def barrier_from_df(
-        results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str
-    ) -> dict[str, float]:
+    results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str
+) -> dict[str, float]:
     alpha = results.loc[ep, (split, metric)].idxmax()
     minalpha = results.loc[ep, (split, metric)].idxmin()
 
@@ -134,34 +167,32 @@ def barrier_from_df(
         prefix + f"weighted/minint_{split}": min_interpolated,
         prefix + f"weighted/maxalpha_{split}": alpha,
         prefix + f"weighted/minalpha_{split}": minalpha,
-        prefix
-        + f"weighted/increase_{split}": max_interpolated
+        prefix + f"weighted/increase_{split}": max_interpolated
         - min(endpoint_0, endpoint_1),
         prefix + f"weighted/increase_end0_{split}": max_interpolated - endpoint_0,
         prefix + f"weighted/increase_end1_{split}": max_interpolated - endpoint_1,
-        prefix
-        + f"weighted/decrease_{split}": min_interpolated
+        prefix + f"weighted/decrease_{split}": min_interpolated
         - endpoint_0
         - min(endpoint_0, endpoint_1),
         prefix + f"weighted/decrease_end0_{split}": min_interpolated - endpoint_0,
         prefix + f"weighted/decrease_end1_{split}": min_interpolated - endpoint_1,
     }
 
+
 def extract_barrier_vision(results: pd.DataFrame, ep: int) -> Dict[str, float]:
     """utility function to extract loss & error barriers corresponding to a vision task from a dataframe"""
 
-    
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
         **barrier_from_df(results, ep, "test", "err", "lmc/"),
         **barrier_from_df(results, ep, "train", "ce", "lmc/loss/"),
         **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
     }
-    
+
 
 def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]:
     """utility function to extract loss & error barriers corresponding to a language task from a dataframe"""
-    
+
     return {
         **barrier_from_df(results, ep, "train", "err", "lmc/"),
         **barrier_from_df(results, ep, "test", "err", "lmc/"),
@@ -172,7 +203,9 @@ def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]
     }
 
 
-def extract_barrier(results: pd.DataFrame, ep: int, is_language_task: bool = False) -> Dict[str, float]:
+def extract_barrier(
+    results: pd.DataFrame, ep: int, is_language_task: bool = False
+) -> Dict[str, float]:
     """utility function to extract loss & error barriers from a dataframe"""
     if is_language_task:
         return extract_barrier_language(results, ep)
@@ -247,7 +280,7 @@ def check_lmc(
                 n_points=config.lmc.n_points,
                 inner_tqdm=el.extra_iterator,
                 num_classes=num_classes,
-                is_language_model=is_language_model
+                is_language_model=is_language_model,
             )
             results_["model1_ind"] = model_ind
             results_["model2_ind"] = other_ind
@@ -274,8 +307,11 @@ def check_lmc(
                             verbose=False,
                         )
                         res_df = results_perm_wm
+
                     # Activation matching
                     else:
+                        if ps.acts_to_perms is None:
+                            continue
                         # todo: rename this activation_matching_samples
                         perm = activation_matching(
                             ps,
@@ -286,6 +322,20 @@ def check_lmc(
                             num_samples=config.lmc.activation_matching_samples,
                         )
                         res_df = results_perm_act_aligned
+
+                    if config.logger.report_permutation_stats:
+                        ## TODO: log costs
+                        d = {
+                            "fixed_points_ratio": get_fixed_points_ratio(perm),
+                            "fixed_points_count": get_fixed_points_count(perm),
+                            "sinkhorn_kl": sum(list(sinkhorn_kl(perm).values())),
+                        }
+                        log_dct.update(
+                            {
+                                f"perm/{perm_method}-{other_ind}-{model_ind}/{key}": val
+                                for key, val in d.items()
+                            }
+                        )
                     permuted_ = prev_model._permute(perm, inplace=False)
                     results_perm = interpolate_evaluate(
                         ep,
@@ -309,11 +359,14 @@ def check_lmc(
                     log_dct.update(
                         {
                             f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v
-                            for k, v in extract_barrier(results_perm, ep, is_language_task=is_language_model).items()
+                            for k, v in extract_barrier(
+                                results_perm, ep, is_language_task=is_language_model
+                            ).items()
                         }
                     )
 
     return results, results_perm_wm, results_perm_act_aligned
+
 
 def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
     """
@@ -327,12 +380,17 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
     total_loss = 0.0
     total_tokens = 0
     total_correct = 0
-
+    cnt = 0
     for batch in loader:
+        cnt += 1
+        if cnt == 3:
+            break
         # Ensure all tensors are on the right device
-        batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()}
-        
+        batch = {
+            k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+
         with torch.no_grad():
             # Use the model's forward pass directly with the batch
             # This will handle loss computation if labels are provided
@@ -341,9 +399,17 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
             # HuggingFace models return loss directly if labels are provided
             if hasattr(outputs, "loss"):
                 loss = outputs.loss
-                total_loss += loss.item() * (batch["labels"].numel() if "labels" in batch else batch["input_ids"].size(0))
-                total_tokens += (batch["labels"].numel() if "labels" in batch else batch["input_ids"].size(0))
-                
+                total_loss += loss.item() * (
+                    batch["labels"].numel()
+                    if "labels" in batch
+                    else batch["input_ids"].size(0)
+                )
+                total_tokens += (
+                    batch["labels"].numel()
+                    if "labels" in batch
+                    else batch["input_ids"].size(0)
+                )
+
             # For models that don't return loss directly
             elif hasattr(outputs, "logits") and "labels" in batch:
                 logits = outputs.logits
@@ -353,15 +419,19 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
                     if hasattr(model.model, "compute_loss"):
                         loss = model.model.compute_loss(outputs, labels)
                     else:
-                        loss = nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), labels.view(-1))
+                        loss = nn.CrossEntropyLoss()(
+                            logits.view(-1, logits.size(-1)), labels.view(-1)
+                        )
                 else:
                     loss = criterion(logits.view(-1, logits.size(-1)), labels.view(-1))
-                    
+
                 total_loss += loss.item() * labels.numel()
                 total_tokens += labels.numel()
 
                 # Calculate accuracy if applicable
-                if len(logits.shape) == len(labels.shape) + 1:  # Classification scenario
+                if (
+                    len(logits.shape) == len(labels.shape) + 1
+                ):  # Classification scenario
                     pred = logits.argmax(dim=-1)
                     total_correct += (pred == labels).sum().item()
 
@@ -371,13 +441,14 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
         avg_loss = total_loss / total_tokens
         metrics["ce"] = avg_loss
         metrics["ppl"] = torch.exp(torch.tensor(avg_loss)).item()
-        
+
         if total_correct > 0:  # Only include accuracy metrics if we computed them
             accuracy = total_correct / total_tokens
             metrics["acc"] = accuracy
             metrics["err"] = 100 - 100 * accuracy
         # TODO: add glue metrics
     return metrics
+
 
 def interpolate_evaluate(
     ai,
@@ -437,14 +508,13 @@ def interpolate_evaluate(
         inner_tqdm.set_description_str(f"Interpolation: {i}")
         model = interpolation_func(model1, model2, t)
         res = dict()
+        repair(model, train_loader)
 
         for name, loader in [("train", train_loader), ("test", test_loader)]:
             if loader is None:
                 continue
             if is_language_model:
-                res[name] = evaluate_model_language(
-                    model, loader, device=device
-                )
+                res[name] = evaluate_model_language(model, loader, device=device)
             else:
                 res[name] = evaluate_model_vision(
                     model,

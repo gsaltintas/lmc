@@ -1,17 +1,14 @@
-from enum import Enum
-from typing import Callable, ClassVar, Dict
-
-import numpy as np
-from torchvision import datasets as D
-
 """Dataset statistics and configurations for both vision and language tasks."""
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Union
+from typing import ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 from torchvision import datasets as D
+
+logger = logging.getLogger(__name__)
 
 
 class TaskType(Enum):
@@ -21,14 +18,6 @@ class TaskType(Enum):
     SEQUENCE_PAIR = "sequence_pair"
     NATURAL_LANGUAGE_INFERENCE = "natural_language_inference"
     SEQUENCE_LABELING = "sequence_labeling"
-
-
-from dataclasses import dataclass
-from enum import Enum
-from typing import Dict, List, Optional, Set, Union
-
-import numpy as np
-from torchvision import datasets as D
 
 
 # Vision Registry
@@ -42,6 +31,8 @@ class VisionConfig:
     std: np.ndarray
     can_cache: bool
     torch_dataset: Optional[Union[str, type]] = None
+    hf_path: str = None
+    hf_config: Optional[str] = None
     task_type: TaskType = TaskType.CLASSIFICATION
 
 
@@ -66,6 +57,14 @@ class BaseRegistry:
     """Base class for dataset registries."""
 
     _registry: ClassVar[Dict[str, Union[VisionConfig, LanguageConfig]]] = {}
+
+    def __post_init__(self):
+        for key, val in self._registry.items():
+            if not hasattr(self, key.replace("-", "_")):
+                logger.warn(
+                    "Dataset %s not properly set as attribute, doing it now.", key
+                )
+                setattr(self, key, val)
 
     @classmethod
     def get(cls, name: str) -> Union[VisionConfig, LanguageConfig]:
@@ -124,6 +123,17 @@ class VisionRegistry(BaseRegistry):
             std=np.array([0.229, 0.224, 0.225]),
             can_cache=False,
             torch_dataset=None,
+            task_type=TaskType.CLASSIFICATION,
+        ),
+        "imagenet1k": VisionConfig(
+            samples=1281167,
+            classes=1000,
+            channels=3,
+            resolution=64,
+            mean=np.array([0.485, 0.456, 0.406]),
+            std=np.array([0.229, 0.224, 0.225]),
+            can_cache=False,
+            torch_dataset="lmc.data.imagenet.ImageNet",
             task_type=TaskType.CLASSIFICATION,
         ),
         "imagenet": VisionConfig(
@@ -200,8 +210,9 @@ class VisionRegistry(BaseRegistry):
             mean=np.array([0.47889522, 0.47227842, 0.43047404]),
             std=np.array([0.24205776, 0.23828046, 0.25874835]),
             can_cache=False,
-            torch_dataset="lmc.data.CINIC10",
+            torch_dataset="lmc.data.cinic10.CINIC10",
             task_type=TaskType.CLASSIFICATION,
+            # hf_path="flwrlabs/cinic10",
         ),
         "cinic10_wo_cifar10": VisionConfig(
             samples=130000,
@@ -211,13 +222,14 @@ class VisionRegistry(BaseRegistry):
             mean=np.array([0.47889522, 0.47227842, 0.43047404]),
             std=np.array([0.24205776, 0.23828046, 0.25874835]),
             can_cache=False,
-            torch_dataset="lmc.data.CINIC10_WO_CIFAR10",
+            torch_dataset="lmc.data.cinic10.CINIC10_WO_CIFAR10",
             task_type=TaskType.CLASSIFICATION,
         ),
     }
 
     imagenet21: ClassVar[VisionConfig] = _registry["imagenet21"]
     imagenet: ClassVar[VisionConfig] = _registry["imagenet"]
+    imagenet1k: ClassVar[VisionConfig] = _registry["imagenet1k"]
     tinyimagenet: ClassVar[VisionConfig] = _registry["tinyimagenet"]
     cifar10: ClassVar[VisionConfig] = _registry["cifar10"]
     cifar100: ClassVar[VisionConfig] = _registry["cifar100"]
@@ -457,7 +469,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.CLASSIFICATION,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="cola",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "sst2": LanguageConfig(
@@ -465,7 +478,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.CLASSIFICATION,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="sst2",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "mrpc": LanguageConfig(
@@ -473,7 +487,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="mrpc",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "qqp": LanguageConfig(
@@ -481,7 +496,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="qqp",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "mnli": LanguageConfig(
@@ -489,15 +505,21 @@ class GLUERegistry(BaseRegistry):
             classes=3,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
-            splits={"train": "train", "validation": "validation", "test": "test"},
+            hf_path="nyu-mll/glue",
+            hf_config="mnli",
+            splits={
+                "train": "train",
+                "validation": "validation_matched",
+                "test": "test_matched",
+            },
         ),
         "qnli": LanguageConfig(
             samples=104743,
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="qnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "rte": LanguageConfig(
@@ -505,7 +527,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="rte",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "wnli": LanguageConfig(
@@ -513,7 +536,8 @@ class GLUERegistry(BaseRegistry):
             classes=2,
             task_type=TaskType.NATURAL_LANGUAGE_INFERENCE,
             max_seq_length=128,
-            hf_path="glue",
+            hf_path="nyu-mll/glue",
+            hf_config="wnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
         "stsb": LanguageConfig(
@@ -521,8 +545,13 @@ class GLUERegistry(BaseRegistry):
             classes=1,  # Regression task
             task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
-            hf_path="glue",
-            splits={"train": "train", "validation": "validation", "test": "test"},
+            hf_path="nyu-mll/glue",
+            hf_config="stsb",
+            splits={
+                "train": "train",
+                "validation": "validation_matched",
+                "test": "test_matched",
+            },
         ),
     }
 
@@ -533,7 +562,7 @@ class GLUERegistry(BaseRegistry):
     mnli: ClassVar[LanguageConfig] = _registry["mnli"]
     qnli: ClassVar[LanguageConfig] = _registry["qnli"]
     rte: ClassVar[LanguageConfig] = _registry["rte"]
-    qnli: ClassVar[LanguageConfig] = _registry["qnli"]
+    wnli: ClassVar[LanguageConfig] = _registry["wnli"]
     stsb: ClassVar[LanguageConfig] = _registry["stsb"]
 
 
@@ -580,7 +609,7 @@ class DatasetRegistry:
                 name: config for name, config in zip(dataset_names, configs)
             },
         }
-        
+
     @classmethod
     def get_all_registries(cls) -> List[BaseRegistry]:
         return [cls.vision, cls.qa, cls.generation, cls.nli, cls.glue]
@@ -602,53 +631,91 @@ class DatasetRegistry:
             *cls.qa.get_available_datasets(),
             *cls.glue.get_available_datasets(),
             *cls.generation.get_available_datasets(),
-            ]
+        ]
 
     @classmethod
     def get_all_configs(cls) -> Dict[str, Union[VisionConfig, LanguageConfig]]:
-        return  cls.vision._registry | cls.nli._registry| cls.qa._registry| cls.glue._registry| cls.generation._registry
-    
+        return (
+            cls.vision._registry
+            | cls.nli._registry
+            | cls.qa._registry
+            | cls.glue._registry
+            | cls.generation._registry
+        )
+
     @classmethod
     def get_language_registry(cls) -> Dict[str, LanguageConfig]:
-        return cls.nli._registry| cls.qa._registry| cls.glue._registry| cls.generation._registry
-    
-    
-    
+        return (
+            cls.nli._registry
+            | cls.qa._registry
+            | cls.glue._registry
+            | cls.generation._registry
+        )
+
+
 ### Backward Compatibility
 
 
 # Number of samples
-SAMPLE_DICT = {key: conf.samples for key, conf in DatasetRegistry.get_all_configs().items()}
+SAMPLE_DICT = {
+    key: conf.samples for key, conf in DatasetRegistry.get_all_configs().items()
+}
 # Number of classes
-CLASS_DICT = {key: conf.classes for key, conf in DatasetRegistry.get_all_configs().items()}
-IS_GENERATION_TASK = {key: conf.task_type == TaskType.GENERATION for key, conf in DatasetRegistry.get_all_configs().items()}
-TASK_MAPPING = {key: conf.task_type for key, conf in DatasetRegistry.get_all_configs().items()}
+CLASS_DICT = {
+    key: conf.classes for key, conf in DatasetRegistry.get_all_configs().items()
+}
+IS_GENERATION_TASK = {
+    key: conf.task_type == TaskType.GENERATION
+    for key, conf in DatasetRegistry.get_all_configs().items()
+}
+TASK_MAPPING = {
+    key: conf.task_type for key, conf in DatasetRegistry.get_all_configs().items()
+}
 
 ### Vision only
 # Number of channels
-CHANNELS_DICT = {key: conf.channels for key, conf in DatasetRegistry.vision._registry.items()}
+CHANNELS_DICT = {
+    key: conf.channels for key, conf in DatasetRegistry.vision._registry.items()
+}
 # Image resolutions
-DEFAULT_RES_DICT = {key: conf.resolution for key, conf in DatasetRegistry.vision._registry.items()}
+DEFAULT_RES_DICT = {
+    key: conf.resolution for key, conf in DatasetRegistry.vision._registry.items()
+}
 
 # Standardization statistics
 MEAN_DICT = {key: conf.mean for key, conf in DatasetRegistry.vision._registry.items()}
 STD_DICT = {key: conf.std for key, conf in DatasetRegistry.vision._registry.items()}
 
 # Whether dataset can be cached in memory, available in torch
-OS_CACHED_DICT = {key: conf.can_cache for key, conf in DatasetRegistry.vision._registry.items()}
-TORCH_DICT = {key: conf.torch_dataset for key, conf in DatasetRegistry.vision._registry.items()}
+OS_CACHED_DICT = {
+    key: conf.can_cache for key, conf in DatasetRegistry.vision._registry.items()
+}
+TORCH_DICT = {
+    key: conf.torch_dataset for key, conf in DatasetRegistry.vision._registry.items()
+}
 
 ### NLP only
 # Vocabulary sizes for language models
-VOCAB_SIZE_DICT = {key: conf.vocab_size for key, conf in DatasetRegistry.get_language_registry().items()}
-MAX_SEQ_LENGTH_DICT = {key: conf.max_seq_length for key, conf in DatasetRegistry.get_language_registry().items()}
-HUGGING_FACE_DICT = {key: conf.hf_path for key, conf in DatasetRegistry.get_language_registry().items()}
+VOCAB_SIZE_DICT = {
+    key: conf.vocab_size
+    for key, conf in DatasetRegistry.get_language_registry().items()
+}
+MAX_SEQ_LENGTH_DICT = {
+    key: conf.max_seq_length
+    for key, conf in DatasetRegistry.get_language_registry().items()
+}
+HUGGING_FACE_DICT = {
+    key: conf.hf_path for key, conf in DatasetRegistry.get_language_registry().items()
+}
 # Dataset configurations where needed
-HF_CONFIG_DICT = {key: conf.hf_config for key, conf in DatasetRegistry.get_language_registry().items()}
-DATASET_SPLITS = {key: conf.splits for key, conf in DatasetRegistry.get_language_registry().items()}
+HF_CONFIG_DICT = {
+    key: conf.hf_config for key, conf in DatasetRegistry.get_language_registry().items()
+}
+DATASET_SPLITS = {
+    key: conf.splits for key, conf in DatasetRegistry.get_language_registry().items()
+}
 
 if __name__ == "__main__":
-
     config = VisionRegistry.cifar10
     print(config.samples)  # 50000
 
@@ -668,4 +735,5 @@ if __name__ == "__main__":
 
     # Get mixture info
     mixture = DatasetRegistry.get_mixture_info(["cifar10", "squad"])
+    print(mixture)
     print(mixture)

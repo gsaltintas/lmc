@@ -7,7 +7,7 @@ from shutil import rmtree
 
 import wandb
 
-from scripts.cleanup_wandb_sweep import delete_artifacts
+# from scripts.cleanup_wandb_sweep import delete_artifacts
 
 # python scripts/cleanup_wandb_runs.py --project MLP-CiFAR10 CNN-CiFAR10 ViT-CIFAR10
 
@@ -82,11 +82,11 @@ def main():
                 # ans = input(f"Deleting {run.name} and all artifacts from wandb, continue? [y/n]")
                 # if ans.lower() != "y":
                 #     continue
-                try:
-                    delete_artifacts(run)
-                except Exception as e:
-                    print(f"Problem deleting artifacts {e}")
-                    pass
+                # try:
+                #     delete_artifacts(run)
+                # except Exception as e:
+                #     print(f"Problem deleting artifacts {e}")
+                #     pass
                 if "delete" in run.tags:# or args.delete_wandb_runs:
                     run.delete()
                     deleted_cnt += 1

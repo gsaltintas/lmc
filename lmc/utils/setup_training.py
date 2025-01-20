@@ -1,18 +1,21 @@
+import importlib
 import logging
-import re
 import math
 import os
+import re
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
-from typing import List, Union, Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from torch import nn, optim
-from tqdm import tqdm
 import torchvision.transforms as transforms
+from datasets import load_dataset
+from torch import nn, optim
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -21,32 +24,96 @@ from transformers import (
     DataCollatorWithPadding,
     PreTrainedTokenizer,
 )
-from datasets import load_dataset
 
-from lmc.models.bert import Bert
-from lmc.models.t5 import T5
 import wandb
-
 from lmc.config import DataConfig
 from lmc.data.data_stats import DatasetRegistry, TaskType
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
+from lmc.models.bert import Bert
+from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
-from lmc.utils.training_element import TrainingElement, TrainingElements, Iterator
-
+from lmc.utils.training_element import Iterator, TrainingElement, TrainingElements
 
 logger = logging.getLogger("setup")
 
 WANDB_DIR = os.environ.get("SCRATCH", os.environ.get("TMPDIR"))
 
 
-def load_model_from_checkpoint(model: nn.Module, path: Union[Path, str]) -> None:
-    """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
-    assert path.exists(), f"Path {path} doesn't exist."
+# def load_model_from_checkpoint(
+#     model: nn.Module, path: Union[Path, str], strict: bool = False
+# ) -> None:
+#     """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
+#     assert path.exists(), f"Path {path} doesn't exist."
+#     d = torch.load(path, map_location=model.device)
+#     model.load_state_dict(d["state_dict"], strict=False)
+
+
+def load_model_from_checkpoint(
+    model: nn.Module, path: Union[Path, str], ignore_mismatched_sizes: bool = True
+) -> None:
+    """
+    Load weights from a checkpoint into a model, gracefully handling missing or mismatched keys.
+    Similar to HuggingFace's approach, where missing keys retain their random initialization.
+
+    Args:
+        model: PyTorch model to load weights into
+        path: Path to checkpoint file
+        ignore_mismatched_sizes: Whether to skip loading weights with mismatched sizes
+    """
+    assert Path(path).exists(), f"Path {path} doesn't exist."
+
+    # Load checkpoint
     d = torch.load(path, map_location=model.device)
-    model.load_state_dict(d["state_dict"], strict=False)
+    checkpoint_state_dict = d["state_dict"]
+    model_state_dict = model.state_dict()
+
+    # Track different types of keys
+    missing_keys = []
+    unexpected_keys = []
+    mismatched_keys = []
+    to_be_loaded = OrderedDict()
+
+    # Load matching keys
+    for k, v in checkpoint_state_dict.items():
+        if k not in model_state_dict:
+            unexpected_keys.append(k)
+            continue
+
+        if v.shape != model_state_dict[k].shape:
+            if ignore_mismatched_sizes:
+                print(k)
+                mismatched_keys.append(k)
+                continue
+            else:
+                raise ValueError(
+                    f"Size mismatch for {k}: checkpoint has {v.shape}, model has {model_state_dict[k].shape}"
+                )
+
+        to_be_loaded[k] = v
+
+    # Identify missing keys
+    missing_keys = [k for k in model_state_dict.keys() if k not in to_be_loaded]
+
+    # Load the matching weights
+    model.load_state_dict(to_be_loaded, strict=False)
+
+    # Log informative messages
+    if unexpected_keys:
+        logger.info("Keys in checkpoint but not in model: %s", unexpected_keys)
+
+    if mismatched_keys:
+        logger.info("Keys skipped due to size mismatch: %s", mismatched_keys)
+
+    if missing_keys:
+        keys_str = ", ".join(missing_keys)
+        logger.warning(
+            "Some weights are newly initialized and should be trained: %s\n"
+            "You should TRAIN these layers to ensure good performance!",
+            keys_str,
+        )
 
 
 def load_training(
@@ -150,11 +217,8 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
         model = Bert(conf.model_name, output_dim=out)
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
-        num_labels = (
-            1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
-        )
         model = AutoModelForSequenceClassification.from_pretrained(
-            conf.model_name, num_labels=num_labels, cache_dir=str(config.data.path)
+            conf.model_name, num_labels=out, cache_dir=str(config.data.path)
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -291,7 +355,7 @@ def configure_lr_scheduler(
             optimizer=optimizer,
             max_lr=base_lr,
             total_steps=training_steps,
-            anneal_strategy="cost",
+            anneal_strategy="cos",
             pct_start=warmup_ratio,
         )
     elif lr_scheduler == "flat":
@@ -626,6 +690,11 @@ def setup_vision_loader(
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = dataset_conf.torch_dataset
+    if isinstance(dataset_cls, str):
+        func = dataset_cls.split(".")[-1]
+        module = ".".join(dataset_cls.split(".")[:-1])
+        dataset_cls = getattr(importlib.import_module(module), func)
+
     dataset = dataset_cls(
         root=data_conf.path,
         train=train,
@@ -646,6 +715,8 @@ def setup_vision_loader(
         num_workers=data_conf.num_workers,
         generator=g,
         worker_init_fn=seed_worker,
+        pin_memory=True,
+        prefetch_factor=2,
     )
     return loader
 
@@ -672,15 +743,25 @@ def setup_model_dir(config: Trainer) -> Path:
         FileNotFoundError: If the specified `log_dir` does not exist.
     """
     if not config.logger.log_dir.exists():
-        raise FileNotFoundError(
-            f"Must provide an existing log_dir ({config.logger.log_dir})"
-        )
+        if config.logger.log_dir.parent.exists():
+            config.logger.log_dir.mkdir()
+        else:
+            raise FileNotFoundError(
+                f"Must provide an existing log_dir ({config.logger.log_dir})"
+            )
     if config.model_dir is None:
         hashname = config.hashname
         now = datetime.now()
         formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
         config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
         logger.info(f"Created model dir: {config.model_dir}")
+    elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
+        now = datetime.now()
+        short_id = str(now.microsecond)[-4:]
+        config.model_dir = Path(str(config.model_dir) + "_" + short_id)
+        logger.info(
+            f"enforce_new_model_dir True, creating a new model dir: {config.model_dir}"
+        )
     config.model_dir.mkdir(exist_ok=True)
     config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
 
@@ -765,6 +846,11 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, f"perturb_seed{suffix}"):
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
 
+        ## setup individual model dir
+        model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
+        setattr(config, f"model{i}_dir", model_dir_)
+        model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
+
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
         seed_everything(seed)
@@ -778,7 +864,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 # TODO: parse the model dir, load config from there
             ## TODO: do this, resume_epoch not implemented
             config.model.ckpt_path = model_dir_.joinpath(
-                "checkpoints", f"epoch_{config.resume_epoch}"
+                "checkpoints", f"ep-{config.resume_epoch}"
             ).with_suffix(".ckpt")
             if not config.model.ckpt_path.exists():
                 config.model.ckpt_path = model_dir_.joinpath(
@@ -828,7 +914,6 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
-        model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
 
         logger.info("Setup model %d with seed=%d.", i, seed)
 
@@ -861,9 +946,6 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             logger.info("Optimizer %d - %s", i, opt)
             logger.info("Scheduler %d - %s", i, scheduler)
 
-        # if not hasattr(config, f"model{i}_dir"):
-        setattr(config, f"model{i}_dir", model_dir_)
-        model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
         training_elements.add_element(
             TrainingElement(
                 element_ind=i,
@@ -981,6 +1063,9 @@ def setup_iterators(
         el.extra_iterator = tqdm_cls(
             position=2 + 2 * i, desc="Extra iterator used for anything", colour="white"
         )
+        el.train_iterator = train_iterator
+        el.test_iterator = test_iterator
+        el.train_eval_iterator = train_eval_iterator
         el.train_iterator = train_iterator
         el.test_iterator = test_iterator
         el.train_eval_iterator = train_eval_iterator

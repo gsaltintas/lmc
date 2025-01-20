@@ -5,22 +5,37 @@ import os
 from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
 from pprint import pformat
-from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
-                    get_args, get_origin)
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from rich.console import Console
 from rich.table import Table
 
-from lmc.data.data_stats import (MAX_SEQ_LENGTH_DICT, TASK_MAPPING,
-                                 DatasetRegistry, LanguageConfig, TaskType,
-                                 VisionConfig)
-from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
-                                         Inits, Norms)
+from lmc.data.data_stats import (
+    MAX_SEQ_LENGTH_DICT,
+    TASK_MAPPING,
+    DatasetRegistry,
+    LanguageConfig,
+    TaskType,
+    VisionConfig,
+)
+from lmc.models.type_declaration import MODEL_NAME_PATTERNS, Activations, Inits, Norms
 from lmc.utils.step import Step
 from lmc.utils.utils import pattern_matched
 
 """ TODO: maybe omit defaults in the future versions """
 logger = logging.getLogger("config")
+
 
 def parse_bool(value):
     if value.lower() in ("true", "yes", "y") or value == "1":
@@ -37,7 +52,7 @@ def maybe_get_arg(arg_name, positional=False, position=0, boolean_arg=False):
     if positional:
         for i in range(position):
             parser.add_argument(f"arg{i}")
-    if boolean_arg: # prob not true
+    if boolean_arg:  # prob not true
         parser.add_argument(prefix + arg_name, action="store_true")
     else:
         parser.add_argument(prefix + arg_name, type=str, default=None)
@@ -49,7 +64,10 @@ def maybe_get_arg(arg_name, positional=False, position=0, boolean_arg=False):
 
 
 def field_factory(
-    maybe_arg: str, mapping: Dict[str, "Config"], default_val: str = None, from_args: bool = True
+    maybe_arg: str,
+    mapping: Dict[str, "Config"],
+    default_val: str = None,
+    from_args: bool = True,
 ):
     # TODO: add here default factory from file/dict inits
     """
@@ -84,14 +102,14 @@ def field_factory(
             raise ValueError(f"Not a valid name: for {maybe_arg} ({value})")
 
         return config
-        
+
     return arg_fact
 
 
 def add_basic_args(
     parser: argparse.ArgumentParser,
     cls: Type,
-    defaults: "Config" = None,
+    defaults: Union["Config", Dict[str, Any]] = None,
     prefix: str = None,
     name: str = None,
     description: str = None,
@@ -127,21 +145,33 @@ def add_basic_args(
                 typ = field_.default_factory()
         elif typ is USE_DEFAULT_FACTORY:
             typ = field_.default_factory()
-            
 
         arg_name = f"--{field_.name}" if prefix is None else f"--{prefix}_{field_.name}"
 
-        if defaults:
-            default = getattr(defaults, field_.name, None)
-        elif field_.default is not MISSING:
-            default = field_.default
-        elif field_.default_factory is not MISSING:
-            default = field_.default_factory()
-        else:
-            default = None
+        default = None
+        if defaults is not None:
+            if isinstance(defaults, dict):
+                flat_key = (
+                    f"{field_.name}" if prefix is None else f"{prefix}_{field_.name}"
+                )
+                default = defaults.get(flat_key)
+            else:
+                default = getattr(defaults, field_.name, None)
 
-        required = field_.default is MISSING and field_.default_factory is MISSING and (not defaults or default is None)
-        
+        if default is None:
+            if field_.default is not MISSING:
+                default = field_.default
+            elif field_.default_factory is not MISSING:
+                default = field_.default_factory()
+            else:
+                default = None
+
+        required = (
+            field_.default is MISSING
+            and field_.default_factory is MISSING
+            and (not defaults or default is None)
+        )
+
         helptext = getattr(cls, f"_{field_.name}", "")
         if required:
             helptext = f"(required: {typ.__name__}) " + helptext
@@ -198,10 +228,17 @@ def add_basic_args(
 
 @dataclass
 class Config:
-    """ base config class """
-    _add_prefix: bool = field(init=False, default=False)  # Class-level default, set to true to parse arguments as --name.arg
-    _name: str = field(init=False, default="")  # Class-level default, set to true to parse arguments as --name.arg
-    _description: str = field(init=False, default="")  # Class-level default, set to true to parse arguments as --name.arg
+    """base config class"""
+
+    _add_prefix: bool = field(
+        init=False, default=False
+    )  # Class-level default, set to true to parse arguments as --name.arg
+    _name: str = field(
+        init=False, default=""
+    )  # Class-level default, set to true to parse arguments as --name.arg
+    _description: str = field(
+        init=False, default=""
+    )  # Class-level default, set to true to parse arguments as --name.arg
 
     def __post_init__(self):
         if not hasattr(self, "_name"):
@@ -229,7 +266,7 @@ class Config:
     def add_args(
         cls,
         parser: argparse.ArgumentParser,
-        defaults: "Config" = None,
+        defaults: Union["Config", Dict[str, Any]] = None,
         prefix: str = None,
         name: str = None,
         description: str = None,
@@ -334,12 +371,14 @@ class Config:
                 # for steps only log step int
                 if "st" in val.value:
                     val = int(val.value.replace("st", ""))
-                else: val = val.value
+                else:
+                    val = val.value
             elif isinstance(typ, type) and issubclass(typ, Config):
                 val = val.wandb_dct()
             d[field_.name] = val
         return d
-    
+
+
 USE_DEFAULT_FACTORY = object()
 
 
@@ -356,7 +395,9 @@ class Optimizer(Config):
     warmup_ratio: float = 0.0
     gradient_clip_val: float = 0.0
     gradient_clip_algorithm: Literal["norm", "value", ""] = None
-    lr_scheduler: Literal["linear", "exponential", "cosine", "triangle"] = None
+    lr_scheduler: Literal["linear", "exponential", "onecycle", "cosine", "triangle"] = (
+        None
+    )
 
     _lr = "Learning rate"
     _warmup_ratio = r"\rho * training_steps will be used for learning rate warmup"
@@ -408,28 +449,56 @@ class TrainerConfig(Config):
     _name = "trainer"
     _description = "Training hyper-parameters"
 
+
 @dataclass
 class DataConfig(Config):
     # Dataset choices including both vision and language datasets
     dataset: Literal[
         # Vision datasets
-        "cifar10", "mnist", "cifar100", "tiny-imagenet",  "cinic10", "imagenet",
-        
+        "cifar10",
+        "mnist",
+        "cifar100",
+        "tiny-imagenet",
+        "cinic10",
+        "cinic10_wo_cifar10",
+        "imagenet1k",
         # Language datasets - Text Classification/Regression (CR)
-        "snli", "scitail", "glue",
-        
+        "snli",
+        "scitail",
+        "cola",
+        "sst2",
+        "mrpc",
+        "qqp",
+        "mnli",
+        "qnli",
+        "rte",
+        "wnli",
+        "stsb",
+        # "glue/cola", "glue/sst2", "glue/mrpc", "glue/qqp", "glue/mnli", "glue/qnli", "glue/rte", "glue/wnli", "glue/stsb",
         # Language datasets - Question Answering (QA)
-        "squad_v1", "squad_v2", "newsqa", "hotpotqa", 
-        "duorc", "drop", "wikihop", "boolq", "comqa",
-        
+        "squad_v1",
+        "squad_v2",
+        "newsqa",
+        "hotpotqa",
+        "duorc",
+        "drop",
+        "wikihop",
+        "boolq",
+        "comqa",
         # Language datasets - Sequence Labeling (SL)
-        "conll2003", "ptb", "conj",
-        
+        "conll2003",
+        "ptb",
+        "conj",
         # Language datasets - Language Modeling
-        "wikitext-2", "wikitext-103", "cord", "cord-v2",
-        "webtext", "c4", "pile", "bookcorpus"
+        "wikitext-2",
+        "wikitext-103",
+        "cord",
+        "cord-v2",
+        "webtext",
+        "c4",
+        "pile",
+        "bookcorpus",
     ]
-
 
     # General configurations
     batch_size: int = 128
@@ -444,7 +513,7 @@ class DataConfig(Config):
     cutmix: float = 0.0
     gaussian_blur: bool = False
     random_rotation: float = 0.0
-    random_crop: bool = False  #TODO this does nothing, only kept here to preserve backwards compatibility
+    random_crop: bool = False  # TODO this does nothing, only kept here to preserve backwards compatibility
     random_translate: float = 0.0
     cutout: int = 0
 
@@ -461,7 +530,7 @@ class DataConfig(Config):
     remove_punctuation: bool = False
     strip_accents: bool = True
     add_special_tokens: bool = True
-    
+
     # Language augmentation settings
     token_dropout_prob: float = 0.0
     word_dropout_prob: float = 0.0
@@ -470,9 +539,6 @@ class DataConfig(Config):
     span_length: int = 3
     enable_back_translation: bool = False
     translation_languages: List[str] = field(default_factory=lambda: ["de", "fr"])
-    
-    # GLUE specific settings
-    glue_task: Optional[str] = None
 
     # Dataset splits
     validation_split: float = 0.1
@@ -482,7 +548,9 @@ class DataConfig(Config):
     # Documentation fields
     _hflip: str = "Pass true to perform random horizontal flip with probability 0.5."
     _name = "data"
-    _description = "Data and augmentations configuration for both vision and language tasks"
+    _description = (
+        "Data and augmentations configuration for both vision and language tasks"
+    )
 
     def __post_init__(self):
         self.path = Path(self.path).resolve().absolute()
@@ -491,7 +559,7 @@ class DataConfig(Config):
         if self.is_language_dataset():
             if not self.tokenizer_name:
                 raise ValueError("Must provide tokenizer_name for language datasets")
-            
+
             if self.max_seq_length < self.min_seq_length:
                 raise ValueError("max_seq_length must be greater than min_seq_length")
 
@@ -500,15 +568,13 @@ class DataConfig(Config):
 
         self.max_seq_length = MAX_SEQ_LENGTH_DICT.get(self.dataset, 128)
         return super().__post_init__()
-    
+
     def is_language_dataset(self) -> bool:
         """Check if the selected dataset is a language dataset"""
         return not isinstance(
-            DatasetRegistry.get_dataset_info(self.dataset),
-            VisionConfig
+            DatasetRegistry.get_dataset_info(self.dataset), VisionConfig
         )
-        
-    
+
     @property
     def task_type(self) -> TaskType:
         """Get the task type for the dataset"""
@@ -526,52 +592,57 @@ class DataConfig(Config):
         """Check if the current dataset is a classification task"""
         return self.task_type in [
             TaskType.CLASSIFICATION,
-            TaskType.NATURAL_LANGUAGE_INFERENCE
+            TaskType.NATURAL_LANGUAGE_INFERENCE,
         ]
 
     def get_num_labels(self) -> int:
         """Get number of labels/classes for the dataset"""
-        config :Union[VisionConfig, LanguageConfig]= DatasetRegistry.get_dataset_info(self.dataset)
-        if self.dataset == "glue" and self.glue_task:
-            return DatasetRegistry.glue.get(f"glue/{self.glue_task}").classes
+        config: Union[VisionConfig, LanguageConfig] = DatasetRegistry.get_dataset_info(
+            self.dataset
+        )
         return config.classes
-    
+
     def get_num_in_channels(self) -> int:
         """Get number of input channels for vision datasets."""
         if self.is_language_dataset():
-            raise ValueError(f"Cannot get number of channels for language dataset {self.dataset}")
-        
-        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+            raise ValueError(
+                f"Cannot get number of channels for language dataset {self.dataset}"
+            )
+
+        config: VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
         if not isinstance(config, VisionConfig):
             raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
-        
+
         return config.channels
 
     def get_default_res(self) -> int:
         """Get default resolution for vision datasets."""
         if self.is_language_dataset():
-            raise ValueError(f"Cannot get resolution for language dataset {self.dataset}")
-            
-        config:VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
+            raise ValueError(
+                f"Cannot get resolution for language dataset {self.dataset}"
+            )
+
+        config: VisionConfig = DatasetRegistry.get_dataset_info(self.dataset)
         if not isinstance(config, VisionConfig):
             raise ValueError(f"Dataset {self.dataset} is not a vision dataset")
-        
+
         return config.resolution
-    
-    
+
     def get_hf_path(self) -> str:
         config: LanguageConfig = DatasetRegistry.get_dataset_info(self.dataset)
         if not isinstance(config, VisionConfig):
             raise ValueError(f"Dataset {self.dataset} is not a language dataset")
-        return  config.hf_config
+        return config.hf_config
+
     @property
     def dataset_info(self) -> Union[VisionConfig, LanguageConfig]:
         """Get complete dataset configuration"""
         return DatasetRegistry.get_dataset_info(self.dataset)
-    
+
     def get_steps_per_epoch(self) -> int:
         return math.ceil(self.dataset_info.samples / self.batch_size)
-    
+
+
 @dataclass
 class LoggerConfig(Config):
     _name = "logger"
@@ -597,9 +668,13 @@ class LoggerConfig(Config):
     cleanup_after: bool = False
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
     profile: bool = False
+    enforce_new_model_dir: bool = True
+    report_permutation_stats: bool = True
 
-    _cleanup_after: str = (
-        "Pass true only if you want to delete the experiment directory after experiment is finished."
+    _cleanup_after: str = "Pass true only if you want to delete the experiment directory after experiment is finished."
+    _enforce_new_model_dir: str = "If true, creates a new model dir if model_dir already exists (helpful for finetuning settings)."
+    _report_permutation_stats: str = (
+        "If true, collects and logs statistics about the found permutation."
     )
 
     def __post_init__(self):
@@ -621,9 +696,11 @@ class Model:
             s += f.name + "=" + f.value
         return s + ")"
 
+
 @dataclass
 class ModelConfig_(Config):
-    model_name: str = field(init=True, kw_only=True)
+    # model_name: str = field(init=True, kw_only=True)
+    model_name: str = "mlp/64x2"
 
     norm: Norms = None
     act: Activations = "relu"
@@ -633,8 +710,10 @@ class ModelConfig_(Config):
 
     _model_name: str = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
     _initialization_strategy: str = "Initialization strategy for the model's layers"
-    _gradient_checkpointing: str = "Only implemented for HuggingFace models, disable by passing false"
-    
+    _gradient_checkpointing: str = (
+        "Only implemented for HuggingFace models, disable by passing false"
+    )
+
     _name: str = "model"
     _description: str = ""
     _add_prefix: str = False
@@ -659,9 +738,11 @@ class ResNetConfig(ModelConfig_):
 
     _width: str = "Output channels of the first convolution"
 
+
 @dataclass
 class NLPModelConfig(ModelConfig_):
     pass
+
 
 @dataclass
 class MLPConfig(ModelConfig_):
@@ -674,10 +755,11 @@ class MLPConfig(ModelConfig_):
 
     _num_hidden_layers: str = "Number of hidden layers, depth: (num_hidden_layers + 1)."
 
+
 def make_model_config(**kwargs) -> Type:
     model_name = maybe_get_arg("model_name")
     if model_name is None:
-        model_name = kwargs.get("model_name", None)
+        model_name = kwargs.get("model_name", "mlp")
     model_name = str(model_name)
     model_cls = MLPConfig
     if "mlp" in model_name:
@@ -688,13 +770,17 @@ def make_model_config(**kwargs) -> Type:
         model_cls = NLPModelConfig
     elif "t5" in model_name:
         model_cls = NLPModelConfig
-    fields_ = [(f.name, f.type, f) for f in fields(model_cls) if not f.name.startswith("_")] +  [(f.name, f.type, f) for f in fields(model_cls) if f.name.startswith("_")]
-    
-    return make_dataclass("ModelConfig", fields_ , bases=(model_cls, ))
+    fields_ = [
+        (f.name, f.type, f) for f in fields(model_cls) if not f.name.startswith("_")
+    ] + [(f.name, f.type, f) for f in fields(model_cls) if f.name.startswith("_")]
+
+    return make_dataclass("ModelConfig", fields_, bases=(model_cls,))
+
 
 @dataclass
 class ModelConfig(Config):
     pass
+
 
 ModelConfig = make_model_config()
 

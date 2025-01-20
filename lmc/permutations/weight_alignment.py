@@ -9,8 +9,14 @@ from scipy.optimize import linear_sum_assignment
 from torch import nn
 
 from .alignment import solve_for_a_perm
-from .utils import (PermSpec, PermType, get_kernel_function,
-                    get_permutation_sizes, outer_product, permute_param)
+from .utils import (
+    PermSpec,
+    PermType,
+    get_kernel_function,
+    get_permutation_sizes,
+    outer_product,
+    permute_param,
+)
 
 logger = logging.getLogger("w-matching")
 
@@ -32,7 +38,7 @@ logger = logging.getLogger("w-matching")
 #     if isinstance(params_b, nn.Module):
 #         params_b = params_b.state_dict()
 #     perm_sizes = get_permutation_sizes(params_a, ps)
-    
+
 #     if perm is None:
 #         perm = (
 #         {p: np.arange(n) for p, n in perm_sizes.items()}
@@ -144,7 +150,10 @@ logger = logging.getLogger("w-matching")
 
 #     return perm
 
-def handle_head_param(w: torch.Tensor, axis: int, num_heads: int, d_head: int) -> torch.Tensor:
+
+def handle_head_param(
+    w: torch.Tensor, axis: int, num_heads: int, d_head: int
+) -> torch.Tensor:
     """Reshape parameter to handle head dimensions"""
     shape = w.shape
     if axis == 0:
@@ -153,6 +162,7 @@ def handle_head_param(w: torch.Tensor, axis: int, num_heads: int, d_head: int) -
     else:
         # Reshape to [..., num_heads, d_head]
         return w.view(*shape[:-1], num_heads, d_head)
+
 
 def weight_matching(
     ps: PermSpec,
@@ -167,7 +177,7 @@ def weight_matching(
 ) -> PermType:
     """Find a permutation of `params_b` to make them match `params_a`."""
     log_fn = logger.info if verbose else logger.debug
-    
+
     # Get head dimensions from first tuple permutation if it exists
     num_heads = ps.head_info["num_heads"] if ps.head_info else None
     d_head = ps.head_info["d_head"] if ps.head_info else None
@@ -194,7 +204,7 @@ def weight_matching(
         progress = False
         for p_ix in np.random.permutation(len(perm_names)):
             p = perm_names[p_ix]
-            
+
             # Get the appropriate size for this permutation
             param_name, axis, *ptype = ps.perms_to_names[p][0]
             if ptype:  # Head permutation
@@ -204,19 +214,19 @@ def weight_matching(
 
             A = np.zeros((n, n))
             cnt = 0
-            
+
             for wk, axis, *ptype in ps.perms_to_names[p]:
                 if "bias" in wk:
                     continue
-                    
+
                 w_a = params_a[wk]
                 w_b = permute_param(ps, perm, wk, params_b[wk], except_axis=axis)
-                
+
                 if ptype:  # Handle head permutations
                     # Reshape to separate head dimensions
                     w_a = handle_head_param(w_a, axis, num_heads, d_head)
                     w_b = handle_head_param(w_b, axis, num_heads, d_head)
-                    
+
                     # Select appropriate dimension based on permutation type
                     if ptype[0] == "head":
                         w_a = w_a.mean(dim=1)  # Average over d_head
@@ -224,11 +234,11 @@ def weight_matching(
                     else:  # d_head
                         w_a = w_a.mean(dim=0)  # Average over heads
                         w_b = w_b.mean(dim=0)
-                
+
                 # Reshape for cost computation
                 w_a = torch.moveaxis(w_a, axis, 0).reshape((n, -1)).cpu().numpy()
                 w_b = torch.moveaxis(w_b, axis, 0).reshape((n, -1)).cpu().numpy()
-                
+
                 rest_size = math.sqrt(w_a.shape[1])
                 std = 1.0
                 c = kernel_func(w_a / std, w_b / std) / 1.0
@@ -240,7 +250,7 @@ def weight_matching(
                 reg = sinkhorn_regularizer.get(p, None)
             elif isinstance(sinkhorn_regularizer, float):
                 reg = sinkhorn_regularizer
-                
+
             ci = solve_for_a_perm(
                 A, perm_method=perm_method, verbose=False, sinkhorn_regularizer=reg
             )
@@ -250,7 +260,7 @@ def weight_matching(
                 newL = np.dot(ci, A).sum()
             else:
                 newL = np.vdot(A, np.eye(n)[ci, :])
-                
+
             if verbose:
                 print(
                     f"Iter {iteration:3d}/{p:4s}: {newL:.2f}, {oldL:.2f} prog: {newL - oldL:.2f}"
@@ -264,6 +274,7 @@ def weight_matching(
 
     return perm
 
+
 def weight_matching_cost(
     ps: PermSpec,
     params_a: Union[Dict[str, torch.Tensor], nn.Module],
@@ -272,7 +283,7 @@ def weight_matching_cost(
     kernel_func: Optional[Union[str, callable]] = outer_product,
     perm_order: Optional[List[int]] = None,
     align_bias: bool = False,
-    perm: Optional[PermType] = None
+    perm: Optional[PermType] = None,
 ) -> PermType:
     """Calculate matching costs, handling head permutations"""
     kernel_func = get_kernel_function(kernel_func)
@@ -294,8 +305,12 @@ def weight_matching_cost(
             perm_sizes[p_name] = params_a[param_name].shape[axis]
 
     if perm is None:
-        perm = {p: np.arange(n) for p, n in perm_sizes.items()} if init_perm is None else init_perm
-    
+        perm = (
+            {p: np.arange(n) for p, n in perm_sizes.items()}
+            if init_perm is None
+            else init_perm
+        )
+
     perm_names = np.array(list(perm.keys()))
     if perm_order is None:
         perm_order = perm_names[np.random.permutation(len(perm_names))]
@@ -309,26 +324,26 @@ def weight_matching_cost(
         for wk, axis, *ptype in ps.perms_to_names[p]:
             if not align_bias and "bias" in wk:
                 continue
-                
+
             w_a = params_a[wk]
             w_b = permute_param(ps, perm, wk, params_b[wk], except_axis=axis)
-            
+
             if ptype:  # Handle head permutations
                 w_a = handle_head_param(w_a, axis, num_heads, d_head)
                 w_b = handle_head_param(w_b, axis, num_heads, d_head)
-                
+
                 if ptype[0] == "head":
                     w_a = w_a.mean(dim=1)
                     w_b = w_b.mean(dim=1)
                 else:  # d_head
                     w_a = w_a.mean(dim=0)
                     w_b = w_b.mean(dim=0)
-            
+
             w_a = torch.moveaxis(w_a, axis, 0).reshape((n, -1)).cpu().numpy()
             w_b = torch.moveaxis(w_b, axis, 0).reshape((n, -1)).cpu().numpy()
             A += kernel_func(w_a, w_b)
             cnt += 1
-            
+
         costs[p] = A
 
     return costs

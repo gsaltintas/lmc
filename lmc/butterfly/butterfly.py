@@ -74,25 +74,31 @@ def get_batch_noise(
     batch = next(iter(dataloader))
     if model.is_language_model:
         # Handle language model batch
-        batch = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()}
-        
+        batch = {
+            k: v.to(model.device) if isinstance(v, torch.Tensor) else v
+            for k, v in batch.items()
+        }
+
         # Forward pass and loss calculation
         outputs = model(**batch)
-        
+
         # Use model's built-in loss if available
         if hasattr(outputs, "loss"):
             loss = outputs.loss
         elif hasattr(outputs, "logits") and "labels" in batch:
             if loss_fn is not None:
-                loss = loss_fn(outputs.logits.view(-1, outputs.logits.size(-1)), 
-                                batch["labels"].view(-1))
+                loss = loss_fn(
+                    outputs.logits.view(-1, outputs.logits.size(-1)),
+                    batch["labels"].view(-1),
+                )
             else:
-                loss = nn.CrossEntropyLoss()(outputs.logits.view(-1, outputs.logits.size(-1)), 
-                                            batch["labels"].view(-1))
+                loss = nn.CrossEntropyLoss()(
+                    outputs.logits.view(-1, outputs.logits.size(-1)),
+                    batch["labels"].view(-1),
+                )
         else:
             raise ValueError("Could not compute loss for language model")
-            
+
     else:
         # Unpack inputs and targets (adjust if your dataloader provides a different structure)
         inputs, targets = batch
@@ -123,7 +129,9 @@ def get_batch_noise(
 
 
 @torch.no_grad()
-def get_gaussian_noise(model: "BaseModel", layers: List[str]) -> Dict[str, torch.Tensor]:
+def get_gaussian_noise(
+    model: "BaseModel", layers: List[str]
+) -> Dict[str, torch.Tensor]:
     """_summary_
 
     Args:
@@ -169,7 +177,7 @@ def perturb_model(
             param_noise = noise_dct[n]
             perturb_params[n] = p + param_noise
     if inplace:
-        model.load_state_dict(perturb_params)
+        model.load_state_dict(perturb_params, strict=False)
     else:
         model = deepcopy(model)
         model.load_state_dict(perturb_params)
@@ -189,101 +197,116 @@ def get_all_init_l2s(model) -> Tuple[float, Dict[str, float]]:
     total_sqsum = 0
     stds = model.get_init_stds(include_constant_params=False)
     for k, v in model.named_parameters():
-        sqsum = stds[k]**2 * v.nelement()
+        sqsum = stds[k] ** 2 * v.nelement()
         init_l2s[k] = sqsum**0.5
         total_sqsum += sqsum
     return total_sqsum**0.5, init_l2s
 
 
 def get_average_grad_norm(
-    model: "BaseModel", 
-    dataloader: DataLoader, 
-    loss_fn: callable = None, 
-    num_datapoints: int = 1
+    model: "BaseModel",
+    dataloader: DataLoader,
+    loss_fn: callable = None,
+    num_datapoints: int = 1,
 ) -> Tuple[float, int]:
     """
     Calculate the gradient norm of a model over specified number of datapoints.
     Handles both vision and language models.
-    
+
     Args:
         model: The neural network model
         dataloader: DataLoader containing the input data
         loss_fn: Loss function (defaults to CrossEntropyLoss if None)
         num_datapoints: Number of batches to process (default=1), pass -1 to iterate through all points
-    
+
     Returns:
         tuple[float, int]: A tuple containing:
             - Average L2 norm of the gradients
             - Total number of parameters with a gradient in the model
     """
     model.zero_grad()
-    
+
     if loss_fn is None and not model.is_language_model:
         loss_fn = torch.nn.CrossEntropyLoss()
-    
+
     processed_batches = 0
-    
+
     for i, batch in enumerate(dataloader):
         if i != -1 and i >= num_datapoints:
             break
-            
+
         if model.is_language_model:
             # Handle language model batch
-            batch = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v 
-                    for k, v in batch.items()}
-            
+            batch = {
+                k: v.to(model.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+
             # Forward pass and loss calculation
             outputs = model(**batch)
-            
+
             # Use model's built-in loss if available
             if hasattr(outputs, "loss"):
                 loss = outputs.loss
             elif hasattr(outputs, "logits") and "labels" in batch:
                 if loss_fn is not None:
-                    loss = loss_fn(outputs.logits.view(-1, outputs.logits.size(-1)), 
-                                 batch["labels"].view(-1))
+                    loss = loss_fn(
+                        outputs.logits.view(-1, outputs.logits.size(-1)),
+                        batch["labels"].view(-1),
+                    )
                 else:
-                    loss = nn.CrossEntropyLoss()(outputs.logits.view(-1, outputs.logits.size(-1)), 
-                                                batch["labels"].view(-1))
+                    loss = nn.CrossEntropyLoss()(
+                        outputs.logits.view(-1, outputs.logits.size(-1)),
+                        batch["labels"].view(-1),
+                    )
             else:
                 raise ValueError("Could not compute loss for language model")
-                
+
         else:
             # Handle vision model batch
             if isinstance(batch, (list, tuple)):
                 inputs, targets = batch
             else:
-                raise ValueError(f"Unexpected batch format for vision model: {type(batch)}")
-                
+                raise ValueError(
+                    f"Unexpected batch format for vision model: {type(batch)}"
+                )
+
             inputs = inputs.to(model.device)
             targets = targets.to(model.device)
-            
+
             outputs = model(inputs)
             loss = loss_fn(outputs, targets)
-        
+
         loss.backward()
         processed_batches += 1
-    
+
     # Calculate gradient norm
-    total_norm = 0.
+    total_norm = 0.0
     param_count = 0
     for param in model.parameters():
         if param.grad is not None:
             param_norm = param.grad.data.norm(2)
             total_norm += param_norm.item() ** 2
             param_count += param.numel()
-    
+
     # Divide by both number of parameters and number of processed batches
     if processed_batches == 0 or param_count == 0:
         avg_grad_norm = 0.0
     else:
-        avg_grad_norm = torch.sqrt(torch.tensor(total_norm)) / (param_count * processed_batches)
-    
+        avg_grad_norm = torch.sqrt(torch.tensor(total_norm)) / (
+            param_count * processed_batches
+        )
+
     model.zero_grad()
     return avg_grad_norm, param_count
 
+
 def scale_noise(
-    noise_dct: Dict[str, torch.Tensor], model, scale: float, normalize: bool, scale_to_init_if_normalized: bool
+    noise_dct: Dict[str, torch.Tensor],
+    model,
+    scale: float,
+    normalize: bool,
+    scale_to_init_if_normalized: bool,
 ):
     """Normalize the noise dict to have a fixed total l2 length"""
     log_dct = {}
@@ -325,7 +348,11 @@ def sample_noise_and_perturb(
         with temp_seed(perturb_seed):
             noise = get_gaussian_noise(model, layers=layers)
     noise, log_dct = scale_noise(
-        noise, model, config.perturb_scale, config.normalize_perturb, config.scale_to_init_if_normalized
+        noise,
+        model,
+        config.perturb_scale,
+        config.normalize_perturb,
+        config.scale_to_init_if_normalized,
     )
     perturb_model(model, noise)
     log_dct["layers"] = layers

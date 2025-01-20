@@ -47,9 +47,9 @@ class ExperimentManager(abc.ABC):
         pass
 
     @classmethod
-    def add_args(cls, parser: argparse.ArgumentParser) -> None:
+    def add_args(cls, parser: argparse.ArgumentParser, defaults=None) -> None:
         """Add all command line flags necessary for this manager."""
-        cls.config.add_args(parser)
+        cls.config.add_args(parser, defaults=defaults)
 
     # @staticmethod
     @classmethod

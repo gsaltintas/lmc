@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+from dataclasses import fields
 from typing import Type
 
 from lmc.config import maybe_get_arg
@@ -9,6 +10,7 @@ from lmc.experiment.logreg import ActiveLearningLogisticRegressionSearch
 from lmc.experiment.perturb import PerturbedTrainingRunner
 from lmc.experiment.train import TrainingRunner
 from lmc.utils.setup_training import cleanup
+from wandb import Config
 
 logger = logging.getLogger("")
 
@@ -44,19 +46,20 @@ if __name__ == "__main__":
     # Add the arguments for that command.
     experiment_class = get_experiment(manager_name)
 
-    if config_file is None:
-        usage = "main.py {} [...] => {}".format(
-            manager_name, experiment_class.description
-        )
-        usage += "\n" + "=" * 82 + "\n"
-        parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
-        parser.add_argument("subcommand")
-        # Add arguments for the various managers.
-        experiment_class.add_args(parser)
+    usage = "main.py {} [...] => {}".format(manager_name, experiment_class.description)
+    usage += "\n" + "=" * 82 + "\n"
+    parser = argparse.ArgumentParser(usage=usage, conflict_handler="resolve")
 
-        args = parser.parse_args()
-        experiment_manager = experiment_class.create_from_args(args)
-    else:
-        experiment_manager = experiment_class.create_from_file(config_file)
+    # Load defaults from config file if provided
+    defaults = None
+    if config_file:
+        parser.add_argument("--config_file")
+        defaults = experiment_class.create_from_file(config_file)
 
+    parser.add_argument("subcommand")
+    # Add arguments for the various managers.
+    experiment_class.add_args(parser, defaults=defaults)
+
+    args = parser.parse_args()
+    experiment_manager = experiment_class.create_from_args(args)
     experiment_manager.run_experiment()
