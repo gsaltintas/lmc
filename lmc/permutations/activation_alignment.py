@@ -20,10 +20,16 @@ logger = logging.getLogger("act-align")
 def get_activations_yield(
     models: nn.Module, dataloader: torch.utils.data.DataLoader
 ) -> Generator[torch.Tensor, None, None]:
-    for x, _ in dataloader:
-        if x.device != models[0].device:
-            x = x.to(models[0].device)
-        yield [model(x) for model in models]
+    is_language_model = models[0].is_language_model
+    device = models[0].device
+    for batch in dataloader:
+        if is_language_model:
+            batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v 
+                for k, v in batch.items()}
+            yield [model(**batch) for model in models]
+        else:
+            x = x.to(device)
+            yield [model(x) for model in models]
 
 
 def register_hooks(

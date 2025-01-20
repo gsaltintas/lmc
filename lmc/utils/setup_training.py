@@ -258,10 +258,9 @@ def configure_nlp_model(config: Trainer, model_dir: Path, device: torch.device) 
         model = Bert(conf.model_name, output_dim=out)
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
-        num_labels = 1 if config.data.glue_task == "stsb" else len(set(config.data.labels))
         model = AutoModelForSequenceClassification.from_pretrained(
             conf.model_name,
-            num_labels=num_labels,
+            num_labels=out,
             cache_dir=str(config.data.path)
         )
     else:

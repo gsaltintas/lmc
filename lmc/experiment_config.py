@@ -18,8 +18,8 @@ from lmc.utils.step import Step
 from lmc.utils.utils import flatten_dict
 
 from .config import (USE_DEFAULT_FACTORY, Config, DataConfig, LMCConfig,
-                     LoggerConfig, TrainerConfig, add_basic_args,
-                     make_model_config, maybe_get_arg)
+                     LoggerConfig, ModelConfig, ModelConfig_, TrainerConfig,
+                     add_basic_args, make_model_config, maybe_get_arg)
 
 
 def extract_candidate_keys(klass, d):
@@ -53,7 +53,10 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
     n_models = d.get("n_models", 1)
     if n_models == 1 and hasattr(klass, "n_models"):
         n_models = getattr(klass, "n_models")
-    
+    model_name = d.get("model_name", "mlp/64x2")
+    if model_name == "mlp/64x2" and hasattr(klass, "model_name"):
+        model_name = getattr(klass, "model_name")
+
     for field_ in fields(klass):
         name, typ = field_.name, field_.type
         
@@ -63,6 +66,8 @@ def dataclass_from_dict(klass: Type[Any], d: dict[str, Any]) -> Any:
             typ = make_seeds_class(n_models)
         elif  isinstance(typ, type) and issubclass(typ, PerturbSeeds): # and (sub is None or len(sub) == 0):
             typ = make_perturb_seeds_class(n_models)
+        elif  isinstance(typ, type) and issubclass(typ, ModelConfig_): # and (sub is None or len(sub) == 0):
+            typ = make_model_config(model_name=model_name)
 
         # Check if the field type is a union
         if get_origin(typ) is Union and (sub is None or (isinstance(sub, dict) and len(sub) == 0)):
@@ -176,6 +181,7 @@ class Experiment:
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
     model_dir: Path = None
+    
     _resume_from: str = "Pass the model_dir or wandb run (wandb:project/username/run_id) to continue training from, the following model dir must exist in the current file system."
     _log_to_same_experiment: str = "If true"
     _name_prefix: str = field(init=True, default="")
@@ -188,7 +194,7 @@ class Experiment:
     def __init__(self, *args, **kwargs):
         # Call Trainer's constructor so that 'model', 'data' etc. are set up
         self.trainer = kwargs.get("trainer") or dataclass_from_dict(TrainerConfig, kwargs)
-        self.model = kwargs.get("model") or  make_model_config(**kwargs)
+        self.model = kwargs.get("model") or  dataclass_from_dict(make_model_config(**kwargs), kwargs)
         self.data = kwargs.get("data") or dataclass_from_dict(DataConfig, kwargs)
         self.logger = kwargs.get("logger") or dataclass_from_dict(LoggerConfig, kwargs)  
         self.lmc = kwargs.get("lmc") or dataclass_from_dict(LMCConfig, kwargs)
@@ -315,6 +321,8 @@ class Trainer(Experiment):
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
 @dataclass(init=False)
 class Finetuner(Trainer):

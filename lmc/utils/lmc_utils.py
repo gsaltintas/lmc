@@ -15,7 +15,7 @@ from tqdm import tqdm
 from lmc.config import Config
 from lmc.data.data_stats import DatasetRegistry
 from lmc.permutations.activation_alignment import activation_matching
-from lmc.permutations.alignment_methods import weight_matching
+from lmc.permutations.weight_alignment import weight_matching
 from lmc.utils.setup_training import Iterator
 
 
@@ -280,6 +280,8 @@ def check_lmc(
                         res_df = results_perm_wm
                     # Activation matching
                     else:
+                        if ps.acts_to_perms is None:
+                            continue
                         # todo: rename this activation_matching_samples
                         perm = activation_matching(
                             ps,
@@ -331,8 +333,11 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
     total_loss = 0.0
     total_tokens = 0
     total_correct = 0
-
+    cnt = 0
     for batch in loader:
+        cnt += 1
+        if cnt == 3:
+            break
         # Ensure all tensors are on the right device
         batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v 
                 for k, v in batch.items()}

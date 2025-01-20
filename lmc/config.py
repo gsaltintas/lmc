@@ -416,7 +416,9 @@ class DataConfig(Config):
         "cifar10", "mnist", "cifar100", "tiny-imagenet",  "cinic10", "imagenet",
         
         # Language datasets - Text Classification/Regression (CR)
-        "snli", "scitail", "glue",
+        "snli", "scitail",
+        "cola", "sst2", "mrpc", "qqp", "mnli", "qnli", "rte", "wnli", "stsb",
+        # "glue/cola", "glue/sst2", "glue/mrpc", "glue/qqp", "glue/mnli", "glue/qnli", "glue/rte", "glue/wnli", "glue/stsb",
         
         # Language datasets - Question Answering (QA)
         "squad_v1", "squad_v2", "newsqa", "hotpotqa", 
@@ -471,9 +473,6 @@ class DataConfig(Config):
     enable_back_translation: bool = False
     translation_languages: List[str] = field(default_factory=lambda: ["de", "fr"])
     
-    # GLUE specific settings
-    glue_task: Optional[str] = None
-
     # Dataset splits
     validation_split: float = 0.1
     test_split: float = 0.1
@@ -532,8 +531,6 @@ class DataConfig(Config):
     def get_num_labels(self) -> int:
         """Get number of labels/classes for the dataset"""
         config :Union[VisionConfig, LanguageConfig]= DatasetRegistry.get_dataset_info(self.dataset)
-        if self.dataset == "glue" and self.glue_task:
-            return DatasetRegistry.glue.get(f"glue/{self.glue_task}").classes
         return config.classes
     
     def get_num_in_channels(self) -> int:
@@ -623,7 +620,8 @@ class Model:
 
 @dataclass
 class ModelConfig_(Config):
-    model_name: str = field(init=True, kw_only=True)
+    # model_name: str = field(init=True, kw_only=True)
+    model_name: str = "mlp/64x2"
 
     norm: Norms = None
     act: Activations = "relu"
@@ -677,7 +675,7 @@ class MLPConfig(ModelConfig_):
 def make_model_config(**kwargs) -> Type:
     model_name = maybe_get_arg("model_name")
     if model_name is None:
-        model_name = kwargs.get("model_name", None)
+        model_name = kwargs.get("model_name", "mlp")
     model_name = str(model_name)
     model_cls = MLPConfig
     if "mlp" in model_name:
