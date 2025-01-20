@@ -16,6 +16,7 @@ from .utils import PermSpec, PermType, get_permutation_sizes, outer_product
 
 logger = logging.getLogger("act-align")
 
+
 @torch.no_grad()
 def get_activations_yield(
     models: nn.Module, dataloader: torch.utils.data.DataLoader
@@ -24,10 +25,13 @@ def get_activations_yield(
     device = models[0].device
     for batch in dataloader:
         if is_language_model:
-            batch = {k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()}
+            batch = {
+                k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
             yield [model(**batch) for model in models]
         else:
+            x, _ = batch
             x = x.to(device)
             yield [model(x) for model in models]
 
@@ -52,10 +56,12 @@ def register_hooks(
 
     return forward_hooks
 
+
 def remove_hooks(hooks: List[torch.utils.hooks.RemovableHandle]) -> None:
     logger.debug("Removing hooks")
     for hook in hooks:
         hook.remove()
+
 
 def register_activation_hooks(
     model: nn.Module,
@@ -81,6 +87,7 @@ def register_activation_hooks(
 
     return forward_hooks
 
+
 @torch.no_grad()
 def activation_matching(
     ps: PermSpec,
@@ -91,41 +98,62 @@ def activation_matching(
     kernel_func: callable = outer_product,
     num_samples: int = -1,
     perm_method: Literal["lsa", "sinkhorn", "sinkhorn_lsa"] = "lsa",
-    sinkhorn_regularizer: Union[None, float, Dict[str, float]] = None
+    sinkhorn_regularizer: Union[None, float, Dict[str, float]] = None,
 ) -> PermType:
-    """ Matches model_b's parameters to that of model_b based on their activations """
+    """Matches model_b's parameters to that of model_b based on their activations"""
     log_fn = logger.info if verbose else logger.debug
     log_fn("Starting activation alignment")
-    cost_matrix, act_shapes = get_activations_cost_matrix(ps, model_a, model_b, dataloader, kernel_func, num_samples)
+    cost_matrix, act_shapes = get_activations_cost_matrix(
+        ps, model_a, model_b, dataloader, kernel_func, num_samples
+    )
 
     if sinkhorn_regularizer is None:
-        sinkhorn_regularizer = dict((p, 1./math.sqrt(act_shapes[p])) for p in act_shapes)
-    perms = solve_for_perms(cost_matrix, perm_method, verbose,  sinkhorn_regularizer)
+        sinkhorn_regularizer = dict(
+            (p, 1.0 / math.sqrt(act_shapes[p])) for p in act_shapes
+        )
+    perms = solve_for_perms(cost_matrix, perm_method, verbose, sinkhorn_regularizer)
     return perms
 
-def get_activations_cost_matrix(ps:PermSpec, model_a: nn.Module, model_b: nn.Module, dataloader: torch.utils.data.DataLoader, 
+
+def get_activations_cost_matrix(
+    ps: PermSpec,
+    model_a: nn.Module,
+    model_b: nn.Module,
+    dataloader: torch.utils.data.DataLoader,
     kernel_func: callable = outer_product,
-    num_samples: int = -1):
-    perm_sizes = get_permutation_sizes( model_a.model.state_dict(), ps)
+    num_samples: int = -1,
+):
+    perm_sizes = get_permutation_sizes(model_a.model.state_dict(), ps)
     cost_matrix = {p: np.zeros((n, n)) for p, n in perm_sizes.items()}
 
     activations_a = dict()
     activations_b = dict()
 
-    forward_hooks = register_activation_hooks(model_a, ps, activations_a, exclude_names=[]) + register_activation_hooks(model_b, ps, activations_b, exclude_names=[])
+    forward_hooks = register_activation_hooks(
+        model_a, ps, activations_a, exclude_names=[]
+    ) + register_activation_hooks(model_b, ps, activations_b, exclude_names=[])
 
     cnt = 0
     act_shapes = dict()
-    for i, (act_a, act_b) in enumerate(get_activations_yield([model_a, model_b], dataloader)):
+    for i, (act_a, act_b) in enumerate(
+        get_activations_yield([model_a, model_b], dataloader)
+    ):
         if num_samples != -1 and cnt > num_samples:
             break
         for batch_ind in range(len(act_a)):
             if num_samples != -1 and cnt > num_samples:
                 break
             for module, p in ps.acts_to_perms.items():
-                sample_a = activations_a[module][batch_ind].flatten(1).detach().cpu().numpy()
-                sample_b = activations_b[module][batch_ind].flatten(1).detach().cpu().numpy()
-                c = kernel_func(sample_a, sample_b,)
+                sample_a = (
+                    activations_a[module][batch_ind].flatten(1).detach().cpu().numpy()
+                )
+                sample_b = (
+                    activations_b[module][batch_ind].flatten(1).detach().cpu().numpy()
+                )
+                c = kernel_func(
+                    sample_a,
+                    sample_b,
+                )
                 cost_matrix[p] += c
                 act_shapes[p] = sample_a.shape[1]
 
@@ -135,7 +163,8 @@ def get_activations_cost_matrix(ps:PermSpec, model_a: nn.Module, model_b: nn.Mod
     for p in cost_matrix:
         cost_matrix[p] /= cnt
     remove_hooks(forward_hooks)
-    return cost_matrix,act_shapes
+    return cost_matrix, act_shapes
+
 
 def activation_matching_old(
     ps: PermSpec,
