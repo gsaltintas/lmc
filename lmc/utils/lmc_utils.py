@@ -14,6 +14,7 @@ from tqdm import tqdm
 from lmc.config import Config
 from lmc.models.base_model import BaseModel
 from lmc.permutations.activation_alignment import activation_matching
+from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
 from lmc.utils.setup_training import Iterator
 
@@ -304,6 +305,7 @@ def check_lmc(
                             verbose=False,
                         )
                         res_df = results_perm_wm
+
                     # Activation matching
                     else:
                         if ps.acts_to_perms is None:
@@ -318,6 +320,18 @@ def check_lmc(
                             num_samples=config.lmc.activation_matching_samples,
                         )
                         res_df = results_perm_act_aligned
+
+                    if config.logger.report_permutation_stats:
+                        d = {
+                            "fixed_points_ratio": get_fixed_points_ratio(perm),
+                            "fixed_points_count": get_fixed_points_count(perm),
+                        }
+                        log_dct.update(
+                            {
+                                f"perm/{perm_method}-{other_ind}-{model_ind}/{key}": val
+                                for key, val in d.items()
+                            }
+                        )
                     permuted_ = prev_model._permute(perm, inplace=False)
                     results_perm = interpolate_evaluate(
                         ep,

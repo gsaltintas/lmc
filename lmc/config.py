@@ -669,9 +669,13 @@ class LoggerConfig(Config):
     level: Literal["debug", "info", "warning", "error", "critical"] = "info"
     profile: bool = False
     enforce_new_model_dir: bool = True
+    report_permutation_stats: bool = True
 
     _cleanup_after: str = "Pass true only if you want to delete the experiment directory after experiment is finished."
     _enforce_new_model_dir: str = "If true, creates a new model dir if model_dir already exists (helpful for finetuning settings)."
+    _report_permutation_stats: str = (
+        "If true, collects and logs statistics about the found permutation."
+    )
 
     def __post_init__(self):
         s = self.slurm_job_id
