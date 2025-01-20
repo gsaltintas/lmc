@@ -1,3 +1,4 @@
+import importlib
 import logging
 import math
 import os
@@ -285,7 +286,7 @@ def configure_lr_scheduler(
             optimizer=optimizer,
             max_lr=base_lr,
             total_steps=training_steps,
-            anneal_strategy="cost",
+            anneal_strategy="cos",
             pct_start=warmup_ratio,
         )
     elif lr_scheduler == "flat":
@@ -620,6 +621,11 @@ def setup_vision_loader(
     transforms_.append(transforms.Normalize(mean, std))
     transforms_ = transforms.Compose(transforms_)
     dataset_cls = dataset_conf.torch_dataset
+    if isinstance(dataset_cls, str):
+        func = dataset_cls.split(".")[-1]
+        module = ".".join(dataset_cls.split(".")[:-1])
+        dataset_cls = getattr(importlib.import_module(module), func) 
+        
     dataset = dataset_cls(
         root=data_conf.path,
         train=train,
@@ -640,6 +646,8 @@ def setup_vision_loader(
         num_workers=data_conf.num_workers,
         generator=g,
         worker_init_fn=seed_worker,
+        pin_memory=True,
+        prefetch_factor=2
     )
     return loader
 
@@ -666,7 +674,10 @@ def setup_model_dir(config: Trainer) -> Path:
         FileNotFoundError: If the specified `log_dir` does not exist.
     """
     if not config.logger.log_dir.exists():
-        raise FileNotFoundError(
+        if config.logger.log_dir.parent.exists():
+            config.logger.log_dir.mkdir()
+        else:
+            raise FileNotFoundError(
             f"Must provide an existing log_dir ({config.logger.log_dir})"
         )
     if config.model_dir is None:
@@ -975,6 +986,9 @@ def setup_iterators(
         el.extra_iterator = tqdm_cls(
             position=2 + 2 * i, desc="Extra iterator used for anything", colour="white"
         )
+        el.train_iterator = train_iterator
+        el.test_iterator = test_iterator
+        el.train_eval_iterator = train_eval_iterator
         el.train_iterator = train_iterator
         el.test_iterator = test_iterator
         el.train_eval_iterator = train_eval_iterator
