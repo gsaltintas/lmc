@@ -5,17 +5,30 @@ import os
 from dataclasses import MISSING, dataclass, field, fields, make_dataclass
 from pathlib import Path
 from pprint import pformat
-from typing import (Dict, List, Literal, Optional, Tuple, Type, Union,
-                    get_args, get_origin)
+from typing import (
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from rich.console import Console
 from rich.table import Table
 
-from lmc.data.data_stats import (MAX_SEQ_LENGTH_DICT, TASK_MAPPING,
-                                 DatasetRegistry, LanguageConfig, TaskType,
-                                 VisionConfig)
-from lmc.models.type_declaration import (MODEL_NAME_PATTERNS, Activations,
-                                         Inits, Norms)
+from lmc.data.data_stats import (
+    MAX_SEQ_LENGTH_DICT,
+    TASK_MAPPING,
+    DatasetRegistry,
+    LanguageConfig,
+    TaskType,
+    VisionConfig,
+)
+from lmc.models.type_declaration import MODEL_NAME_PATTERNS, Activations, Inits, Norms
 from lmc.utils.step import Step
 from lmc.utils.utils import pattern_matched
 
@@ -438,7 +451,7 @@ class DataConfig(Config):
         "tiny-imagenet",
         "cinic10",
         "cinic10_wo_cifar10",
-        "imagenet",
+        "imagenet1k",
         # Language datasets - Text Classification/Regression (CR)
         "snli",
         "scitail",
