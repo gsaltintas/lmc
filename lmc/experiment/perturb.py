@@ -32,7 +32,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         log_dct = dict()
         log_dct.update(
             {
-                f"static/l2_at_init/{i}": torch.norm(v).item()
+                f"static/init_l2/{i}/total": torch.norm(v).item()
                 for i, v in enumerate(self.models_at_init, start=1)
             }
         )
@@ -48,7 +48,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         for i, el in enumerate(self.training_elements, start=1):
             log_dct.update(
                 {
-                    f"static/l2_at_init/layers/{i}/{k}": torch.norm(v.flatten()).item()
+                    f"static/init_l2/{i}/layer/{k}": torch.norm(v.flatten()).item()
                     for k, v in el.model.named_parameters()
                     if v.requires_grad
                 }
@@ -109,31 +109,31 @@ class PerturbedTrainingRunner(TrainingRunner):
             if ind not in self.config.perturb_inds:
                 continue
             noise_stats = sample_noise_and_perturb(
-                self.config, el.model, el.perturb_seed, el.loss_fn
+                self.config, el.model, el.perturb_seed, el.loss_fn, ind
             )
-            noise_stats = {f"static/noise/{ind}-{k}": v for k, v in noise_stats.items()}
             log_dct.update(noise_stats)
             log_dct[f"step/model{ind}"] = el.curr_step
-            for num_data_points in [1, 5, -1]:
-                dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
-                avg_grad_norm, grad_count = get_average_grad_norm(
-                    el.model, dl, num_datapoints=num_data_points
-                )
-                log_dct[
-                    self.wandb_registry.get_metric(
-                        f"grad_norm_{ind}_on_{num_data_points}"
-                    ).log_name
-                ] = avg_grad_norm
-                log_dct[
-                    self.wandb_registry.get_metric(f"grad_count_{ind}").log_name
-                ] = grad_count
-                del dl
+            #TODO probably want to move gradient metrics to end of epoch
+            # for num_data_points in [1, 5, -1]:
+            #     dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
+            #     avg_grad_norm, grad_count = get_average_grad_norm(
+            #         el.model, dl, num_datapoints=num_data_points
+            #     )
+            #     log_dct[
+            #         self.wandb_registry.get_metric(
+            #             f"grad_norm_{ind}_on_{num_data_points}"
+            #         ).log_name
+            #     ] = avg_grad_norm
+            #     log_dct[
+            #         self.wandb_registry.get_metric(f"grad_count_{ind}").log_name
+            #     ] = grad_count
+            #     del dl
             self.logger.info(
                 "Model %d perturbed at %i with %f scaling, absolute l2 %f.",
                 ind,
                 el.curr_step,
                 self.config.perturb_scale,
-                log_dct[f"static/noise/{ind}-l2"],
+                log_dct[f"static/noise_l2/{ind}/total"],
             )
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:

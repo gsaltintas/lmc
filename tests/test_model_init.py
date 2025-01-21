@@ -11,16 +11,6 @@ from tests.base import BaseTest
 
 class TestModelInit(BaseTest):
 
-    def _params_equal(self, model_1, model_2):
-        sd_1 = model_1.state_dict()
-        sd_2 = model_2.state_dict()
-        if set(sd_1.keys()) != set(sd_2.keys()):
-            return False
-        for k, v in sd_1.items():
-            if not torch.allclose(v, sd_2[k]):
-                return False
-        return True
-
     def test_model_init(self, **kwargs):
         # check that experiment 
         config = PerturbedTrainer.from_dict(
@@ -41,15 +31,15 @@ class TestModelInit(BaseTest):
         exp_2 = PerturbedTrainingRunner(config)
         exp_1.setup()
         exp_2.setup()
-        self.assertTrue(self._params_equal(exp_1.training_elements[0].model, exp_2.training_elements[0].model))
-        self.assertTrue(self._params_equal(exp_1.training_elements[1].model, exp_2.training_elements[1].model))
-        self.assertFalse(self._params_equal(exp_1.training_elements[0].model, exp_1.training_elements[1].model))
+        self.assertTrue(self.state_dicts_equal(exp_1.training_elements[0].model.state_dict(), exp_2.training_elements[0].model.state_dict()))
+        self.assertTrue(self.state_dicts_equal(exp_1.training_elements[1].model.state_dict(), exp_2.training_elements[1].model.state_dict()))
+        self.assertFalse(self.state_dicts_equal(exp_1.training_elements[0].model.state_dict(), exp_1.training_elements[1].model.state_dict()))
         seed_everything(exp_1.config.seeds.seed1)
         model, _ = configure_model(config, device=exp_1.device, seed=exp_1.config.seeds.seed1)
-        self.assertTrue(self._params_equal(exp_1.training_elements[0].model, model))
+        self.assertTrue(self.state_dicts_equal(exp_1.training_elements[0].model.state_dict(), model.state_dict()))
         seed_everything(exp_1.config.seeds.seed2)
         model, _ = configure_model(config, device=exp_1.device, seed=exp_1.config.seeds.seed2)
-        self.assertTrue(self._params_equal(exp_1.training_elements[1].model, model))
+        self.assertTrue(self.state_dicts_equal(exp_1.training_elements[1].model.state_dict(), model.state_dict()))
 
 
 if __name__ == "__main__":

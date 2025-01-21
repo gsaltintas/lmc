@@ -67,6 +67,9 @@ class BaseTest(unittest.TestCase):
             os.path.relpath(os.path.dirname(os.path.realpath(__file__)), os.getcwd())
         )
         self.log_dir = test_path / "tmp"
+        # remove log dir if it already exists
+        if self.log_dir.exists():
+            rmtree(self.log_dir)
         self.log_dir.mkdir(exist_ok=True)
 
         self.data_dir = test_path / "data"
@@ -186,4 +189,13 @@ class BaseTest(unittest.TestCase):
         result = run_command(command)
         self.assertFalse(command_result_is_error(result))
         return self.get_summary_value(model_dir, key_to_return)
+
+    @staticmethod
+    def state_dicts_equal(sd_1, sd_2):
+        if set(sd_1.keys()) != set(sd_2.keys()):
+            return False
+        for k, v in sd_1.items():
+            if not torch.allclose(v, sd_2[k]):
+                return False
+        return True
 

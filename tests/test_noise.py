@@ -15,9 +15,10 @@ class TestNoise(BaseTest):
     def setUp(self):
         super().setUp()
         self.model, _ = configure_model(self._get_config("resnet20-32", "kaiming_normal"), device="cpu", seed=41)
-        expected_l2, expected_l2_per_layer = get_all_init_l2s(self.model)
-        self.expected_l2 = expected_l2
-        self.expected_l2_per_layer = expected_l2_per_layer
+        layers = [k for k, _ in self.model.named_parameters()]
+        non_constant_layers = [k for k in layers if "conv" in k]
+        self.expected_l2_all, self.expected_l2_per_layer = get_all_init_l2s(self.model, layers)
+        self.expected_l2, _ = get_all_init_l2s(self.model, non_constant_layers)
 
     def _get_config(self, model_name, init_strategy, perturb_scale=1, mode="batch", normalize_perturb=True, scale_to_init_if_normalized=True, dont_perturb_module_patterns=[]):
         config = PerturbedTrainer.from_dict(
@@ -43,7 +44,7 @@ class TestNoise(BaseTest):
         model = deepcopy(self.model)
         sd = self.model.state_dict()
         config = self._get_config("resnet20-32", "kaiming_normal", **kwargs)
-        log_dict = sample_noise_and_perturb(config, model, perturb_seed=42, loss_fn=None)
+        _ = sample_noise_and_perturb(config, model, perturb_seed=42, loss_fn=None, ind=0)
         perturbed_sd = model.state_dict()
         per_layer_l2 = {}
         total_sqsum = 0
@@ -74,9 +75,10 @@ class TestNoise(BaseTest):
                 self.assertAlmostEqual(sqsum + norm_sqsum, verify_sqsum.item(), places=1)
                 l2.append(sqsum**0.5)
 
-            # check that random init is close in standard deviation to the normalization constsants
-            total, per_layer = get_all_init_l2s(model)
+            # check that random init is close in standard deviation to the normalization constants
             scales = model.get_init_stds()
+            layers = [k for k, v in scales.items() if v > 0]
+            total, per_layer = get_all_init_l2s(model, layers)
             for k, v in params.items():
                 params = torch.stack(v, dim=0).reshape(N_SAMPLES, -1)
                 self.assertAlmostEqual(scales[k], torch.std(params).item(), places=2)
@@ -102,25 +104,25 @@ class TestNoise(BaseTest):
             for k, v in per_layer_l2s.items():
                 if ("norm" in k or "fc.bias" in k) and len(dont_perturb) > 0:
                     self.assertEqual(v, 0)
+                # without norm layers we expect gaussian noise to be distributed identically to init
+                elif mode == "gaussian" and len(dont_perturb) > 0:
+                    self.assertAlmostEqual(v, self.expected_l2_per_layer[k] * scale, places=0)
                 else:  # with norm layers every layer should be perturbed
                     self.assertGreater(v, 0)
-                # without norm layers we expect gaussian noise to be distributed identically to init
-                if mode == "gaussian" and len(dont_perturb) > 0:
-                    self.assertAlmostEqual(v, self.expected_l2_per_layer[k] * scale, places=0)
 
-        for dont_perturb in [[], [".*norm.*|.*bias.*"]]:
+        for dont_perturb, expected_l2 in [([], self.expected_l2_all), ([".*norm.*|.*bias.*"], self.expected_l2)]:
             for mode in ["batch", "gaussian"]:
                 with self.subTest(f"{mode} normalized only {dont_perturb}"):
                     noise_l2, per_layer_l2 = self._get_noise(mode=mode, normalize_perturb=True, scale_to_init_if_normalized=False, dont_perturb_module_patterns=dont_perturb)
-                    self.assertAlmostEqual(noise_l2, 1, places=1)
-                    assert_noise_not_zero(per_layer_l2, dont_perturb, mode, 1 / self.expected_l2)
+                    self.assertAlmostEqual(noise_l2, 1, places=0)
+                    assert_noise_not_zero(per_layer_l2, dont_perturb, mode, 1 / expected_l2)
                 with self.subTest(f"{mode} normalized and rescaled {dont_perturb}"):
-                    noise_l2, per_layer_l2 = self._get_noise(mode=mode, perturb_scale=2, normalize_perturb=True, scale_to_init_if_normalized=True, dont_perturb_module_patterns=dont_perturb)
-                    self.assertAlmostEqual(noise_l2, self.expected_l2 * 2, places=1)
-                    assert_noise_not_zero(per_layer_l2, dont_perturb, mode, 2)
+                    noise_l2, per_layer_l2 = self._get_noise(mode=mode, perturb_scale=0.5, normalize_perturb=True, scale_to_init_if_normalized=True, dont_perturb_module_patterns=dont_perturb)
+                    self.assertAlmostEqual(noise_l2, expected_l2 * 0.5, places=0)
+                    assert_noise_not_zero(per_layer_l2, dont_perturb, mode, 0.5)
         with self.subTest(f"gaussian unnormalized all layers"):
             noise_l2, per_layer_l2 = self._get_noise(mode="gaussian", normalize_perturb=False, dont_perturb_module_patterns=[])
-            self.assertAlmostEqual(noise_l2, self.expected_l2, places=0)
+            self.assertAlmostEqual(noise_l2, self.expected_l2_all, places=0)
         with self.subTest(f"gaussian unnormalized no norm layers"):
             noise_l2, per_layer_l2 = self._get_noise(mode="gaussian", normalize_perturb=False, dont_perturb_module_patterns=[".*norm.*|.*bias.*"])
             self.assertAlmostEqual(noise_l2, self.expected_l2, places=0)

@@ -5,7 +5,9 @@ import torch
 from torch.utils.data import Dataset
 
 from lmc.config import DataConfig
-from lmc.utils.setup_training import setup_loader
+from lmc.experiment_config import Trainer
+from lmc.utils.lmc_utils import repair
+from lmc.utils.setup_training import configure_model, setup_loader
 from tests.base import BaseTest
 
 
@@ -100,6 +102,57 @@ class TestDataloader(BaseTest):
                 )
             )
         )
+
+    def _get_running_stats(self, model):
+        stats = {}
+        for k, v in model.state_dict().items():
+            if "running_mean" in k or "running_var" in k:
+                stats[k] = v.detach().clone()
+        return stats
+
+    def test_repair(self):
+        config = Trainer.from_dict(
+            dict(
+                n_models=1,
+                training_steps="1ep",
+                model_name="resnet20-8",
+                dataset="cifar10",
+                path=self.data_dir / "cifar10",
+                norm="batchnorm",
+            )
+        )
+        config.model.norm = "batchnorm"  # TODO hack as from_dict doesn't set this, see tests in test_config.py
+        model, _ = configure_model(config, device="cpu", seed=41)
+        init_stats = self._get_running_stats(model)
+        default_stats = {
+            k: torch.zeros_like(v) if "mean" in k else torch.ones_like(v)
+            for k, v in init_stats.items()
+        }
+        self.assertTrue(self.state_dicts_equal(init_stats, default_stats))
+        # check that repair changes the running stats
+        model = repair(model, self._get_dataloader())
+        ref_stats = self._get_running_stats(model)
+        self.assertFalse(self.state_dicts_equal(init_stats, ref_stats))
+        # check that running repair twice gives same stats
+        model = repair(model, self._get_dataloader())
+        stats = self._get_running_stats(model)
+        self.assertTrue(self.state_dicts_equal(ref_stats, stats))
+
+        # check first norm layer's outputs
+        model.eval()
+        (_, conv), (_m, norm) = list(model.named_modules())[2:4]
+        data = torch.cat([x for x, _ in self._get_dataloader()], dim=0)
+        pre_activation = norm(conv(data))
+        pre_activation = pre_activation.transpose(1, 0).reshape(
+            pre_activation.shape[1], -1
+        )
+        norm_mean, norm_std = (
+            torch.mean(pre_activation, dim=-1),
+            torch.std(pre_activation, dim=-1),
+        )
+        for m, s in zip(norm_mean, norm_std):
+            self.assertAlmostEqual(m.item(), 0, places=2)
+            self.assertAlmostEqual(s.item(), 1, places=2)
 
 
 if __name__ == "__main__":
