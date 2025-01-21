@@ -30,6 +30,8 @@ class MetricCategory(Enum):
     ## LANGUAGE
     PERPLEXITY = "perplexity"
     LOSS = "loss"
+    CORRELATION = "correlation"
+    NLP_OTHER = "nlp_other"
 
 
 class Split(Enum):
@@ -212,6 +214,30 @@ class WandbMetricsRegistry(MetricsRegistry):
                     "$\\mathrm{{CE}}^{{{}}}_{{\\mathrm{{{}}}}}$",
                     "model{}-ce",
                     MetricCategory.CROSS_ENTROPY,
+                ),
+                "exact_match": MetricTemplate(
+                    "model{}/{}/exact_match",
+                    "Exact Match",
+                    "model{}-em",
+                    MetricCategory.NLP_OTHER,
+                ),
+                "f1": MetricTemplate(
+                    "model{}/{}/f1",
+                    "F1",
+                    "model{}-f1",
+                    MetricCategory.NLP_OTHER,
+                ),
+                "pearson_correlation": MetricTemplate(
+                    "model{}/{}/pearson_correlation",
+                    "Pearson Correlation",
+                    "model{}-pearson",
+                    MetricCategory.CORRELATION,
+                ),
+                "spearman_correlation": MetricTemplate(
+                    "model{}/{}/spearman_correlation",
+                    "Spearman Correlationmodel{}-spearman",
+                    "model{}-spearman",
+                    MetricCategory.CORRELATION,
                 ),
             }
         )
