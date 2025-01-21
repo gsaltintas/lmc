@@ -18,6 +18,7 @@ class TaskType(Enum):
     SEQUENCE_PAIR = "sequence_pair"
     NATURAL_LANGUAGE_INFERENCE = "natural_language_inference"
     SEQUENCE_LABELING = "sequence_labeling"
+    REGRESSION = "regression"
 
 
 # Vision Registry
@@ -555,7 +556,7 @@ class GLUERegistry(BaseRegistry):
         "stsb": LanguageConfig(
             samples=5749,
             classes=1,  # Regression task
-            task_type=TaskType.SEQUENCE_PAIR,
+            task_type=TaskType.REGRESSION,  # Must be regression            task_type=TaskType.SEQUENCE_PAIR,
             max_seq_length=128,
             hf_path="nyu-mll/glue",
             hf_config="stsb",
@@ -567,7 +568,6 @@ class GLUERegistry(BaseRegistry):
             metrics=[
                 "pearson_correlation",
                 "spearman_correlation",
-                "accuracy",
             ],  # STS-B uses Pearson and Spearman correlations
         ),
     }

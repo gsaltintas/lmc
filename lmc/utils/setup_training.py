@@ -609,6 +609,7 @@ def get_task_preprocessor(
         TaskType.QUESTION_ANSWERING: preprocess_qa,
         TaskType.NATURAL_LANGUAGE_INFERENCE: preprocess_nli,
         TaskType.SEQUENCE_LABELING: preprocess_sequence_labeling,
+        TaskType.REGRESSION: preprocess_sequence_pair,
     }
 
     return preprocessors[task_type]

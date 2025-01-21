@@ -242,7 +242,13 @@ class TrainingRunner(ExperimentManager):
             loss = outputs.loss
             start_logits = outputs.start_logits
             end_logits = outputs.end_logits
-
+        elif self.config.data.task_type == TaskType.REGRESSION:
+            # Regression tasks (like STS-B)
+            outputs = element.model(**batch)
+            loss = outputs.loss
+            logits = outputs.logits.squeeze(
+                -1
+            )  # Remove last dimension since it's regression
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
 
@@ -259,7 +265,10 @@ class TrainingRunner(ExperimentManager):
             metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
             dataset = self.config.data.dataset_info
             if dataset.metrics:
-                predictions = outputs.logits.argmax(1)
+                if self.config.data.task_type == TaskType.REGRESSION:
+                    predictions = outputs.logits
+                else:
+                    predictions = outputs.logits.argmax(1)
                 d = compute_metrics(
                     dataset.metrics, predictions.detach(), batch["labels"].detach()
                 )
@@ -520,7 +529,10 @@ class TrainingRunner(ExperimentManager):
 
             # Update dataset-specific metrics
             if dataset.metrics:
-                predictions = torch.argmax(outputs.logits, dim=-1).detach()
+                if self.config.data.task_type == TaskType.REGRESSION:
+                    predictions = outputs.logits
+                else:
+                    predictions = outputs.logits.argmax(1)
 
                 metric_results = compute_metrics(
                     dataset.metrics,
