@@ -13,9 +13,15 @@ from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.lmc_utils import check_lmc
-from lmc.utils.metrics import AverageMeter, mixup_topk_accuracy, report_results
+from lmc.utils.metrics import (
+    AverageMeter,
+    Metrics,
+    compute_metrics,
+    mixup_topk_accuracy,
+    report_results,
+)
 from lmc.utils.setup_training import save_model_opt, setup_experiment
-from lmc.utils.training_element import TrainingElements
+from lmc.utils.training_element import TrainingElement, TrainingElements
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -224,12 +230,12 @@ class TrainingRunner(ExperimentManager):
         elif self.config.data.task_type in [
             TaskType.CLASSIFICATION,
             TaskType.NATURAL_LANGUAGE_INFERENCE,
+            TaskType.SEQUENCE_PAIR,
         ]:
             # Classification tasks
             outputs = element.model(**batch)
             loss = outputs.loss
             logits = outputs.logits
-
         elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
             # Question answering
             outputs = element.model(**batch)
@@ -251,30 +257,40 @@ class TrainingRunner(ExperimentManager):
         # Update metrics based on task
         with torch.no_grad():
             metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
-            if self.config.data.task_type == TaskType.GENERATION:
-                perplexity = torch.exp(loss)
-                metrics_kwargs["perplexity"] = perplexity.item()
-
-            elif self.config.data.task_type in [
-                TaskType.CLASSIFICATION,
-                TaskType.NATURAL_LANGUAGE_INFERENCE,
-            ]:
-                acc, topk = mixup_topk_accuracy(
-                    logits.detach(), batch["labels"].detach(), None, k=3, avg=True
+            dataset = self.config.data.dataset_info
+            if dataset.metrics:
+                predictions = outputs.logits.argmax(1)
+                d = compute_metrics(
+                    dataset.metrics, predictions.detach(), batch["labels"].detach()
                 )
-                metrics_kwargs["total_acc"] = acc.item()
-                metrics_kwargs["total_topk"] = topk.item()
+                metrics_kwargs.update(d)
+            else:
+                if self.config.data.task_type == TaskType.GENERATION:
+                    perplexity = torch.exp(loss)
+                    metrics_kwargs["perplexity"] = perplexity.item()
 
-            elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
-                # For QA, we typically track EM (Exact Match) and F1 score
-                # This would require post-processing with the tokenizer
-                start_pred = torch.argmax(start_logits, dim=-1)
-                end_pred = torch.argmax(end_logits, dim=-1)
-                # Simplified metric for training (just position accuracy)
-                start_correct = (start_pred == batch["start_positions"]).float().mean()
-                end_correct = (end_pred == batch["end_positions"]).float().mean()
-                avg_correct = (start_correct + end_correct) / 2
-                metrics_kwargs["accuracy"] = avg_correct.item()
+                elif self.config.data.task_type in [
+                    TaskType.CLASSIFICATION,
+                    TaskType.NATURAL_LANGUAGE_INFERENCE,
+                ]:
+                    acc, topk = mixup_topk_accuracy(
+                        logits.detach(), batch["labels"].detach(), None, k=3, avg=True
+                    )
+                    metrics_kwargs["total_acc"] = acc.item()
+                    metrics_kwargs["total_topk"] = topk.item()
+
+                elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
+                    # For QA, we typically track EM (Exact Match) and F1 score
+                    # This would require post-processing with the tokenizer
+                    start_pred = torch.argmax(start_logits, dim=-1)
+                    end_pred = torch.argmax(end_logits, dim=-1)
+                    # Simplified metric for training (just position accuracy)
+                    start_correct = (
+                        (start_pred == batch["start_positions"]).float().mean()
+                    )
+                    end_correct = (end_pred == batch["end_positions"]).float().mean()
+                    avg_correct = (start_correct + end_correct) / 2
+                    metrics_kwargs["accuracy"] = avg_correct.item()
 
         element.metrics.update(**metrics_kwargs)
         return loss.detach()
@@ -315,6 +331,7 @@ class TrainingRunner(ExperimentManager):
 
             # Save checkpoint
             ckpt_name = f"checkpoints/ep-{self.ep}.ckpt"
+            # TODO: bring back save_freq logic
             save_model_opt(
                 element.model,
                 element.opt,
@@ -362,49 +379,51 @@ class TrainingRunner(ExperimentManager):
 
         return log_dct
 
-    def _eval_language(self, element, model_idx: int) -> Dict[str, float]:
+    def _eval_language(
+        self, element: TrainingElement, model_idx: int
+    ) -> Dict[str, float]:
         """Language-specific evaluation logging"""
         task_type = self.config.data.task_type
         # import code; code.interact(local=locals()|globals())
         # Base metrics all tasks have
+        ## log train metrics
         log_dct = {
-            f"model{model_idx}/train/cross_entropy": element.metrics.cross_entropy.get_avg(
-                percentage=False
-            )
+            f"model{model_idx}/train/{key}": val
+            for (key, val) in element.metrics.get_metrics(percentage=False).items()
         }
 
-        # Add task-specific metrics
-        if task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
-            log_dct.update(
-                {
-                    f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
-                        percentage=False
-                    )
-                }
-            )
-        elif task_type == TaskType.QUESTION_ANSWERING:
-            log_dct.update(
-                {
-                    f"model{model_idx}/train/em": element.metrics.exact_match.get_avg(
-                        percentage=False
-                    ),
-                    # todo: f1
-                    f"model{model_idx}/train/f1": element.metrics.f1_score.get_avg(
-                        percentage=False
-                    ),
-                    f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(
-                        percentage=False
-                    ),
-                }
-            )
-        elif task_type == TaskType.GENERATION:
-            log_dct.update(
-                {
-                    f"model{model_idx}/train/perplexity": element.metrics.perplexity.get_avg(
-                        percentage=False
-                    )
-                }
-            )
+        # # Add task-specific metrics
+        # if task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
+        #     log_dct.update(
+        #         {
+        #             f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
+        #                 percentage=False
+        #             )
+        #         }
+        #     )
+        # elif task_type == TaskType.QUESTION_ANSWERING:
+        #     log_dct.update(
+        #         {
+        #             f"model{model_idx}/train/em": element.metrics.exact_match.get_avg(
+        #                 percentage=False
+        #             ),
+        #             # todo: f1
+        #             f"model{model_idx}/train/f1": element.metrics.f1_score.get_avg(
+        #                 percentage=False
+        #             ),
+        #             f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(
+        #                 percentage=False
+        #             ),
+        #         }
+        #     )
+        # elif task_type == TaskType.GENERATION:
+        #     log_dct.update(
+        #         {
+        #             f"model{model_idx}/train/perplexity": element.metrics.perplexity.get_avg(
+        #                 percentage=False
+        #             )
+        #         }
+        #     )
 
         # Run test evaluation
         with torch.no_grad():
@@ -480,6 +499,50 @@ class TrainingRunner(ExperimentManager):
     def _test_language(self, model, loader, iterator: tqdm):
         """Language-specific testing"""
         model.eval()
+        dataset = self.config.data.dataset_info
+
+        # Initialize metrics dictionary with cross_entropy
+        metrics = Metrics()
+
+        iterator.reset()
+        for batch in loader:
+            batch = {
+                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            iterator.update()
+
+            outputs = model(**batch)
+            n = batch["input_ids"].shape[0]
+            metrics_kwargs = {"n": n}
+            # Always track loss
+            metrics_kwargs["cross_entropy"] = outputs.loss.item()
+
+            # Update dataset-specific metrics
+            if dataset.metrics:
+                predictions = torch.argmax(outputs.logits, dim=-1).detach()
+
+                metric_results = compute_metrics(
+                    dataset.metrics,
+                    predictions.detach(),
+                    batch["labels"].detach(),
+                )
+                metrics_kwargs.update(metric_results)
+            metrics.update(**metrics_kwargs)
+        # Prepare results dict - only include metrics that were updated
+        res = metrics.get_metrics(percentage=False)
+        # {
+        #     k: v.get_avg(percentage=False) for k, v in metrics.items() if v.count > 0
+        # }
+
+        iterator.set_postfix(res)
+        iterator.refresh()
+        return res
+
+    @torch.no_grad()
+    def _test_language_old(self, model, loader, iterator: tqdm):
+        """Language-specific testing"""
+        model.eval()
         task_type = self.config.data.task_type
         metrics = {
             "cross_entropy": AverageMeter(),
@@ -540,31 +603,3 @@ class TrainingRunner(ExperimentManager):
             return self._test_language(model, loader, iterator)
         else:
             return self._test_vision(model, loader, iterator)
-        model.eval()
-        total_acc, total_topk, cross_entropy = (
-            AverageMeter(),
-            AverageMeter(),
-            AverageMeter(),
-        )
-
-        iterator.reset()
-        for ims, targs in loader:
-            ims = ims.to(self.device)
-            targs = targs.to(self.device)
-            iterator.update()
-            preds = model(ims)
-            loss = self.test_loss_fn(preds, targs)
-
-            cross_entropy.update(loss.item(), ims.shape[0])
-            acc, topk = mixup_topk_accuracy(preds, targs, k=3, avg=True)
-            total_acc.update(acc.item(), ims.shape[0])
-            total_topk.update(topk.item(), ims.shape[0])
-
-        res = {
-            "cross_entropy": cross_entropy.get_avg(percentage=False),
-            "accuracy": total_acc.get_avg(percentage=False),
-            "top_3_accuracy": total_topk.get_avg(percentage=False),
-        }
-        iterator.set_postfix(res)
-        iterator.refresh()
-        return res

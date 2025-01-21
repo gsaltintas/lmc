@@ -1,7 +1,7 @@
 """Dataset statistics and configurations for both vision and language tasks."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import ClassVar, Dict, List, Optional, Union
 
@@ -47,6 +47,7 @@ class LanguageConfig:
     hf_config: Optional[str] = None
     splits: Dict[str, str] = None
     vocab_size: Optional[int] = None
+    metrics: List[str] = field(default_factory=list)  # Add this field
 
     def is_generation(self):
         return self.task_type == TaskType.GENERATION
@@ -472,6 +473,10 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="cola",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=[
+                "matthews_correlation",
+                "accuracy",
+            ],  # CoLA uses Matthews Correlation
         ),
         "sst2": LanguageConfig(
             samples=67349,
@@ -481,6 +486,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="sst2",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy"],  # SST-2 uses accuracy
         ),
         "mrpc": LanguageConfig(
             samples=3668,
@@ -490,6 +496,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="mrpc",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy", "f1"],  # MRPC uses both accuracy and F1
         ),
         "qqp": LanguageConfig(
             samples=363849,
@@ -499,6 +506,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="qqp",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy", "f1"],  # QQP uses both accuracy and F1
         ),
         "mnli": LanguageConfig(
             samples=392702,
@@ -512,6 +520,7 @@ class GLUERegistry(BaseRegistry):
                 "validation": "validation_matched",
                 "test": "test_matched",
             },
+            metrics=["accuracy"],
         ),
         "qnli": LanguageConfig(
             samples=104743,
@@ -521,6 +530,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="qnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy"],
         ),
         "rte": LanguageConfig(
             samples=2490,
@@ -530,6 +540,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="rte",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy"],
         ),
         "wnli": LanguageConfig(
             samples=635,
@@ -539,6 +550,7 @@ class GLUERegistry(BaseRegistry):
             hf_path="nyu-mll/glue",
             hf_config="wnli",
             splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy"],
         ),
         "stsb": LanguageConfig(
             samples=5749,
@@ -549,9 +561,14 @@ class GLUERegistry(BaseRegistry):
             hf_config="stsb",
             splits={
                 "train": "train",
-                "validation": "validation_matched",
+                "validation": "validation",
                 "test": "test_matched",
             },
+            metrics=[
+                "pearson_correlation",
+                "spearman_correlation",
+                "accuracy",
+            ],  # STS-B uses Pearson and Spearman correlations
         ),
     }
 

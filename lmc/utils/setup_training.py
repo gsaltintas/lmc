@@ -437,7 +437,12 @@ def get_task_preprocessor(
                 text = text.lower()
             else:
                 text = [t.lower() for t in text]
-        return tokenizer(text, **tokenizer_kwargs)
+        tokenized = tokenizer(text, **tokenizer_kwargs)
+        # Add labels to the tokenized output
+        labels = examples.get("label", examples.get("labels", None))
+        if labels is not None:
+            tokenized["labels"] = labels
+        return tokenized
 
     def preprocess_sequence_pair(examples):
         tokenizer_kwargs = {
@@ -446,13 +451,33 @@ def get_task_preprocessor(
             "max_length": data_conf.max_seq_length,
         }
         # Make sure we get lists of strings
-        text1 = examples.get("sentence1", examples.get("question", []))
-        text2 = examples.get("sentence2", examples.get("context", []))
+        text1 = examples.get(
+            "sentence1", examples.get("question", examples.get("question1", []))
+        )
+        text2 = examples.get(
+            "sentence2", examples.get("context", examples.get("question2", []))
+        )
 
         if data_conf.lowercase:
-            text1 = [t.lower() for t in text1]
-            text2 = [t.lower() for t in text2]
-        return tokenizer(text1, text2, **tokenizer_kwargs)
+            text1 = [t.lower() if t is not None else "" for t in text1]
+            text2 = [t.lower() if t is not None else "" for t in text2]
+        # Get labels
+
+        labels = examples.get("label", examples.get("labels", None))
+        # Filter out -1 labels or map them to a valid class
+        labels = [
+            l if l != -1 else 0 for l in labels
+        ]  # Map -1 to 0 or handle as needed
+
+        if labels is None:
+            raise ValueError(
+                "No labels found in dataset (looking for 'label' or 'labels' field)"
+            )
+        tokenized = tokenizer(text1, text2, **tokenizer_kwargs)
+
+        if labels is not None:
+            tokenized["labels"] = labels
+        return tokenized
 
     def preprocess_generation(examples):
         tokenizer_kwargs = {
@@ -510,14 +535,25 @@ def get_task_preprocessor(
             raise ValueError(
                 "No labels found in dataset (looking for 'label' or 'labels' field)"
             )
-
+        # TODO: pass these keys to datasetinfo
         # NLI typically has premise and hypothesis
-        premise = examples.get("premise", examples.get("sentence1", []))
-        hypothesis = examples.get("hypothesis", examples.get("sentence2", []))
+        premise = examples.get(
+            "premise",
+            examples.get(
+                "sentence1", examples.get("question", examples.get("question1", []))
+            ),
+        )
+        hypothesis = examples.get(
+            "hypothesis",
+            examples.get(
+                "sentence2", examples.get("sentence", examples.get("question2", []))
+            ),
+        )
 
         if data_conf.lowercase:
             premise = [p.lower() for p in premise]
             hypothesis = [h.lower() for h in hypothesis]
+
         # Tokenize inputs
         tokenized = tokenizer(premise, hypothesis, **tokenizer_kwargs)
 
@@ -928,9 +964,16 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         save_freq = config.trainer.save_freq
         seed_everything(seed)
         opt = configure_optimizer(config, model)
+        total_steps = max_steps.get_step(steps_per_epoch)
+        if (ga := config.trainer.gradient_accumulation_steps) > 1:
+            total_steps = int(total_steps / ga)
+            logger.info(
+                "Gradient accumulation steps %d, modifying lr scheduler accordingly.",
+                ga,
+            )
         scheduler = configure_lr_scheduler(
             opt,
-            max_steps.get_step(steps_per_epoch),
+            total_steps,
             config.trainer.opt.lr_scheduler,
             config.trainer.opt.warmup_ratio,
             {},

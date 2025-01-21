@@ -61,6 +61,10 @@ class PerturbedTrainingRunner(TrainingRunner):
     def reset_lr_schedule(
         self, element: TrainingElement, prev_max_steps: int = None
     ) -> None:
+        if self.config.trainer.opt.lr_scheduler != "triangle":
+            self.logger.error(
+                "Reset lr schedule is only implemented for triangle scheduler for now"
+            )
         current_lr = get_lr(element.opt)
         self.logger.info("Lr scheduler will continue from this point (%s).", current_lr)
         for g in element.opt.param_groups:
@@ -117,17 +121,13 @@ class PerturbedTrainingRunner(TrainingRunner):
             log_dct.update(noise_stats)
             log_dct[f"step/model{ind}"] = el.curr_step
             if has_batch_norm(el.model):
-                dl = setup_loader(
-                    self.config.data,
-                    train=True,
-                    evaluate=False,
-                    loader_seed=el.loader_seed,
-                )
+                dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
                 repair(el.model, dl)
                 self.logger.info(
                     "Model has batch norm, passing training data once to eliminate variance collapse."
                 )
-            for num_data_points in [1, 5, -1]:
+            for num_data_points in [1]:
+                # for num_data_points in [1, 5, -1]:
                 dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
                 avg_grad_norm, grad_count = get_average_grad_norm(
                     el.model, dl, num_datapoints=num_data_points

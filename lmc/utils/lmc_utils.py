@@ -26,7 +26,7 @@ def repair(model: BaseModel, loader: DataLoader) -> nn.Module:
     cnt = 0
     for m in model.modules():
         if isinstance(m, nn.BatchNorm2d):
-            m.momentum = None  # use simple average
+            # m.momentum = None  # use simple average
             m.reset_running_stats()
             cnt += 1
     if cnt == 0:
