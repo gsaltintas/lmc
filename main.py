@@ -1,7 +1,6 @@
 import argparse
 import logging
 import sys
-from dataclasses import fields
 from typing import Type
 
 from lmc.config import maybe_get_arg
@@ -9,8 +8,6 @@ from lmc.experiment.base import ExperimentManager
 from lmc.experiment.logreg import ActiveLearningLogisticRegressionSearch
 from lmc.experiment.perturb import PerturbedTrainingRunner
 from lmc.experiment.train import TrainingRunner
-from lmc.utils.setup_training import cleanup
-from wandb import Config
 
 logger = logging.getLogger("")
 

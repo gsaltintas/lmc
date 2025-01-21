@@ -174,8 +174,7 @@ def perturb_model(
             perturb_params[n] = p
             continue
         with torch.no_grad():
-            param_noise = noise_dct[n]
-            perturb_params[n] = p + param_noise
+            perturb_params[n] = p + noise_dct[n]
     if inplace:
         model.load_state_dict(perturb_params, strict=False)
     else:
@@ -190,16 +189,19 @@ def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
     return torch.linalg.norm(noise)
 
 
-def get_all_init_l2s(model) -> Tuple[float, Dict[str, float]]:
+def get_all_init_l2s(model, layers) -> Tuple[float, Dict[str, float]]:
     """Return standard deviation of specified layers at init,
     i.e. the expected L2 norm of the parameters minus their mean at init"""
     init_l2s = {}
     total_sqsum = 0
-    stds = model.get_init_stds(include_constant_params=False)
+    stds = model.get_init_stds(include_constant_params=True)
     for k, v in model.named_parameters():
-        sqsum = stds[k] ** 2 * v.nelement()
-        init_l2s[k] = sqsum**0.5
-        total_sqsum += sqsum
+        if k in layers:
+            sqsum = stds[k] ** 2 * v.nelement()
+            init_l2s[k] = sqsum**0.5
+            total_sqsum += sqsum
+        else:
+            init_l2s[k] = 0
     return total_sqsum**0.5, init_l2s
 
 
@@ -304,20 +306,16 @@ def get_average_grad_norm(
 def scale_noise(
     noise_dct: Dict[str, torch.Tensor],
     model,
+    layers,
     scale: float,
     normalize: bool,
     scale_to_init_if_normalized: bool,
 ):
     """Normalize the noise dict to have a fixed total l2 length"""
-    log_dct = {}
     # log expected l2 (std) and per-layer std
-    expected_l2, expected_layer_l2 = get_all_init_l2s(model)
-    log_dct["init_std"] = expected_l2
-    for k, v in expected_layer_l2.items():
-        log_dct[f"init_std/{k}"] = v
+    expected_l2, _ = get_all_init_l2s(model, layers)
     # log l2 of noise before scaling
     actual_norm = get_l2(noise_dct)
-    log_dct["l2"] = actual_norm
     # do the scaling
     if normalize:
         scale /= actual_norm
@@ -325,15 +323,11 @@ def scale_noise(
             scale *= expected_l2
     for name, n in noise_dct.items():
         noise_dct[name] = n * scale
-    # log l2 and per-layer l2 of scaled noise
-    log_dct["l2-scaled"] = get_l2(noise_dct)
-    for k, v in noise_dct.items():
-        log_dct[f"l2-scaled/{k}"] = get_l2(v)
-    return noise_dct, log_dct
+    return noise_dct
 
 
 def sample_noise_and_perturb(
-    config: PerturbedTrainer, model, perturb_seed: int, loss_fn: nn.Module
+    config: PerturbedTrainer, model, perturb_seed: int, loss_fn: nn.Module, ind: int
 ):
     layers = get_perturbed_layers(model, config.dont_perturb_module_patterns)
     if config.perturb_mode == "batch":
@@ -347,13 +341,17 @@ def sample_noise_and_perturb(
     elif config.perturb_mode == "gaussian":
         with temp_seed(perturb_seed):
             noise = get_gaussian_noise(model, layers=layers)
-    noise, log_dct = scale_noise(
+    noise = scale_noise(
         noise,
         model,
+        layers,
         config.perturb_scale,
         config.normalize_perturb,
         config.scale_to_init_if_normalized,
     )
+    # log l2 and per-layer l2 of scaled noise
+    log_dct = {f"static/noise_l2/{ind}/total": get_l2(noise)}
+    for k, v in noise.items():
+        log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
     perturb_model(model, noise)
-    log_dct["layers"] = layers
     return log_dct
