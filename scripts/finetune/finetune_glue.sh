@@ -23,6 +23,10 @@ if [[ "$DATASET" =~ ^(cola|mrpc|rte|stsb)$ ]]; then
     BS=32
     GRAD_ACCUM=8
     # STEPS="5ep"
+elif [[ "$DATASET" =~ ^(mnli)$ ]]; then
+    # MNLI is large (393k examples) and three-class, needs more steps
+    STEPS="4000st"  # Increase from default
+    GRAD_ACCUM=4  # Effective batch size = 512
 elif [[ "$DATASET" =~ ^(qqp|mnli)$ ]]; then
     BS=256
     # STEPS="2ep"
@@ -30,6 +34,7 @@ fi
 
 python main.py train \
     --model_name $MODEL \
+    --initialization_strategy=pretrained \
     --tokenizer $MODEL \
     --dataset $DATASET \
     --optimizer adamw \

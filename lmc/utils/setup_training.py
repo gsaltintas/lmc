@@ -214,7 +214,11 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
     if "t5" in conf.model_name.lower():
         model = T5(conf.model_name)
     elif "bert" in conf.model_name.lower():
-        model = Bert(conf.model_name, output_dim=out)
+        model = Bert(
+            conf.model_name,
+            output_dim=out,
+            initialization_strategy=conf.initialization_strategy,
+        )
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
         model = AutoModelForSequenceClassification.from_pretrained(
