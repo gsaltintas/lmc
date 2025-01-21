@@ -5,27 +5,38 @@ from typing import List, Mapping
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 from lmc.utils.metrics import Metrics
 from lmc.utils.step import Step
 
 
 class Iterator(tqdm):
-    """ dummy iterator class to use when tqdm is disabled """
+    """dummy iterator class to use when tqdm is disabled"""
+
     def set_description_str(self, s):
         pass
-    
+
     def update(self, n: float | None = 1) -> bool | None:
         pass
-    
+
     def reset(self, total: float | None = None) -> None:
         pass
-    
-    def set_postfix(self, ordered_dict: Mapping[str, object] | None = None, refresh: bool | None = True, **kwargs) -> None:
+
+    def set_postfix(
+        self,
+        ordered_dict: Mapping[str, object] | None = None,
+        refresh: bool | None = True,
+        **kwargs,
+    ) -> None:
         pass
-    def refresh(self, nolock: bool = False, lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = None) -> None:
+
+    def refresh(
+        self,
+        nolock: bool = False,
+        lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = None,
+    ) -> None:
         pass
 
 
@@ -61,6 +72,7 @@ class TrainingElement(object):
     # TODO: later add the loss func for nlp models
     loss_fn: callable = nn.CrossEntropyLoss()
     tokenizer: AutoTokenizer = None
+    init_model_vector: torch.Tensor = None
 
     def on_epoch_start(self):
         """call on epoch start to prepare for training the epoch"""

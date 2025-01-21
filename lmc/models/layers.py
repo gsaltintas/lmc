@@ -1,4 +1,4 @@
-""" defines auxilary layers """
+"""defines auxilary layers"""
 
 import torch
 from torch import nn
@@ -6,10 +6,11 @@ from torch.nn.modules.batchnorm import _NormBase
 
 
 class LayerNorm2d(nn.Module):
-    """ 2d layernorm implementation for image data """
+    """2d layernorm implementation for image data"""
+
     def __init__(self, nchan, eps: float = 1e-7):
         # super().__init__(num_features=nchan, eps=eps)
-        super().__init__()  
+        super().__init__()
         self.channels = nchan
         self.weight = nn.Parameter(torch.ones(nchan), requires_grad=True)
         self.bias = nn.Parameter(torch.zeros(nchan), requires_grad=True)
@@ -25,12 +26,13 @@ class LayerNorm2d(nn.Module):
         x = x * self.weight.view(1, -1, 1, 1)
         x = x + self.bias.reshape(1, -1, 1, 1)
         return x
-    
+
     def __repr__(self):
         return f"LayerNorm2d({self.channels})"
 
+
 def norm_layer(norm: str, out_channels: int) -> nn.Module:
-    """ given a norm string, returns the corresponding norm layer, pass norm=None for no norm, 
+    """given a norm string, returns the corresponding norm layer, pass norm=None for no norm,
     out_channels specifies the dimension of the axis normalization occurs"""
     if "batch" in str(norm).lower():
         return nn.BatchNorm2d(out_channels)
@@ -40,12 +42,14 @@ def norm_layer(norm: str, out_channels: int) -> nn.Module:
         return LayerNorm2d(out_channels)
     return nn.Sequential()
 
+
 def is_norm_layer(layer: nn.Module) -> bool:
-    """ checks if a layer is a norm layer """
+    """checks if a layer is a norm layer"""
     return isinstance(layer, (nn.BatchNorm2d, nn.GroupNorm, LayerNorm2d))
 
+
 def norm_layer_1d(norm: str, out_channels: int) -> nn.Module:
-    """ given a norm string, returns the corresponding 1D norm layer, pass norm=None for no norm, 
+    """given a norm string, returns the corresponding 1D norm layer, pass norm=None for no norm,
     out_channels specifies the dimension of the axis normalization occurs"""
     if "batch" in str(norm).lower():
         return nn.BatchNorm1d(out_channels)
@@ -54,6 +58,19 @@ def norm_layer_1d(norm: str, out_channels: int) -> nn.Module:
     elif "layer" in str(norm).lower():
         return nn.LayerNorm(out_channels)
     return nn.Sequential()
+
+
+def has_batch_norm(model: nn.Module) -> bool:
+    """
+    Check if a PyTorch model contains any BatchNorm layers.
+    """
+    # Check all nested modules
+    for module in model.modules():
+        # Check for any type of BatchNorm (1D, 2D, 3D, etc.)
+        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            return True
+
+    return False
 
 
 def get_layer(layer_name: str) -> nn.Module:

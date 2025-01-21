@@ -360,14 +360,14 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
             self.add_metric(
-                    f"grad_count_{model_idx}",  # Using model_idx to track per model
-                    WandbMetric(
-                        f"static/avg_grad_count/{model_idx}",  # log_name following your convention
-                        f"Total number of parameters with gradient for Model {model_idx}",  # ylabel
-                        f"grad_count_{model_idx}",  # prefix
-                        category=MetricCategory.COUNT,  # Using L2_DISTANCE category since it's a norm
-                    ),
-                )
+                f"grad_count_{model_idx}",  # Using model_idx to track per model
+                WandbMetric(
+                    f"static/avg_grad_count/{model_idx}",  # log_name following your convention
+                    f"Total number of parameters with gradient for Model {model_idx}",  # ylabel
+                    f"grad_count_{model_idx}",  # prefix
+                    category=MetricCategory.COUNT,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
             for datapoints in [1, 5, -1]:
                 self.add_metric(
                     f"grad_norm_{model_idx}_on_{datapoints}",  # Using model_idx to track per model
@@ -385,6 +385,16 @@ class WandbMetricsRegistry(MetricsRegistry):
                     f"Parameter Count for Model {model_idx}",  # ylabel
                     f"grad_count_{model_idx}",  # prefix
                     category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
+
+            self.add_metric(
+                f"l2_dist_from_init_{model_idx}",
+                WandbMetric(
+                    f"l2/dist_from_init_{model_idx}",
+                    rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{{0}_{{{model_idx}}}}} \rVert_F$",
+                    f"l2_dist_from_init_{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,
                 ),
             )
 

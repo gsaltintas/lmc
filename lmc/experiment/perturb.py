@@ -3,15 +3,17 @@ from dataclasses import dataclass, field
 import torch
 from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
-import wandb
 
+import wandb
 from lmc.butterfly.butterfly import get_average_grad_norm, sample_noise_and_perturb
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
+from lmc.models.layers import has_batch_norm
+from lmc.utils.lmc_utils import repair
 from lmc.utils.opt import get_lr, reset_base_lrs
-from lmc.utils.training_element import TrainingElement
 from lmc.utils.setup_training import configure_lr_scheduler, setup_loader
 from lmc.utils.step import Step
+from lmc.utils.training_element import TrainingElement
 
 
 @dataclass
@@ -114,6 +116,17 @@ class PerturbedTrainingRunner(TrainingRunner):
             noise_stats = {f"static/noise/{ind}-{k}": v for k, v in noise_stats.items()}
             log_dct.update(noise_stats)
             log_dct[f"step/model{ind}"] = el.curr_step
+            if has_batch_norm(el.model):
+                dl = setup_loader(
+                    self.config.data,
+                    train=True,
+                    evaluate=False,
+                    loader_seed=el.loader_seed,
+                )
+                repair(el.model, dl)
+                self.logger.info(
+                    "Model has batch norm, passing training data once to eliminate variance collapse."
+                )
             for num_data_points in [1, 5, -1]:
                 dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)
                 avg_grad_norm, grad_count = get_average_grad_norm(
@@ -160,9 +173,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         return super().run()
 
     def step_all_training_elements(self, batches):
-        if self.global_step == self.config.perturb_step.get_step(
-            self.steps_per_epoch
-        ):
+        if self.global_step == self.config.perturb_step.get_step(self.steps_per_epoch):
             self.perturb_model()
         return super().step_all_training_elements(batches)
 
@@ -172,4 +183,4 @@ class PerturbedTrainingRunner(TrainingRunner):
             # randomly draw from uniform [0, perturb_step)
             value = torch.rand(1).item() * self.config.perturb_scale
             wandb.log({"test/dummyvalue": value})
-
+            wandb.log({"test/dummyvalue": value})

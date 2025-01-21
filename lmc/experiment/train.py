@@ -6,18 +6,19 @@ import numpy as np
 import torch
 from torchmetrics import SQuAD
 from tqdm import tqdm
-import wandb
 
+import wandb
 from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.lmc_utils import check_lmc
 from lmc.utils.metrics import AverageMeter, mixup_topk_accuracy, report_results
-from lmc.utils.training_element import TrainingElements
 from lmc.utils.setup_training import save_model_opt, setup_experiment
+from lmc.utils.training_element import TrainingElements
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 @dataclass
 class TrainingRunner(ExperimentManager):
@@ -56,7 +57,7 @@ class TrainingRunner(ExperimentManager):
 
     def on_epoch_start(self):
         self.training_elements.on_epoch_start()
-    
+
     def on_train_end(self):
         log_dct = dict(epoch=self.ep)
         if (
@@ -96,9 +97,7 @@ class TrainingRunner(ExperimentManager):
         log_dct = {"step/global": self.global_step}
         for element_ind, batch in enumerate(batches):
             element = self.training_elements[element_ind]
-            if element.curr_step >= element.max_steps.get_step(
-                self.steps_per_epoch
-            ):
+            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
                 continue
             element.train_iterator.update()
 
@@ -112,12 +111,22 @@ class TrainingRunner(ExperimentManager):
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
+    def check_distance_from_init(self) -> Dict[str, float]:
+        d = dict()
+        for i, element in enumerate(self.training_elements, start=1):
+            dist = torch.linalg.norm(
+                torch.nn.utils.parameters_to_vector(element.model.parameters())
+                .detach()
+                .cpu()
+                - element.init_model_vector
+            ).item()
+            d[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = dist
+        return d
+
     def on_epoch_end(self):
         log_dct = {"epoch": self.ep, "step/global": self.global_step}
-        self.eval_epoch(
-            log_dct,
-            self.global_step
-        )
+        log_dct.update(self.check_distance_from_init())
+        self.eval_epoch(log_dct, self.global_step)
         if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
             check_lmc(
                 self.training_elements,
@@ -126,7 +135,6 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
-
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
         if self.config.logger.print_summary and log_dct:
@@ -155,7 +163,6 @@ class TrainingRunner(ExperimentManager):
         ckpts = np.concatenate((first_epoch, later_epochs)).astype(int)
         return ckpts
 
-
     def step_element(self, element, batch, i: int = 1) -> Dict[str, Any]:
         element.curr_step += 1
         # Get learning rate
@@ -163,7 +170,7 @@ class TrainingRunner(ExperimentManager):
             lr = element.opt.param_groups[0]["lr"]
         else:
             lr = element.scheduler.get_last_lr()[-1]
-        
+
         if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             element.opt.zero_grad()
         if self.config.data.is_language_dataset():
@@ -173,7 +180,7 @@ class TrainingRunner(ExperimentManager):
 
         log_dct = {f"lr/model{i}": lr, f"step/model{i}": element.curr_step}
         return log_dct
-        
+
         # Save checkpoint if needed
         save = (
             element.save_freq_step
@@ -183,9 +190,10 @@ class TrainingRunner(ExperimentManager):
             == 0
         )
         save = save or (
-            self.config.trainer.save_early_iters and element.curr_step in self.ckpt_steps
+            self.config.trainer.save_early_iters
+            and element.curr_step in self.ckpt_steps
         )
-        
+
         if save:
             ckpt_name = f"checkpoints/ep-{self.ep}-st-{element.curr_step}.ckpt"
             save_model_opt(
@@ -197,41 +205,45 @@ class TrainingRunner(ExperimentManager):
                 scheduler=element.scheduler,
             )
         return loss
-    
+
     def _step_element_language(self, element, batch):
         # Pre-fetch next batch while computing current one
-        batch = {k: v.to(self.device, non_blocking=True) if isinstance(v, torch.Tensor) else v 
-                for k, v in batch.items()}
-        
+        batch = {
+            k: v.to(self.device, non_blocking=True)
+            if isinstance(v, torch.Tensor)
+            else v
+            for k, v in batch.items()
+        }
+
         # Forward pass depends on task type
         if self.config.data.task_type == TaskType.GENERATION:
             # Language modeling
             outputs = element.model(**batch)
             loss = outputs.loss
-            
-        elif self.config.data.task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
+
+        elif self.config.data.task_type in [
+            TaskType.CLASSIFICATION,
+            TaskType.NATURAL_LANGUAGE_INFERENCE,
+        ]:
             # Classification tasks
             outputs = element.model(**batch)
             loss = outputs.loss
             logits = outputs.logits
-            
+
         elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
             # Question answering
             outputs = element.model(**batch)
             loss = outputs.loss
             start_logits = outputs.start_logits
             end_logits = outputs.end_logits
-            
+
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
-    
+
         if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             loss.backward()
-            if (clip_val := self.config.trainer.opt.gradient_clip_val):
-                torch.nn.utils.clip_grad_norm_(
-                element.model.parameters(), 
-                clip_val
-            )
+            if clip_val := self.config.trainer.opt.gradient_clip_val:
+                torch.nn.utils.clip_grad_norm_(element.model.parameters(), clip_val)
             element.opt.step()
             if element.scheduler is not None:
                 element.scheduler.step()
@@ -242,28 +254,31 @@ class TrainingRunner(ExperimentManager):
             if self.config.data.task_type == TaskType.GENERATION:
                 perplexity = torch.exp(loss)
                 metrics_kwargs["perplexity"] = perplexity.item()
-                    
-            elif self.config.data.task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
+
+            elif self.config.data.task_type in [
+                TaskType.CLASSIFICATION,
+                TaskType.NATURAL_LANGUAGE_INFERENCE,
+            ]:
                 acc, topk = mixup_topk_accuracy(
                     logits.detach(), batch["labels"].detach(), None, k=3, avg=True
                 )
                 metrics_kwargs["total_acc"] = acc.item()
                 metrics_kwargs["total_topk"] = topk.item()
-                
+
             elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
                 # For QA, we typically track EM (Exact Match) and F1 score
                 # This would require post-processing with the tokenizer
                 start_pred = torch.argmax(start_logits, dim=-1)
                 end_pred = torch.argmax(end_logits, dim=-1)
                 # Simplified metric for training (just position accuracy)
-                start_correct = (start_pred == batch['start_positions']).float().mean()
-                end_correct = (end_pred == batch['end_positions']).float().mean()
+                start_correct = (start_pred == batch["start_positions"]).float().mean()
+                end_correct = (end_pred == batch["end_positions"]).float().mean()
                 avg_correct = (start_correct + end_correct) / 2
                 metrics_kwargs["accuracy"] = avg_correct.item()
 
         element.metrics.update(**metrics_kwargs)
         return loss.detach()
-    
+
     def _step_element_vision(self, element, batch):
         x, y = batch
         x = x.to(self.device)
@@ -272,7 +287,7 @@ class TrainingRunner(ExperimentManager):
         loss = self.loss_fn(out, y)
         targs_perm = None  # depreceated, when using mixup/cutmix
         loss.backward()
-        #TODO: gradclipping
+        # TODO: gradclipping
 
         element.opt.step()
         if element.scheduler is not None:
@@ -297,7 +312,7 @@ class TrainingRunner(ExperimentManager):
         for i, element in enumerate(self.training_elements, start=1):
             if curr_step > element.max_steps.get_step(self.steps_per_epoch):
                 continue
-                
+
             # Save checkpoint
             ckpt_name = f"checkpoints/ep-{self.ep}.ckpt"
             save_model_opt(
@@ -335,14 +350,16 @@ class TrainingRunner(ExperimentManager):
             test_res = self._test_vision(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update({
-                f"model{model_idx}/test/accuracy": test_res["accuracy"],
-                f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
-                f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
-            })
+            log_dct.update(
+                {
+                    f"model{model_idx}/test/accuracy": test_res["accuracy"],
+                    f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
+                    f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
+                }
+            )
 
             self._handle_best_checkpoint(element, test_res["accuracy"])
-            
+
         return log_dct
 
     def _eval_language(self, element, model_idx: int) -> Dict[str, float]:
@@ -355,49 +372,57 @@ class TrainingRunner(ExperimentManager):
                 percentage=False
             )
         }
-        
+
         # Add task-specific metrics
         if task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
-            log_dct.update({
-                f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
-                    percentage=False
-                )
-            })
+            log_dct.update(
+                {
+                    f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
+                        percentage=False
+                    )
+                }
+            )
         elif task_type == TaskType.QUESTION_ANSWERING:
-            log_dct.update({
-                f"model{model_idx}/train/em": element.metrics.exact_match.get_avg(
-                    percentage=False
-                ),
-                # todo: f1
-                f"model{model_idx}/train/f1": element.metrics.f1_score.get_avg(
-                    percentage=False
-                ),
-                f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(percentage=False)
-            })
+            log_dct.update(
+                {
+                    f"model{model_idx}/train/em": element.metrics.exact_match.get_avg(
+                        percentage=False
+                    ),
+                    # todo: f1
+                    f"model{model_idx}/train/f1": element.metrics.f1_score.get_avg(
+                        percentage=False
+                    ),
+                    f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(
+                        percentage=False
+                    ),
+                }
+            )
         elif task_type == TaskType.GENERATION:
-            log_dct.update({
-                f"model{model_idx}/train/perplexity": element.metrics.perplexity.get_avg(
-                    percentage=False
-                )
-            })
+            log_dct.update(
+                {
+                    f"model{model_idx}/train/perplexity": element.metrics.perplexity.get_avg(
+                        percentage=False
+                    )
+                }
+            )
 
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_language(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update({
-                f"model{model_idx}/test/{k}": v for k, v in test_res.items()
-            })
+            log_dct.update(
+                {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
+            )
 
             # Use appropriate metric for best checkpoint
             best_metric = (
-                test_res.get("accuracy") or 
-                test_res.get("f1") or 
-                -test_res.get("loss", float('inf'))
+                test_res.get("accuracy")
+                or test_res.get("f1")
+                or -test_res.get("loss", float("inf"))
             )
             self._handle_best_checkpoint(element, best_metric)
-            
+
         return log_dct
 
     def _handle_best_checkpoint(self, element, metric_value: float):
@@ -461,51 +486,55 @@ class TrainingRunner(ExperimentManager):
             "accuracy": AverageMeter(),
             "f1": AverageMeter(),
             "em": AverageMeter(),
-            "perplexity": AverageMeter()
+            "perplexity": AverageMeter(),
         }
 
         iterator.reset()
         for batch in loader:
-            batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
-                    for k, v in batch.items()}
+            batch = {
+                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
             iterator.update()
-            
+
             outputs = model(**batch)
-            n = batch['input_ids'].shape[0]
-            
+            n = batch["input_ids"].shape[0]
+
             # Update task-specific metrics
-            if task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
+            if task_type in [
+                TaskType.CLASSIFICATION,
+                TaskType.NATURAL_LANGUAGE_INFERENCE,
+            ]:
                 preds = torch.argmax(outputs.logits, dim=-1)
-                acc = (preds == batch['labels']).float().mean()
-                metrics['accuracy'].update(acc.item(), n)
-                
+                acc = (preds == batch["labels"]).float().mean()
+                metrics["accuracy"].update(acc.item(), n)
+
             elif task_type == TaskType.QUESTION_ANSWERING:
                 # Calculate EM and F1
                 squad = SQuAD()
                 # squad_res = squad(outputs, batch[])
                 # metrics["em"].update(squad_res["exact_match"].item())
                 # metrics["f1"].update(squad_res["exact_match"].item())
-                
+
             elif task_type == TaskType.GENERATION:
                 loss = outputs.loss
                 perplexity = torch.exp(loss)
-                metrics['perplexity'].update(perplexity.item(), n)
-            
+                metrics["perplexity"].update(perplexity.item(), n)
+
             # Always track loss
             metrics["cross_entropy"].update(outputs.loss.item(), n)
 
         # Prepare results dict
-        res = {k: v.get_avg(percentage=False) 
-            for k, v in metrics.items() 
-            if v.count > 0}  # Only include metrics that were updated
-            
+        res = {
+            k: v.get_avg(percentage=False) for k, v in metrics.items() if v.count > 0
+        }  # Only include metrics that were updated
+
         iterator.set_postfix(res)
         iterator.refresh()
         return res
 
     @torch.no_grad()
     def test(self, model, loader, iterator: tqdm):
-        
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             return self._test_language(model, loader, iterator)

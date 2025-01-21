@@ -878,7 +878,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
         model, tokenizer = configure_model(config, device, seed=seed)
-
+        init_model_vector = (
+            nn.utils.parameters_to_vector(model.parameters()).detach().cpu()
+        )
         if is_nlp_task:
             train_loader = setup_nlp_loader(
                 config.data,
@@ -963,6 +965,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 save_freq_step=save_freq,
                 perturb_seed=perturb_seed,
                 tokenizer=tokenizer,
+                init_model_vector=init_model_vector,
             )
         )
     seed_everything(first_seed)
