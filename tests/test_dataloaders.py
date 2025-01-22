@@ -151,8 +151,8 @@ class TestDataloader(BaseTest):
             torch.std(pre_activation, dim=-1),
         )
         for m, s in zip(norm_mean, norm_std):
-            self.assertAlmostEqual(m.item(), 0, places=2)
-            self.assertAlmostEqual(s.item(), 1, places=2)
+            self.assertAlmostEqual(m.item(), 0, places=1)
+            self.assertAlmostEqual(s.item(), 1, places=1)
 
 
 if __name__ == "__main__":

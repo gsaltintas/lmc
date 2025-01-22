@@ -434,7 +434,10 @@ class TrainerConfig(Config):
         ),
     )
 
-    save_freq: Step = field(init=True, default_factory=lambda: Step("1ep"))
+    eval_freq: str = "1ep"
+    eval_specific_steps: str = ""
+    save_freq: str = "1ep"
+    save_specific_steps: str = ""
     save_early_iters: bool = False
     save_best: bool = True
     use_scaler: bool = False
@@ -442,7 +445,8 @@ class TrainerConfig(Config):
     gradient_accumulation_steps: int = 1
 
     _training_steps = "Total number of steps (st) or epochs (ep), specify as Xep or Xst"
-    _save_freq = "Frequency to save checkpoints during training in steps (st) or epochs (ep), specify as Xep or Xst"
+    _save_freq = "Frequency to save checkpoints during training in steps (st) or epochs (ep), specify as Xep or Xst, set to none or false to only save at end"
+    _save_specific_steps = "Comma separated list of steps (st) or epochs (ep) to save, specify as Xep or Xst, is combined with save_freq and save_early_iters."
     _save_best = "Pass to save the best model"
     _use_scaler = "Pass to use torch gradient scaling"
 
@@ -797,6 +801,9 @@ class LMCConfig(Config):
     lmc_check_perms: bool = True
     lmc_on_epoch_end: bool = False
     lmc_on_train_end: bool = True
+    lmc_freq: str = ""
+    lmc_specific_steps: str = ""
 
     _n_points: str = "Number of points to interpolate models."
     _activation_matching_samples: str = "Number of samples to match activations."
+    _lmc_on_epoch_end: str = "Deprecated, same as setting lmc_freq=1ep"

@@ -62,7 +62,6 @@ class TrainingElement(object):
     prev_perm_am = None
     max_steps: Step = None
     curr_step: int = 0  # not sure if this is the best way?
-    save_freq_step: Step = None
     model_dir: Path = None
     train_iterator: tqdm = Iterator()
     test_iterator: tqdm = Iterator()
@@ -93,6 +92,32 @@ class TrainingElement(object):
             if not torch.allclose(p1, p2):
                 return False
         return True
+
+    def dist_from_init(self):
+        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
+        dist = torch.linalg.norm(current_vector.detach().cpu() - self.init_model_vector)
+        return dist.item()
+    
+    def save(self, steps_per_epoch, save_name=None):
+        """Saves the model state, optimizer and scheduler state along with epoch."""
+        step = Step(self.curr_step, steps_per_epoch)
+        ep, st = step.get_epoch_step_pair()
+        if save_name is None:
+            save_name = f"{step.to_short_string()}.ckpt"
+        self.model.eval()
+        torch.save(
+            {
+                "state_dict": self.model.state_dict(),
+                "optimizer_state_dict": self.opt.state_dict(),
+                "scheduler_state_dict": self.scheduler.state_dict()
+                if self.scheduler is not None
+                else None,
+                "epoch": ep,
+                "step": st,
+            },
+            self.model_dir / "checkpoints" / save_name,
+            pickle_protocol=4,
+        )
 
 
 class TrainingElements(object):

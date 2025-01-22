@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import numpy as np
 import torch
@@ -20,7 +20,8 @@ from lmc.utils.metrics import (
     mixup_topk_accuracy,
     report_results,
 )
-from lmc.utils.setup_training import save_model_opt, setup_experiment
+from lmc.utils.step import Step
+from lmc.utils.setup_training import setup_experiment
 from lmc.utils.training_element import TrainingElement, TrainingElements
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -34,7 +35,6 @@ class TrainingRunner(ExperimentManager):
     training_elements: TrainingElements = None
     device: torch.device = None
     steps_per_epoch: int = None
-    max_epochs: int = None
     global_step: int = 0
 
     @staticmethod
@@ -45,121 +45,45 @@ class TrainingRunner(ExperimentManager):
         self.training_elements: TrainingElements
         self.device: torch.device
         self.training_elements, self.device = setup_experiment(self.config)
-        # import code; code.interact(local=locals()|globals())
+
         self.steps_per_epoch = self.config.data.get_steps_per_epoch()
-        self.max_epochs = self.training_elements.max_steps.get_epoch(
-            self.steps_per_epoch
+        self.max_steps = self.training_elements.max_steps.get_step(self.steps_per_epoch)
+        self.eval_steps = self.get_steps(
+            self.config.trainer.eval_freq, self.config.trainer.eval_specific_steps
         )
+
+        self.save_steps = self.get_steps(
+            self.config.trainer.save_freq, self.config.trainer.save_specific_steps
+        )
+        if self.config.trainer.save_early_iters:
+            self.save_steps = self.save_steps.union(self.get_early_iter_ckpt_steps())
+        # lmc_on_epoch_end is deprecated
+        lmc_freq = (
+            "1ep" if self.config.lmc.lmc_on_epoch_end else self.config.lmc.lmc_freq
+        )
+        self.lmc_steps = self.get_steps(lmc_freq, self.config.lmc.lmc_specific_steps)
         self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
 
-    def on_train_start(self):
-        print(self.config.display)
-        self.ep = 1
-        self.ckpt_steps = self.get_early_iter_ckpt_steps(
-            self.steps_per_epoch, n_ckpts=10
-        )
-        if self.training_elements.is_same_model():
-            self.logger.info("Models are the same at initialization.")
+    def get_steps(self, freq, step_list):
+        steps = set()
+        if freq is not None and freq != "" and freq.lower() != "none" and freq.lower() != "false":
+            skip = Step.from_short_string(freq, self.steps_per_epoch).get_step()
+            steps = set(range(0, self.max_steps, skip))
+        for step in step_list.split(","):
+            if step != "":
+                steps.add(Step.from_short_string(step, self.steps_per_epoch).get_step())
+        return steps
 
-    def on_epoch_start(self):
-        self.training_elements.on_epoch_start()
-
-    def on_train_end(self):
-        log_dct = dict(epoch=self.ep)
-        if (
-            self.config.n_models > 1
-            and self.config.lmc.lmc_on_train_end
-            and not self.config.lmc.lmc_on_epoch_end
-        ):
-            check_lmc(
-                self.training_elements,
-                self.config,
-                self.ep,
-                log_dct,
-                check_perms=self.config.lmc.lmc_check_perms,
-            )
-        if self.config.logger.use_wandb:
-            wandb.log(log_dct)
-
-    def run(self):
-        self.on_train_start()
-        while not self.training_finished(self.training_elements):
-            ### train epoch
-            self.on_epoch_start()
-            train_loaders = [iter(el.train_loader) for el in self.training_elements]
-            for batch_ind, batches in enumerate(zip(*train_loaders)):
-                if self.global_step >= self.training_elements.max_steps.get_step(
-                    self.steps_per_epoch
-                ):
-                    break
-                self.step_all_training_elements(batches)
-
-            self.on_epoch_end()
-            self.ep += 1
-        self.on_train_end()
-
-    def step_all_training_elements(self, batches):
-        self.global_step += 1
-        log_dct = {"step/global": self.global_step}
-        for element_ind, batch in enumerate(batches):
-            element = self.training_elements[element_ind]
-            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
-                continue
-            element.train_iterator.update()
-
-            log_dct.update(
-                self.step_element(
-                    element,
-                    batch,
-                    i=element_ind + 1,
-                )
-            )
-        if self.config.logger.use_wandb:
-            wandb.log(log_dct)
-
-    def check_distance_from_init(self) -> Dict[str, float]:
-        d = dict()
-        for i, element in enumerate(self.training_elements, start=1):
-            dist = torch.linalg.norm(
-                torch.nn.utils.parameters_to_vector(element.model.parameters())
-                .detach()
-                .cpu()
-                - element.init_model_vector
-            ).item()
-            d[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = dist
-        return d
-
-    def on_epoch_end(self):
-        log_dct = {"epoch": self.ep, "step/global": self.global_step}
-        log_dct.update(self.check_distance_from_init())
-        self.eval_epoch(log_dct, self.global_step)
-        if self.config.n_models > 1 and self.config.lmc.lmc_on_epoch_end:
-            check_lmc(
-                self.training_elements,
-                self.config,
-                self.ep,
-                log_dct,
-                check_perms=self.config.lmc.lmc_check_perms,
-            )
-        if self.config.logger.use_wandb:
-            wandb.log(log_dct)
-        if self.config.logger.print_summary and log_dct:
-            report_results(log_dct, self.ep, self.config.n_models)
-
-    def training_finished(self, training_elements: TrainingElements) -> bool:
-        return all(
-            el.curr_step >= el.max_steps.get_step(self.steps_per_epoch)
-            for el in training_elements
-        )
-
-    def get_early_iter_ckpt_steps(self, steps_per_epoch: int, n_ckpts: int = 10):
+    def get_early_iter_ckpt_steps(self, n_ckpts: int = 10):
         """schedule for checkpoints"""
         first_epoch = np.concatenate(
-            ([1, 2, 3, 4, 5], np.linspace(6, steps_per_epoch, n_ckpts))
+            ([1, 2, 3, 4, 5], np.linspace(6, self.steps_per_epoch, n_ckpts))
         )
         later_epochs = np.concatenate(
             [
-                np.linspace(ep * steps_per_epoch, (ep + 1) * steps_per_epoch, n_ckpts)
+                np.linspace(
+                    ep * self.steps_per_epoch, (ep + 1) * self.steps_per_epoch, n_ckpts
+                )
                 for ep in range(
                     1,
                     10,
@@ -169,48 +93,121 @@ class TrainingRunner(ExperimentManager):
         ckpts = np.concatenate((first_epoch, later_epochs)).astype(int)
         return ckpts
 
+    def on_train_start(self):
+        print(self.config.display)
+        self.ep = 0
+        if self.training_elements.is_same_model():
+            self.logger.info("Models are the same at initialization.")
+        # see if we need to run evaluations before training
+
+    def on_epoch_start(self):
+        self.training_elements.on_epoch_start()
+
+    def on_epoch_end(self):
+        self.ep += 1
+
+    def run(self):
+        self.on_train_start()
+        while self.global_step < self.max_steps:
+            ### train epoch
+            self.on_epoch_start()
+            train_loaders = [iter(el.train_loader) for el in self.training_elements]
+            for batch_ind, batches in enumerate(zip(*train_loaders)):
+                if self.global_step >= self.max_steps:
+                    break
+                self.step_all_training_elements(batches)
+            self.on_epoch_end()
+        self.on_train_end()
+
+    def evaluate_element(self, element, i):
+        log_dct = {f"step/model{i}": element.curr_step}
+        log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
+            element.dist_from_init()
+        )
+        # Choose evaluation function based on task
+        if self.config.data.is_language_dataset():
+            log_dct.update(self._eval_language(element, i))
+        else:
+            log_dct.update(self._eval_vision(element, i))
+        return log_dct
+
+    def evaluate_lmc(self):
+        log_dct = {}
+        if self.config.n_models > 1:
+            check_lmc(
+                self.training_elements,
+                self.config,
+                self.ep,
+                log_dct,
+                check_perms=self.config.lmc.lmc_check_perms,
+            )
+        return log_dct
+
+    def on_train_end(self):
+        # eval always happens on the last step
+        log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
+        for i, element in enumerate(self.training_elements):
+            log_dct.update(self.evaluate_element(element, i + 1))
+            element.save(self.steps_per_epoch)
+        if self.config.lmc.lmc_on_train_end:
+            log_dct.update(self.evaluate_lmc())
+        if self.config.logger.use_wandb:
+            wandb.log(log_dct)
+
+    def step_all_training_elements(self, batches):
+        log_dct = {}
+        # Compute LMC stats
+        if self.global_step in self.lmc_steps:
+            log_dct.update(self.evaluate_lmc())
+        # go through each training element
+        step_dct = {"step/global": self.global_step}
+        self.global_step += 1
+        for i, batch in enumerate(batches):
+            element = self.training_elements[i]
+            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+                continue
+            # evaluate
+            if element.curr_step in self.eval_steps:
+                log_dct.update(self.evaluate_element(element, i + 1))
+            # save checkpoint
+            if element.curr_step in self.save_steps:
+                element.save(self.steps_per_epoch)
+            # train
+            step_dct.update(
+                self.step_element(
+                    element,
+                    batch,
+                    i=i + 1,
+                )
+            )
+        # print summary if log_dct is not empty
+        if self.config.logger.print_summary and log_dct:
+            log_dct["step/epoch"] = self.ep
+            report_results(log_dct, self.ep, self.config.n_models)
+        # log all of the info together at once
+        log_dct.update(step_dct)
+        if self.config.logger.use_wandb:
+            wandb.log(log_dct)
+
     def step_element(self, element, batch, i: int = 1) -> Dict[str, Any]:
+        log_dct = {f"step/model{i}": element.curr_step}
+        element.train_iterator.update()
         element.curr_step += 1
         # Get learning rate
         if element.scheduler is None:
             lr = element.opt.param_groups[0]["lr"]
         else:
             lr = element.scheduler.get_last_lr()[-1]
+        log_dct[f"lr/model{i}"] = lr
 
         if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             element.opt.zero_grad()
         if self.config.data.is_language_dataset():
-            loss = self._step_element_language(element, batch)
+            self._step_element_language(element, batch)
         else:
-            loss = self._step_element_vision(element, batch)
+            self._step_element_vision(element, batch)
 
-        log_dct = {f"lr/model{i}": lr, f"step/model{i}": element.curr_step}
         return log_dct
-
-        # Save checkpoint if needed
-        save = (
-            element.save_freq_step
-            and element.save_freq_step.modulo(
-                element.curr_step, mode="st", steps_per_epoch=self.steps_per_epoch
-            )
-            == 0
-        )
-        save = save or (
-            self.config.trainer.save_early_iters
-            and element.curr_step in self.ckpt_steps
-        )
-
-        if save:
-            ckpt_name = f"checkpoints/ep-{self.ep}-st-{element.curr_step}.ckpt"
-            save_model_opt(
-                element.model,
-                element.opt,
-                element.model_dir.joinpath(ckpt_name),
-                step=element.curr_step,
-                epoch=self.ep,
-                scheduler=element.scheduler,
-            )
-        return loss
 
     def _step_element_language(self, element, batch):
         # Pre-fetch next batch while computing current one
@@ -323,39 +320,7 @@ class TrainingRunner(ExperimentManager):
             out.detach(), y.detach(), targs_perm, k=3, avg=True
         )
         element.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
-        # TODO: sosmething wrong here, saved ckpts are not in this list?
-        save: bool = (
-            element.save_freq_step
-            and element.save_freq_step.modulo(
-                element.curr_step, mode="st", steps_per_epoch=self.steps_per_epoch
-            )
-            == 0
-        )
         return loss.detach()
-
-    def eval_epoch(self, log_dct, curr_step):
-        for i, element in enumerate(self.training_elements, start=1):
-            if curr_step > element.max_steps.get_step(self.steps_per_epoch):
-                continue
-
-            # Save checkpoint
-            ckpt_name = f"checkpoints/ep-{self.ep}.ckpt"
-            # TODO: bring back save_freq logic
-            save_model_opt(
-                element.model,
-                element.opt,
-                element.model_dir.joinpath(ckpt_name),
-                step=element.curr_step,
-                epoch=self.ep,
-                scheduler=element.scheduler,
-            )
-            element.model.eval()
-
-            # Choose evaluation function based on task
-            if self.config.data.is_language_dataset():
-                log_dct.update(self._eval_language(element, i))
-            else:
-                log_dct.update(self._eval_vision(element, i))
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""
@@ -461,16 +426,7 @@ class TrainingRunner(ExperimentManager):
                 self.logger.info(f"Saving best params at epoch {self.ep}")
                 if element.optimal_path is not None:
                     element.optimal_path.unlink()
-                element.optimal_path = element.model_dir.joinpath(
-                    "checkpoints", f"optimal_params-epoch-{self.ep}.ckpt"
-                )
-                save_model_opt(
-                    element.model,
-                    element.opt,
-                    element.optimal_path,
-                    epoch=self.ep,
-                    scheduler=element.scheduler,
-                )
+                element.save(self.steps_per_epoch, save_name="best.ckpt")
 
     @torch.no_grad()
     def _test_vision(self, model, loader, iterator: tqdm):

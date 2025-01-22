@@ -24,6 +24,12 @@ class PerturbedTrainingRunner(TrainingRunner):
     @staticmethod
     def description():
         return "Train n model(s) with perturbations."
+    
+    def setup(self):
+        super().setup()
+        # need to extend max_steps if steps are reset after perturbation
+        if self.config.same_steps_pperturb:
+            self.max_steps += self.config.perturb_step.get_step(self.steps_per_epoch)
 
     def on_train_start(self):
         super().on_train_start()

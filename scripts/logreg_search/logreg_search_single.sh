@@ -18,7 +18,7 @@ source $HOME/ssetup-uv.sh $DATASET
 python main.py logreg  \
     --logreg_n=$N_RUNS  \
         --logreg_x="perturb_scale"  \
-        --logreg_y="lmc-0-1/lmc/loss/weighted/increase_end0_train"  \
+        --logreg_y="lmc-0-1/lmc/loss/weighted/barrier_train"  \
         --logreg_threshold=$THRESHOLD  \
         --logreg_max_step_ratio=10  \
         --logreg_reseed_every_run=true  \
