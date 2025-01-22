@@ -69,6 +69,42 @@ class Step:
             return val % self.get_step(steps_per_epoch)
         return val % self.get_epoch(steps_per_epoch)
     
+    def get_epoch_step_pair(self, steps_per_epoch: Optional[int] =None):
+        steps_per_epoch = steps_per_epoch if steps_per_epoch is not None else self.steps_per_epoch
+        step = self.get_step(steps_per_epoch)
+        return step // steps_per_epoch, step % steps_per_epoch, 
+    
+    def to_short_string(self, steps_per_epoch: Optional[int] =None):
+        ep, st = self.get_epoch_step_pair(steps_per_epoch)
+        return f"{ep}ep{st}st"
+    
+    @classmethod
+    def from_epoch_step_pair(cls, epoch: int, step: int, steps_per_epoch: int):
+        return cls(value=steps_per_epoch * epoch + step, steps_per_epoch=steps_per_epoch)
+    
+    @classmethod
+    def from_short_string(cls, str_XepYst: str, steps_per_epoch: int) -> 'Step':
+        """Creates a step from a string that describes the number of epochs, steps, or both.
+        Epochs: '120ep'
+        Steps: '2000st'
+        Both: '120ep50st'"""
+
+        if 'ep' in str_XepYst and 'st' in str_XepYst:
+            ep = int(str_XepYst.split('ep')[0])
+            st = int(str_XepYst.split('ep')[1].split('st')[0])
+            if str_XepYst != '{}ep{}st'.format(ep, st): raise ValueError('Malformed string step: {}'.format(str_XepYst))
+            return Step.from_epoch_step_pair(ep, st, steps_per_epoch)
+        elif 'ep' in str_XepYst:
+            ep = int(str_XepYst.split('ep')[0])
+            if str_XepYst != '{}ep'.format(ep): raise ValueError('Malformed string step: {}'.format(str_XepYst))
+            return Step.from_epoch_step_pair(ep, 0, steps_per_epoch)
+        elif 'st' in str_XepYst:
+            st = int(str_XepYst.split('st')[0])
+            if str_XepYst != '{}st'.format(st): raise ValueError('Malformed string step: {}'.format(str_XepYst))
+            return Step(st, steps_per_epoch)
+        else:
+            raise ValueError('Malformed string step: {}'.format(str_XepYst))
+    
     @classmethod
     def from_string(cls, step_str: str):
         """Parse a string representation of a Step and return a Step instance."""

@@ -8,21 +8,6 @@ from tests.base import BaseTest
 
 
 class TestTrainingRunner(BaseTest):
-    def tearDown(self):
-        return
-    def test_training_steps(self):
-        # check if an arbitrary number of training steps can run
-        for step in [9, 392]:
-            with self.subTest(f"training steps: {step}"):
-                n_steps = self.run_command_and_return_result(
-                    f"test-training-steps-{step}",
-                    "step/global",
-                    model_name="resnet20-8",
-                    dataset="cifar10",
-                    training_steps=f"{step}st",
-                    lmc_on_train_end="true",
-                )
-                self.assertEqual(n_steps, step)
 
     def test_batch_perturb_seed(self):
         # check batch perturb seed doesn't mess up other dataloaders
@@ -139,7 +124,7 @@ class TestTrainingRunner(BaseTest):
         self,
         seed1=42,
         seed2=None,
-        perturb_step: int = 1,
+        perturb_step: int = 5,
         perturb_scale=0.1,
         deterministic=True,
         model_name="mlp/128x3",

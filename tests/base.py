@@ -96,6 +96,8 @@ class BaseTest(unittest.TestCase):
         project="lmc-test",
         run_name=None,
         model_dir=None,
+        lmc_on_epoch_end=False,
+        lmc_on_train_end=False,
         **kwargs
         ):
         config_type = Trainer if experiment == "train" else PerturbedTrainer
@@ -117,8 +119,9 @@ class BaseTest(unittest.TestCase):
                 run_name=run_name,
                 model_dir=model_dir,
                 lmc_check_perms=False,
-                lmc_on_epoch_end=False,
-                lmc_on_train_end=False,
+                lmc_on_epoch_end=lmc_on_epoch_end,
+                lmc_on_train_end=lmc_on_train_end,
+                cleanup_after=False,
                 **kwargs
             )
         )
@@ -187,8 +190,8 @@ class BaseTest(unittest.TestCase):
     def get_last_ckpts(exp_dir):
         model_1 = next(exp_dir.glob("model1*"))
         model_2 = next(exp_dir.glob("model2*"))
-        ckpt_1 = BaseTest.get_last_created_in_dir(model_1 / "checkpoints" / "ep-*.ckpt")
-        ckpt_2 = BaseTest.get_last_created_in_dir(model_2 / "checkpoints" / "ep-*.ckpt")
+        ckpt_1 = BaseTest.get_last_created_in_dir(model_1 / "checkpoints" / "*.ckpt")
+        ckpt_2 = BaseTest.get_last_created_in_dir(model_2 / "checkpoints" / "*.ckpt")
         return ckpt_1, ckpt_2
 
     @staticmethod

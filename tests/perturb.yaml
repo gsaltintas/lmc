@@ -80,9 +80,7 @@ trainer:
     weight_decay: 0.0
   save_best: true
   save_early_iters: true
-  save_freq:
-    steps_per_epoch: 469
-    value: 1ep
+  save_freq: 1ep
   training_steps:
     steps_per_epoch: 1
     value: 1ep

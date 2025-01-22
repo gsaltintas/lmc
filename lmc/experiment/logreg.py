@@ -18,7 +18,7 @@ class LogregConfig(Config):
     _description: str = "Hyperparameters for active learning logistic regression."
 
     logreg_x: str = "perturb_scale"
-    logreg_y: str = "lmc-0-1/lmc/loss/weighted/increase_end0_train"
+    logreg_y: str = "lmc-0-1/lmc/loss/weighted/barrier_train"
     logreg_threshold: float = 0.0
     logreg_n: int = 20
     logreg_max_step_ratio: float = 10

@@ -51,7 +51,7 @@ class TestTrainingRunner(BaseTest):
 
     def _run_logreg(self, model_dir, is_dummy_run):
         perturb_debug_dummy_run = "true" if is_dummy_run else "false"
-        logreg_y = "test/dummyvalue" if is_dummy_run else "lmc-0-1/lmc/loss/weighted/increase_end0_train"
+        logreg_y = "test/dummyvalue" if is_dummy_run else "lmc-0-1/lmc/loss/weighted/barrier_train"
         logreg_n = 10 if is_dummy_run else 1
         args = str.format(
             self.LOGREG_ARGS,
