@@ -351,7 +351,8 @@ def sample_noise_and_perturb(
     )
     # log l2 and per-layer l2 of scaled noise
     log_dct = {f"static/noise_l2/{ind}/total": get_l2(noise)}
-    for k, v in noise.items():
-        log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
+    if config.log_per_layer_l2:
+        for k, v in noise.items():
+            log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
     perturb_model(model, noise)
     return log_dct

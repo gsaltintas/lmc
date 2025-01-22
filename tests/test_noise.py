@@ -5,7 +5,8 @@ import unittest
 import torch
 
 from lmc.butterfly.butterfly import get_l2, get_all_init_l2s, get_perturbed_layers, sample_noise_and_perturb
-from lmc.experiment_config import PerturbedTrainer
+from lmc.experiment_config import PerturbedTrainer, Trainer
+from lmc.models.bert import Bert
 from lmc.utils.seeds import seed_everything
 from lmc.utils.setup_training import configure_model
 from tests.base import BaseTest
@@ -14,36 +15,70 @@ from tests.base import BaseTest
 class TestNoise(BaseTest):
     def setUp(self):
         super().setUp()
-        self.model, _ = configure_model(self._get_config("resnet20-32", "kaiming_normal"), device="cpu", seed=41)
+        self.model, _ = configure_model(self.get_test_config(model_name="resnet20-32", initialization_strategy="kaiming_normal"), device="cpu", seed=41)
         layers = [k for k, _ in self.model.named_parameters()]
         non_constant_layers = [k for k in layers if "conv" in k]
         self.expected_l2_all, self.expected_l2_per_layer = get_all_init_l2s(self.model, layers)
         self.expected_l2, _ = get_all_init_l2s(self.model, non_constant_layers)
 
-    def _get_config(self, model_name, init_strategy, perturb_scale=1, mode="batch", normalize_perturb=True, scale_to_init_if_normalized=True, dont_perturb_module_patterns=[]):
-        config = PerturbedTrainer.from_dict(
-            dict(
-                n_models=1,
-                initialization_strategy=init_strategy,
-                training_steps="1ep",
-                model_name=model_name,
-                dataset="cifar10",
-                path=self.data_dir / "cifar10",
-                norm="layernorm",
-                perturb_scale=perturb_scale,
-                perturb_mode=mode,
-                normalize_perturb=normalize_perturb,
-                scale_to_init_if_normalized=scale_to_init_if_normalized,
-                dont_perturb_module_patterns=dont_perturb_module_patterns,
-            )
-        )
-        config.model.norm="layernorm"  #TODO hack as from_dict doesn't set this, see tests in test_config.py
-        return config
+    def _check_init_std(self, name, model_iterator):
+        with self.subTest(name):
+            # sample a lot of models
+            params = defaultdict(list)
+            l2 = []
+            for n, model in enumerate(model_iterator):
+                sqsum = 0
+                norm_sqsum = 0
+                for k, v in model.state_dict().items():
+                    if "norm" in k or "Norm" in k:
+                        norm_sqsum += torch.sum(v**2).item()
+                    else:
+                        sqsum += torch.sum(v**2).item()
+                        params[k].append(v)
+                l2.append(sqsum**0.5)
 
-    def _get_noise(self, **kwargs):
+            # check that random init is close in standard deviation to the normalization constants
+            scales = model.get_init_stds()
+            layers = [k for k, v in scales.items() if v > 0]
+            total, per_layer = get_all_init_l2s(model, layers)
+            for k, v in params.items():
+                params = torch.stack(v, dim=0).reshape(len(v), -1)
+                self.assertAlmostEqual(scales[k], torch.std(params).item(), places=2)
+                self.assertAlmostEqual(per_layer[k], torch.mean(torch.linalg.norm(params, dim=-1)).item(), places=0)
+                self.assertAlmostEqual(torch.mean(params).item(), 0, places=2)
+
+            # check that model L2 is close to stdev L2
+            self.assertAlmostEqual(torch.mean(torch.tensor(l2)).item(), total, places=1)
+
+
+    def _yield_vision_models(self, model_name, init_strategy):
+        config = self.get_test_config(experiment="train", model_name=model_name, initialization_strategy=init_strategy)
+        for i in range(200):
+                model, _ = configure_model(config, device="cpu", seed=i, print_output=False)
+                yield model
+
+    def _yield_multibert_models(self):
+        for i in range(5):
+            model = Bert(model_name=f"google/multiberts-seed_{i}-step_0k", output_dim=2)
+            yield model
+
+
+    def test_normalization_constants(self):
+        self._check_init_std("multibert", self._yield_multibert_models())
+        self._check_init_std("mlp normal", self._yield_vision_models("mlp/128x3", "kaiming_normal"))
+        self._check_init_std("resnet uniform", self._yield_vision_models("resnet20-8", "kaiming_uniform"))
+        self._check_init_std("resnet normal", self._yield_vision_models("resnet20-16", "kaiming_normal"))
+
+    def test_perturbed_layers(self):
+        for n_unperturbed, dont_perturb in [(0, []), (43, [".*norm.*|.*bias.*"]), (23, ['^((?!norm).)*$']), (64, ['^((?!model.fc.weight).)*$']), (64, ['^((?!model.conv.weight).)*$'])]:
+            with self.subTest(dont_perturb):
+                layers = get_perturbed_layers(self.model, dont_perturb)
+                self.assertEqual(len(layers), 65 - n_unperturbed)
+
+    def _get_noise(self, perturb_scale=1, mode="batch", normalize_perturb=True, scale_to_init_if_normalized=True, dont_perturb_module_patterns=[]):
         model = deepcopy(self.model)
         sd = self.model.state_dict()
-        config = self._get_config("resnet20-32", "kaiming_normal", **kwargs)
+        config = self.get_test_config(model_name="resnet20-32", initialization_strategy="kaiming_normal", dataset="cifar10", perturb_scale=perturb_scale, perturb_mode=mode, normalize_perturb=normalize_perturb, scale_to_init_if_normalized=scale_to_init_if_normalized, dont_perturb_module_patterns=dont_perturb_module_patterns)
         _ = sample_noise_and_perturb(config, model, perturb_seed=42, loss_fn=None, ind=0)
         perturbed_sd = model.state_dict()
         per_layer_l2 = {}
@@ -53,51 +88,6 @@ class TestNoise(BaseTest):
             per_layer_l2[k] = sqdiff**0.5
             total_sqsum += sqdiff
         return total_sqsum**0.5, per_layer_l2
-
-    def _check_init_std(self, model_name, init_strategy):
-        config = self._get_config(model_name, init_strategy)
-        with self.subTest(f"{model_name} {init_strategy}"):
-            # sample a lot of models
-            params = defaultdict(list)
-            l2 = []
-            N_SAMPLES = 300
-            for i in range(N_SAMPLES):
-                model, _ = configure_model(config, device="cpu", seed=i, print_output=False)
-                sqsum = 0
-                norm_sqsum = 0
-                for k, v in model.state_dict().items():
-                    if "norm" in k:
-                        norm_sqsum += torch.sum(v**2).item()
-                    else:
-                        sqsum += torch.sum(v**2).item()
-                        params[k].append(v)
-                verify_sqsum = get_l2(model.state_dict())**2
-                self.assertAlmostEqual(sqsum + norm_sqsum, verify_sqsum.item(), places=1)
-                l2.append(sqsum**0.5)
-
-            # check that random init is close in standard deviation to the normalization constants
-            scales = model.get_init_stds()
-            layers = [k for k, v in scales.items() if v > 0]
-            total, per_layer = get_all_init_l2s(model, layers)
-            for k, v in params.items():
-                params = torch.stack(v, dim=0).reshape(N_SAMPLES, -1)
-                self.assertAlmostEqual(scales[k], torch.std(params).item(), places=2)
-                self.assertAlmostEqual(per_layer[k], torch.mean(torch.linalg.norm(params, dim=-1)).item(), places=1)
-                self.assertAlmostEqual(torch.mean(params).item(), 0, places=2)
-
-            # check that model L2 is close to stdev L2
-            self.assertAlmostEqual(torch.mean(torch.tensor(l2)).item(), total, places=1)
-
-    def test_normalization_constants(self):
-        self._check_init_std("mlp/128x3", "kaiming_normal")
-        self._check_init_std("resnet20-8", "kaiming_uniform")
-        self._check_init_std("resnet20-16", "kaiming_normal")
-
-    def test_perturbed_layers(self):
-        for n_unperturbed, dont_perturb in [(0, []), (43, [".*norm.*|.*bias.*"]), (23, ['^((?!norm).)*$']), (64, ['^((?!model.fc.weight).)*$'])]:
-            with self.subTest(dont_perturb):
-                layers = get_perturbed_layers(self.model, dont_perturb)
-                self.assertEqual(len(layers), 65 - n_unperturbed)
 
     def test_get_noise(self):
         def assert_noise_not_zero(per_layer_l2s, dont_perturb, mode, scale):

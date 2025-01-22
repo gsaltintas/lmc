@@ -651,6 +651,29 @@ wheels = [
 ]
 
 [[package]]
+name = "evaluate"
+version = "0.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "datasets", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "dill", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "fsspec", extra = ["http"], marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "huggingface-hub", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "multiprocess", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "numpy", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "packaging", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "pandas", version = "2.1.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and platform_system != 'Darwin') or (python_full_version >= '3.12' and sys_platform != 'linux')" },
+    { name = "pandas", version = "2.2.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_system != 'Darwin') or (python_full_version < '3.12' and sys_platform != 'linux')" },
+    { name = "requests", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "tqdm", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "xxhash", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/a0/10a56e0939ece94c54276e81459cb4101f46f0e9a6f54fc31a35f64e8854/evaluate-0.4.3.tar.gz", hash = "sha256:3a5700cf83aabee9549264e1e5666f116367c61dbd4d38352015e859a5e2098d", size = 65679 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/e7/cbca9e2d2590eb9b5aa8f7ebabe1beb1498f9462d2ecede5c9fd9735faaf/evaluate-0.4.3-py3-none-any.whl", hash = "sha256:47d8770bdea76e2c2ed0d40189273027d1a41ccea861bcc7ba12d30ec5d1e517", size = 84010 },
+]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1387,6 +1410,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "datasets", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "evaluate", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "huggingface-hub", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "ipykernel", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "jupyter", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
@@ -1412,6 +1436,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=3.1.0,<4.0.0" },
+    { name = "evaluate", specifier = ">=0.4.3" },
     { name = "huggingface-hub", specifier = ">=0.26.2,<1.0.0" },
     { name = "ipykernel", specifier = ">=6.29.5,<7.0.0" },
     { name = "jupyter", specifier = ">=1.1.1,<2.0.0" },

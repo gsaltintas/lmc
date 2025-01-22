@@ -13,6 +13,7 @@ from .type_declaration import PATTERNS
 class Bert(BaseModel):
     _name: str = "BERT"
     is_language_model: bool = True
+    model_name: str = None
 
     def __init__(
         self,
@@ -22,6 +23,7 @@ class Bert(BaseModel):
         norm: str = "layernorm",
         gradient_checkpointing: bool = True,
     ):
+        self.model_name = model_name
         super().__init__(output_dim, initialization_strategy, act="act", norm=norm)
         self.tokenizer = BertTokenizer.from_pretrained(model_name)
         if initialization_strategy == "pretrained":
@@ -196,3 +198,19 @@ class Bert(BaseModel):
             )
 
         return model_
+    
+    def get_init_stds(self, include_constant_params=False):
+        std = OrderedDict()
+        default_std = 0.02
+        if "multiberts" in self.model_name:
+            default_std = 0.01759  # empirically computed based on tensorflow TruncatedNormal
+        for k, v in self.named_parameters():
+            # everything has same std
+            if include_constant_params:
+                std[k] = default_std
+            # 0 std for bias or norm weight/bias if include_constant_params=False
+            elif k.endswith(".bias") or (k.endswith(".weight") and v.dim() == 1):
+                std[k] = 0
+            else:
+                std[k] = default_std
+        return std

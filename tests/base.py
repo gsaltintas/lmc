@@ -8,6 +8,7 @@ from shutil import rmtree
 
 import torch
 
+from lmc.experiment_config import PerturbedTrainer, Trainer
 from lmc.utils.run import command_result_is_error, run_command
 
 
@@ -81,6 +82,48 @@ class BaseTest(unittest.TestCase):
 
     def tearDown(self):
         rmtree(self.log_dir)
+
+    def get_test_config(self,
+        experiment="perturb",
+        seed1=SEED_1,
+        loader_seed1=None,
+        deterministic=True,
+        model_name="mlp/128x3",
+        dataset="mnist",
+        training_steps="2ep",
+        rewind_lr="false",
+        wandb_offline="true",
+        project="lmc-test",
+        run_name=None,
+        model_dir=None,
+        **kwargs
+        ):
+        config_type = Trainer if experiment == "train" else PerturbedTrainer
+        config = config_type.from_dict(
+            dict(
+                n_models=1,
+                log_dir=self.log_dir,
+                path=self.data_dir / dataset,
+                norm="layernorm",
+                seed1=seed1,
+                loader_seed1=loader_seed1,
+                deterministic=deterministic,
+                model_name=model_name,
+                dataset=dataset,
+                training_steps=training_steps,
+                rewind_lr=rewind_lr,
+                wandb_offline=wandb_offline,
+                project=project,
+                run_name=run_name,
+                model_dir=model_dir,
+                lmc_check_perms=False,
+                lmc_on_epoch_end=False,
+                lmc_on_train_end=False,
+                **kwargs
+            )
+        )
+        config.model.norm="layernorm"  #TODO hack as from_dict doesn't set this, see tests in test_config.py
+        return config
 
     def get_test_command(
         self,

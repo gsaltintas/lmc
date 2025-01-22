@@ -155,7 +155,6 @@ def barrier_from_df(
     scale = 1 / 100 if metric == "err" else 1
 
     max_interpolated = results.loc[ep, (split, metric)].max() * scale
-    min_interpolated = results.loc[ep, (split, metric)].min() * scale
     endpoint_0 = results.loc[(ep, 0)][(split, metric)] * scale
     endpoint_1 = results.loc[(ep, 1)][(split, metric)] * scale
 
@@ -163,19 +162,7 @@ def barrier_from_df(
     barrier = max_interpolated - linear_path
     return {
         prefix + f"weighted/barrier_{split}": barrier,
-        prefix + f"weighted/maxint_{split}": max_interpolated,
-        prefix + f"weighted/minint_{split}": min_interpolated,
-        prefix + f"weighted/maxalpha_{split}": alpha,
-        prefix + f"weighted/minalpha_{split}": minalpha,
-        prefix + f"weighted/increase_{split}": max_interpolated
-        - min(endpoint_0, endpoint_1),
-        prefix + f"weighted/increase_end0_{split}": max_interpolated - endpoint_0,
-        prefix + f"weighted/increase_end1_{split}": max_interpolated - endpoint_1,
-        prefix + f"weighted/decrease_{split}": min_interpolated
-        - endpoint_0
-        - min(endpoint_0, endpoint_1),
-        prefix + f"weighted/decrease_end0_{split}": min_interpolated - endpoint_0,
-        prefix + f"weighted/decrease_end1_{split}": min_interpolated - endpoint_1,
+        prefix + f"weighted/alpha_{split}": alpha,
     }
 
 

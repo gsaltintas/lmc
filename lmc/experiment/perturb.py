@@ -47,14 +47,15 @@ class PerturbedTrainingRunner(TrainingRunner):
             }
         )
         # save per-layer L2s
-        for i, el in enumerate(self.training_elements, start=1):
-            log_dct.update(
-                {
-                    f"static/init_l2/{i}/layer/{k}": torch.norm(v.flatten()).item()
-                    for k, v in el.model.named_parameters()
-                    if v.requires_grad
-                }
-            )
+        if self.config.log_per_layer_l2:
+            for i, el in enumerate(self.training_elements, start=1):
+                log_dct.update(
+                    {
+                        f"static/init_l2/{i}/layer/{k}": torch.norm(v.flatten()).item()
+                        for k, v in el.model.named_parameters()
+                        if v.requires_grad
+                    }
+                )
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 

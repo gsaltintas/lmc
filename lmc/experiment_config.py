@@ -453,6 +453,7 @@ class PerturbedTrainer(Trainer):
     dont_perturb_module_patterns: List[str] = field(
         init=True, default_factory=lambda: []
     )
+    log_per_layer_l2: bool = False
     perturb_debug_dummy_run: bool = False
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
@@ -481,6 +482,7 @@ class PerturbedTrainer(Trainer):
             "scale_to_init_if_normalized", True
         )
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
+        self.log_per_layer_l2 = kwargs.get("log_per_layer_l2", False)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
         self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
