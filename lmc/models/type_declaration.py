@@ -1,4 +1,5 @@
-""" defines patterns for different model codes """
+"""defines patterns for different model codes"""
+
 from typing import Literal, Optional
 
 import numpy as np
@@ -23,7 +24,20 @@ PATTERNS = {
         r"wideresnet[a-zA-Z]*/(\d+)xk=(\d+)-s=(\d+)-d=(\d+)-fc=(\d+)",
     ],
     "t5": ["t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"],
-    "bert": ["bert-base-uncased", "bert-base-cased", "bert-large-uncased", "bert-large-cased"],
+    "bert": [
+        "bert-base-uncased",
+        "bert-base-cased",
+        "bert-large-uncased",
+        "bert-large-cased",
+        r".*bert.*",
+    ],
+    "roberta": [
+        "roberta-base",
+        "roberta-large",
+        "distilroberta-base",
+        "roberta-large-mnli",
+        r".*roberta.*",
+    ],
 }
 MODEL_NAME_PATTERNS = np.concatenate(list(PATTERNS.values()))
 Inits = Optional[
@@ -36,7 +50,7 @@ Inits = Optional[
         "he_uniform",
         "kaiming_normal",
         "he_normal",
-        "pretrained"
+        "pretrained",
     ]
 ]
 Norms = Optional[Literal["layernorm", "batchnorm", "groupnorm"]]
