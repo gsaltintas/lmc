@@ -39,7 +39,7 @@ class BaseTest(unittest.TestCase):
                 --warmup_ratio 0.02  \
                 --momentum 0.9  \
                 --rewind_lr {rewind_lr}  \
-            --n_models 2  \
+            --n_models {n_models}  \
                 --perturb_mode {perturb_mode}  \
                 --perturb_step {perturb_step}  \
                 --perturb_inds {perturb_inds}  \
@@ -69,8 +69,8 @@ class BaseTest(unittest.TestCase):
         )
         self.log_dir = test_path / "tmp"
         # remove log dir if it already exists
-        if self.log_dir.exists():
-            rmtree(self.log_dir)
+        # if self.log_dir.exists():
+        #     rmtree(self.log_dir)
         self.log_dir.mkdir(exist_ok=True)
 
         self.data_dir = test_path / "data"
@@ -80,8 +80,8 @@ class BaseTest(unittest.TestCase):
         if not self.data_dir.exists() and data_dir_env_var is not None:
             os.symlink(data_dir_env_var, self.data_dir, target_is_directory=True)
 
-    def tearDown(self):
-        rmtree(self.log_dir)
+    # def tearDown(self):
+    #     rmtree(self.log_dir)
 
     def get_test_config(self,
         experiment="perturb",
@@ -98,12 +98,13 @@ class BaseTest(unittest.TestCase):
         model_dir=None,
         lmc_on_epoch_end=False,
         lmc_on_train_end=False,
+        n_models=1,
         **kwargs
         ):
         config_type = Trainer if experiment == "train" else PerturbedTrainer
         config = config_type.from_dict(
             dict(
-                n_models=1,
+                n_models=n_models,
                 log_dir=self.log_dir,
                 path=self.data_dir / dataset,
                 norm="layernorm",
@@ -152,6 +153,7 @@ class BaseTest(unittest.TestCase):
         lmc_on_train_end="false",
         project="lmc-test",
         run_name=None,
+        n_models=2,
         model_dir=None,
         args=[],
     ):
@@ -181,6 +183,7 @@ class BaseTest(unittest.TestCase):
             lmc_on_train_end=lmc_on_train_end,
             project=project,
             run_name=run_name,
+            n_models=n_models,
             model_dir="" if model_dir is None else f"--model_dir {model_dir}",
             args=args if isinstance(args, str) else " ".join(args),
         )

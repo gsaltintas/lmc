@@ -218,7 +218,7 @@ class Experiment:
     deterministic: bool = False
     zip_and_save_source: bool = True
     resume_from: Optional[str] = None
-    resume_epoch: Optional[int] = -1
+    resume_step: Optional[int] = -1
     log_to_same_experiment: Optional[bool] = False
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)

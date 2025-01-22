@@ -137,29 +137,6 @@ def load_training(
     training_element.curr_step = d.get("step", 0)
 
 
-def load_model(config: Trainer, model: "BaseModel", device: torch.device) -> None:
-    if config.command == "resume-from-wandb":
-        api = wandb.Api()
-        ckpt = config.resume_from.split("/")[-1]
-        artifact = api.artifact(
-            f"{config.logger.wandb.get('project')}/model-{ckpt}:latest", type="model"
-        )
-        artifact_dir = artifact.download()
-        ckpt_path = str(Path(artifact_dir) / "model.ckpt")
-        load_model_from_checkpoint(model, ckpt_path)
-    elif ckpt_path := config.model.ckpt_path:
-        if str(ckpt_path).startswith("wandb:"):
-            run = wandb.init()
-            artifact_path = ckpt_path[6:]
-            artifact = run.use_artifact(artifact_path, type="model")
-            artifact_dir = artifact.download()
-            ckpt_path = Path(artifact_dir).joinpath("model.ckpt")
-            logger.info("Downloaded artifact %s into %s.", artifact_path, artifact_dir)
-            config.model.ckpt_path = ckpt_path
-        load_model_from_checkpoint(model, ckpt_path)
-        logger.info("Model loaded from checkpoint %s.", ckpt_path)
-
-
 def should_freeze_layer(layer_name: str, pattern: str) -> bool:
     """Check if layer should be frozen based on exact match or regex pattern"""
     try:
@@ -874,6 +851,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
     """Creates all necessary elements. models, datamodules, etc."""
     device = setup_device(config)
     model_dir = setup_model_dir(config)
+    steps_per_epoch = config.data.get_steps_per_epoch()
     # config.model_dir.joinpath("barriers").mkdir(exist_ok=True)
 
     setup_wandb(config)
@@ -899,19 +877,16 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if (
             hasattr(config, "resume_from")
             and (config.resume_from)
-            and (config.resume_epoch > 0)
+            and (config.resume_step is not None and config.resume_step != "")
         ):
             if config.resume_from.startswith("wandb:"):
                 raise NotImplementedError("Resuming from wandb is under development")
                 # TODO: parse the model dir, load config from there
-            ## TODO: do this, resume_epoch not implemented
+            ## TODO: fix this area
+            resume_step = Step.from_short_string(config.resume_step, steps_per_epoch)
             config.model.ckpt_path = model_dir_.joinpath(
-                "checkpoints", f"ep-{config.resume_epoch}"
-            ).with_suffix(".ckpt")
-            if not config.model.ckpt_path.exists():
-                config.model.ckpt_path = model_dir_.joinpath(
-                    "checkpoints", f"{config.resume_epoch}"
-                ).with_suffix(".ckpt")
+                "checkpoints", f"{resume_step.to_short_string()}.ckpt"
+            )
             logger.info("Model will be loaded from %s.", config.model.ckpt_path)
             assert config.model.ckpt_path.exists(), (
                 f"Path {config.model.ckpt_path} doesn't exist."
@@ -961,12 +936,11 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
 
         logger.info("Setup model %d with seed=%d.", i, seed)
 
-        steps_per_epoch = len(train_loader)
+        assert steps_per_epoch == len(train_loader)
         max_steps = Step(
             f"{config.trainer.training_steps.get_step(steps_per_epoch)}st",
             steps_per_epoch,
         )
-        save_freq = config.trainer.save_freq
         seed_everything(seed)
         opt = configure_optimizer(config, model)
         total_steps = max_steps.get_step(steps_per_epoch)
@@ -986,7 +960,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         if (
             hasattr(config, "resume_from")
             and (config.resume_from)
-            and (config.resume_epoch > 0)
+            and (config.resume_step > 0)
         ):
             opt.load_state_dict(ckpt["optimizer_state_dict"])
             logger.info("Optimizer loaded from ckpt")
