@@ -791,10 +791,11 @@ def setup_model_dir(config: Trainer) -> Path:
                 f"Must provide an existing log_dir ({config.logger.log_dir})"
             )
     if config.model_dir is None:
-        hashname = config.hashname
+        hashname = config.hashname[:5]
         now = datetime.now()
-        formatted_date = now.strftime("%d-%m-%y-%H-%M-%f")
-        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}")
+        formatted_date = now.strftime("%y-%m-%d")
+        short_id = str(now.microsecond)[:5]
+        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}")
         logger.info(f"Created model dir: {config.model_dir}")
     elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
         now = datetime.now()
@@ -805,7 +806,6 @@ def setup_model_dir(config: Trainer) -> Path:
         )
     config.model_dir = Path(config.model_dir)
     config.model_dir.mkdir(exist_ok=True)
-    config.model_dir.joinpath("checkpoints").mkdir(exist_ok=True)
 
     # Save code as zip and config as yaml into the model directory.
     config.save(config.model_dir, zip_code_base=config.zip_and_save_source)
@@ -889,7 +889,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
             perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
 
         ## setup individual model dir
-        model_dir_ = model_dir.joinpath(f"model{i}-seed_{seed}-ls_{loader_seed}")
+        model_dir_ = model_dir.joinpath(f"model{i}")
         setattr(config, f"model{i}_dir", model_dir_)
         model_dir_.joinpath("checkpoints").mkdir(exist_ok=True, parents=True)
 
@@ -1010,7 +1010,6 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 train_eval_loader=train_eval_loader,
                 test_loader=test_loader,
                 max_steps=max_steps,
-                save_freq_step=save_freq,
                 perturb_seed=perturb_seed,
                 tokenizer=tokenizer,
                 init_model_vector=init_model_vector,
@@ -1038,25 +1037,6 @@ def cleanup(config: Experiment):
 
         logger.info("Deleting the experiment directory (%s)", config.model_dir)
         rmtree(config.model_dir)
-
-
-def save_model_opt(
-    model, opt, path: Path, epoch: int = None, scheduler=None, step: int = None
-):
-    """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "optimizer_state_dict": opt.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict()
-            if scheduler is not None
-            else None,
-            "epoch": epoch,
-            "step": step,
-        },
-        path,
-        pickle_protocol=4,
-    )
 
 
 # something wrong with the steps
