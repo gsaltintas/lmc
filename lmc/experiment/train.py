@@ -20,8 +20,8 @@ from lmc.utils.metrics import (
     mixup_topk_accuracy,
     report_results,
 )
-from lmc.utils.step import Step
 from lmc.utils.setup_training import setup_experiment
+from lmc.utils.step import Step
 from lmc.utils.training_element import TrainingElement, TrainingElements
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -66,7 +66,12 @@ class TrainingRunner(ExperimentManager):
 
     def get_steps(self, freq, step_list):
         steps = set()
-        if freq is not None and freq != "" and freq.lower() != "none" and freq.lower() != "false":
+        if (
+            freq is not None
+            and freq != ""
+            and freq.lower() != "none"
+            and freq.lower() != "false"
+        ):
             skip = Step.from_short_string(freq, self.steps_per_epoch).get_step()
             steps = set(range(0, self.max_steps, skip))
         for step in step_list.split(","):
@@ -146,8 +151,13 @@ class TrainingRunner(ExperimentManager):
     def on_train_end(self):
         # eval always happens on the last step
         log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
-        for i, element in enumerate(self.training_elements):
-            log_dct.update(self.evaluate_element(element, i + 1))
+        for i, element in enumerate(self.training_elements, start=1):
+            log_dct.update(self.evaluate_element(element, i))
+            if i < self.config.n_models:
+                next_el = self.training_elements[i + 1]
+                log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}_{i + 1}")] = (
+                    element.dist_from_element(next_el)
+                )
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
             log_dct.update(self.evaluate_lmc())

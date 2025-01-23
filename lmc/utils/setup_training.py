@@ -772,7 +772,9 @@ def setup_model_dir(config: Trainer) -> Path:
         now = datetime.now()
         formatted_date = now.strftime("%y-%m-%d")
         short_id = str(now.microsecond)[:5]
-        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}")
+        config.model_dir = Path(
+            config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}"
+        )
         logger.info(f"Created model dir: {config.model_dir}")
     elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
         now = datetime.now()
@@ -883,10 +885,44 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 raise NotImplementedError("Resuming from wandb is under development")
                 # TODO: parse the model dir, load config from there
             ## TODO: fix this area
-            resume_step = Step.from_short_string(config.resume_step, steps_per_epoch)
-            config.model.ckpt_path = model_dir_.joinpath(
-                "checkpoints", f"{resume_step.to_short_string()}.ckpt"
-            )
+            # get the last checkpoint if resume step is passed as -1
+            if str(config.resume_step) == "-1":
+                base_dir_ = Path(config.resume_from).resolve().absolute()
+                if "last.ckpt" in base_dir_.rglob("*.ckpt"):
+                    last_ckpt = list(base_dir_.rglob("*last.ckpt"))[-1]
+                    resume_step = torch.load(last_ckpt, map_location=device)["step"]
+                    resume_step = Step(resume_step)
+                    #
+                    config.model.ckpt_path = last_ckpt
+                    logger.info(
+                        "Resume step passed as -1, resuming from last.ckpt at %s",
+                        last_ckpt,
+                    )
+                else:
+                    existing_ckpts = [
+                        Step.from_short_string(ckpt_pt.stem, steps_per_epoch).get_step(
+                            steps_per_epoch
+                        )
+                        for ckpt_pt in base_dir_.rglob("*.ckpt")
+                        if ckpt_pt.stem != "best"
+                    ]
+                    if len(existing_ckpts) == 0:
+                        raise ValueError(
+                            "Model dir is empty and resume_step is passed as -1."
+                        )
+                    resume_step = Step(max(existing_ckpts), steps_per_epoch)
+                    logger.info(
+                        "Resume step passed as -1, resuming from step %s",
+                        resume_step.to_short_string(),
+                    )
+            else:
+                resume_step = Step.from_short_string(
+                    config.resume_step, steps_per_epoch
+                )
+            if config.model.ckpt_path is None:
+                config.model.ckpt_path = Path(config.resume_from).joinpath(
+                    "checkpoints", f"{resume_step.to_short_string()}.ckpt"
+                )
             logger.info("Model will be loaded from %s.", config.model.ckpt_path)
             assert config.model.ckpt_path.exists(), (
                 f"Path {config.model.ckpt_path} doesn't exist."
