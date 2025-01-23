@@ -861,9 +861,7 @@ def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
     return ckpts[last_step]
 
 
-def get_resume_state_dicts(
-    config, i: int=1
-) -> Tuple[int, int, Dict, Dict, Dict]:
+def get_resume_state_dicts(config, i: int = 1) -> Tuple[int, int, Dict, Dict, Dict]:
     """logic:
     if only ckpt_path is set, load the model and nothing else
     if resume_from is set, load the epoch, step, and optimizer states from the checkpoint
@@ -910,7 +908,9 @@ def get_resume_state_dicts(
             )
         # find checkpoint at resume_step
         else:
-            step = Step.from_short_string(config.resume_step, steps_per_epoch).get_step()
+            step = Step.from_short_string(
+                config.resume_step, steps_per_epoch
+            ).get_step()
             ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
             if step not in ckpts:
                 raise ValueError(
@@ -930,7 +930,9 @@ def get_resume_state_dicts(
     model_sd = ckpt_dict["state_dict"]
     opt_sd = ckpt_dict["optimizer_state_dict"]
     schedule_sd = ckpt_dict["scheduler_state_dict"]
-    logger.info(f"Model, optimizer, lr schedule loaded from {ckpt_file}, {epoch}ep {step}st.")
+    logger.info(
+        f"Model, optimizer, lr schedule loaded from {ckpt_file}, {epoch}ep {step}st."
+    )
 
     return epoch, step, model_sd, opt_sd, schedule_sd
 
@@ -973,7 +975,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
         model, tokenizer = configure_model(
             config, device, seed=seed, state_dict=model_sd
         )
-        #TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
+        # TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
         init_model_vector = (
             nn.utils.parameters_to_vector(model.parameters()).detach().cpu()
         )

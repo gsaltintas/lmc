@@ -219,7 +219,7 @@ class TrainingRunner(ExperimentManager):
             )
             # evaluate
             if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i + 1))
+                log_dct.update(self.evaluate_element(element, i))
             # save checkpoint
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
