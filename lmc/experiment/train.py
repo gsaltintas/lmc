@@ -36,21 +36,25 @@ class TrainingRunner(ExperimentManager):
     device: torch.device = None
     steps_per_epoch: int = None
     global_step: int = 0
+    ep: int = 0
+    start_step: int = 0
 
     @staticmethod
     def description():
         return "Train n model(s)."
 
     def setup(self) -> None:
-        self.training_elements: TrainingElements
-        self.device: torch.device
-        self.training_elements, self.device = setup_experiment(self.config)
+        self.training_elements, self.device, self.start_step = setup_experiment(
+            self.config
+        )
+        self.global_step = 0
+        self.ep = 0
         self.steps_per_epoch = self.config.data.get_steps_per_epoch()
         self.max_steps = self.training_elements.max_steps.get_step(self.steps_per_epoch)
+
         self.eval_steps = self.get_steps(
             self.config.trainer.eval_freq, self.config.trainer.eval_specific_steps
         )
-
         self.save_steps = self.get_steps(
             self.config.trainer.save_freq, self.config.trainer.save_specific_steps
         )
@@ -72,7 +76,7 @@ class TrainingRunner(ExperimentManager):
             and freq.lower() != "false"
         ):
             skip = Step.from_short_string(freq, self.steps_per_epoch).get_step()
-            steps = set(list(range(0, self.max_steps, skip))[1:])
+            steps = set(range(0, self.max_steps, skip))
         for step in step_list.split(","):
             if step != "":
                 steps.add(Step.from_short_string(step, self.steps_per_epoch).get_step())
@@ -99,10 +103,8 @@ class TrainingRunner(ExperimentManager):
 
     def on_train_start(self):
         print(self.config.display)
-        self.ep = 0
         if self.training_elements.is_same_model():
             self.logger.info("Models are the same at initialization.")
-        # see if we need to run evaluations before training
 
     def on_epoch_start(self):
         self.training_elements.on_epoch_start()
@@ -118,17 +120,30 @@ class TrainingRunner(ExperimentManager):
             self.on_epoch_start()
             train_loaders = [iter(el.train_loader) for el in self.training_elements]
             for batch_ind, batches in enumerate(zip(*train_loaders)):
-                if self.global_step >= self.max_steps:
+                if not (self.global_step < self.max_steps):
                     break
-                self.step_all_training_elements(batches)
+                if self.start_step > self.global_step:
+                    # advance batches to bring dataloader state to start_step
+                    self.advance_step_without_training()
+                else:
+                    self.save_all_training_elements()
+                    self.step_all_training_elements(batches)
             self.on_epoch_end()
         self.on_train_end()
 
-    def evaluate_element(self, element, i):
+    def evaluate_element(self, element: TrainingElement, i):
+        element.model.eval()
         log_dct = {f"step/model{i}": element.curr_step}
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
             element.dist_from_init()
         )
+        if (
+            i < self.config.n_models
+        ):  # i is index of element + 1, in range [1, n_models], so next element is at i in self.training_elements
+            next_el = self.training_elements[i]
+            log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}-{i + 1}").log_name] = (
+                element.dist_from_element(next_el)
+            )
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))
@@ -154,16 +169,29 @@ class TrainingRunner(ExperimentManager):
             )
         return log_dct
 
+    def save_all_training_elements(self):
+        # save checkpoints before doing anything to get a precise snapshot of this iteration
+        for element in self.training_elements:
+            if element.curr_step in self.save_steps:
+                element.save(self.steps_per_epoch)
+
     def on_train_end(self):
         # eval always happens on the last step
         log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
-        for i, element in enumerate(self.training_elements):
-            log_dct.update(self.evaluate_element(element, i + 1))
+        for i, element in enumerate(self.training_elements, start=1):
+            log_dct.update(self.evaluate_element(element, i))
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
             log_dct.update(self.evaluate_lmc())
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
+
+    def advance_step_without_training(self):
+        self.global_step += 1
+        for i, element in enumerate(self.training_elements, start=1):
+            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+                continue
+            element.curr_step += 1
 
     def step_all_training_elements(self, batches):
         log_dct = {}
@@ -173,21 +201,25 @@ class TrainingRunner(ExperimentManager):
         # go through each training element
         step_dct = {"step/global": self.global_step}
         self.global_step += 1
-        for i, batch in enumerate(batches):
-            element = self.training_elements[i]
+        for i, (batch, element) in enumerate(
+            zip(batches, self.training_elements), start=1
+        ):
             if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
                 continue
+            # evaluate
+            if element.curr_step in self.eval_steps:
+                log_dct.update(self.evaluate_element(element, i))
             # train
             step_dct.update(
                 self.step_element(
                     element,
                     batch,
-                    i=i + 1,
+                    i=i,
                 )
             )
             # evaluate
             if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i + 1))
+                log_dct.update(self.evaluate_element(element, i))
             # save checkpoint
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
@@ -201,6 +233,7 @@ class TrainingRunner(ExperimentManager):
             wandb.log(log_dct)
 
     def step_element(self, element, batch, i: int = 1) -> Dict[str, Any]:
+        element.model.train()
         log_dct = {f"step/model{i}": element.curr_step}
         element.train_iterator.update()
         element.curr_step += 1
@@ -398,7 +431,6 @@ class TrainingRunner(ExperimentManager):
     @torch.no_grad()
     def _test_vision(self, model, loader, iterator: tqdm):
         """Vision-specific testing"""
-        model.eval()
         total_acc, total_topk, cross_entropy = (
             AverageMeter(),
             AverageMeter(),
@@ -430,7 +462,6 @@ class TrainingRunner(ExperimentManager):
     @torch.no_grad()
     def _test_language(self, model, loader, iterator: tqdm):
         """Language-specific testing"""
-        model.eval()
         dataset = self.config.data.dataset_info
 
         # Initialize metrics dictionary with cross_entropy
@@ -530,6 +561,7 @@ class TrainingRunner(ExperimentManager):
 
     @torch.no_grad()
     def test(self, model, loader, iterator: tqdm):
+        model.eval()
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             return self._test_language(model, loader, iterator)

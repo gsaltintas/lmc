@@ -424,6 +424,17 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
 
+            if model_idx < self.n_models:
+                self.add_metric(
+                    f"l2_dist_{model_idx}-{model_idx + 1}",
+                    WandbMetric(
+                        f"l2/dist_{model_idx}-{model_idx + 1}",
+                        rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{model_idx + 1}}}}} \rVert_F$",
+                        f"l2_dist_{model_idx}-{model_idx + 1}",
+                        category=MetricCategory.L2_DISTANCE,
+                    ),
+                )
+
     def has_metric(self, metric_name: str) -> bool:
         if metric_name in self.metrics.keys():
             return True

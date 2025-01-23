@@ -76,12 +76,10 @@ class TrainingElement(object):
     def on_epoch_start(self):
         """call on epoch start to prepare for training the epoch"""
         self.opt.zero_grad()
-        self.model.train()
         self.metrics.reset()
 
     def on_epoch_end(self):
         """call on epoch end to prepare for the evaluations"""
-        self.model.eval()
         self.metrics.reset()
 
     def params_equal(self, other: "TrainingElement"):
@@ -93,11 +91,19 @@ class TrainingElement(object):
                 return False
         return True
 
-    def dist_from_init(self):
+    def dist_from_init(self) -> float:
         current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
         dist = torch.linalg.norm(current_vector.detach().cpu() - self.init_model_vector)
         return dist.item()
-    
+
+    def dist_from_element(self, el: "TrainingElement") -> float:
+        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
+        other_vector = torch.nn.utils.parameters_to_vector(el.model.parameters())
+        dist = torch.linalg.norm(
+            current_vector.detach().cpu() - other_vector.detach().cpu()
+        )
+        return dist.item()
+
     def save(self, steps_per_epoch, save_name=None):
         """Saves the model state, optimizer and scheduler state along with epoch."""
         step = Step(self.curr_step, steps_per_epoch)

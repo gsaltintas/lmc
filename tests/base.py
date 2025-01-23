@@ -39,7 +39,7 @@ class BaseTest(unittest.TestCase):
                 --warmup_ratio 0.02  \
                 --momentum 0.9  \
                 --rewind_lr {rewind_lr}  \
-            --n_models 2  \
+            --n_models {n_models}  \
                 --perturb_mode {perturb_mode}  \
                 --perturb_step {perturb_step}  \
                 --perturb_inds {perturb_inds}  \
@@ -47,17 +47,13 @@ class BaseTest(unittest.TestCase):
                 --same_steps_pperturb {same_steps_pperturb}  \
             --deterministic {deterministic}  \
                 --seed1 {seed1}  \
-                --seed2 {seed2}  \
                 --loader_seed1 {loader_seed1}  \
-                --loader_seed2 {loader_seed2}  \
                 --perturb_seed1 {perturb_seed1}  \
-                --perturb_seed2 {perturb_seed2}  \
             --lmc_check_perms false  \
                 --lmc_on_epoch_end false  \
                 --lmc_on_train_end {lmc_on_train_end}  \
                 --n_points 3  \
     {args}"""
-
     SEED_1 = 42
     SEED_2 = 41
 
@@ -69,8 +65,8 @@ class BaseTest(unittest.TestCase):
         )
         self.log_dir = test_path / "tmp"
         # remove log dir if it already exists
-        if self.log_dir.exists():
-            rmtree(self.log_dir)
+        # if self.log_dir.exists():
+        #     rmtree(self.log_dir)
         self.log_dir.mkdir(exist_ok=True)
 
         self.data_dir = test_path / "data"
@@ -80,8 +76,8 @@ class BaseTest(unittest.TestCase):
         if not self.data_dir.exists() and data_dir_env_var is not None:
             os.symlink(data_dir_env_var, self.data_dir, target_is_directory=True)
 
-    def tearDown(self):
-        rmtree(self.log_dir)
+    # def tearDown(self):
+    #     rmtree(self.log_dir)
 
     def get_test_config(self,
         experiment="perturb",
@@ -98,12 +94,13 @@ class BaseTest(unittest.TestCase):
         model_dir=None,
         lmc_on_epoch_end=False,
         lmc_on_train_end=False,
+        n_models=1,
         **kwargs
         ):
         config_type = Trainer if experiment == "train" else PerturbedTrainer
         config = config_type.from_dict(
             dict(
-                n_models=1,
+                n_models=n_models,
                 log_dir=self.log_dir,
                 path=self.data_dir / dataset,
                 norm="layernorm",
@@ -152,18 +149,23 @@ class BaseTest(unittest.TestCase):
         lmc_on_train_end="false",
         project="lmc-test",
         run_name=None,
+        n_models=2,
         model_dir=None,
         args=[],
     ):
+        extra_seeds = ""
+        if n_models > 1:
+            extra_seeds += " ".join([
+                "--seed2", str(seed2),
+                "--loader_seed2", str(seed2 if loader_seed2 is None else loader_seed2),
+                "--perturb_seed2", str(seed2 if perturb_seed2 is None else perturb_seed2),])
+
         command = str.format(
             self.TEST_COMMAND,
             experiment=experiment,
             seed1=seed1,
-            seed2=seed2,
             loader_seed1=seed1 if loader_seed1 is None else loader_seed1,
-            loader_seed2=seed2 if loader_seed2 is None else loader_seed2,
             perturb_seed1=seed1 if perturb_seed1 is None else perturb_seed1,
-            perturb_seed2=seed2 if perturb_seed2 is None else perturb_seed2,
             perturb_step=perturb_step,
             perturb_scale=perturb_scale,
             perturb_mode=perturb_mode,
@@ -181,8 +183,9 @@ class BaseTest(unittest.TestCase):
             lmc_on_train_end=lmc_on_train_end,
             project=project,
             run_name=run_name,
+            n_models=n_models,
             model_dir="" if model_dir is None else f"--model_dir {model_dir}",
-            args=args if isinstance(args, str) else " ".join(args),
+            args=extra_seeds + " " + (args if isinstance(args, str) else " ".join(args)),
         )
         return command
 
@@ -205,11 +208,16 @@ class BaseTest(unittest.TestCase):
     def ckpts_match(ckpt_1, ckpt_2):
         sd_1 = torch.load(ckpt_1)["state_dict"]
         sd_2 = torch.load(ckpt_2)["state_dict"]
+        return BaseTest.state_dicts_equal(sd_1, sd_2)
+
+    @staticmethod
+    def state_dicts_equal(sd_1, sd_2):
         if set(sd_1.keys()) != set(sd_2.keys()):
             return False
         for k, v in sd_1.items():
-            if not torch.equal(v, sd_2[k]):
-                return False
+            if isinstance(v, torch.Tensor):  # ignore non-tensors for simplicity
+                if not torch.allclose(v, sd_2[k]):
+                    return False
         return True
 
     @staticmethod
@@ -232,16 +240,7 @@ class BaseTest(unittest.TestCase):
     def run_command_and_return_result(self, model_dir, key_to_return, **kwargs):
         model_dir = self.log_dir / model_dir
         command = self.get_test_command(model_dir=model_dir, use_wandb=True, **kwargs)
-        result = run_command(command)
+        result = run_command(command, print_output=True)
         self.assertFalse(command_result_is_error(result))
         return self.get_summary_value(model_dir, key_to_return)
-
-    @staticmethod
-    def state_dicts_equal(sd_1, sd_2):
-        if set(sd_1.keys()) != set(sd_2.keys()):
-            return False
-        for k, v in sd_1.items():
-            if not torch.allclose(v, sd_2[k]):
-                return False
-        return True
 
