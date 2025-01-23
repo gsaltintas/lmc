@@ -44,14 +44,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 for i, v in enumerate(self.models_at_init, start=1)
             }
         )
-        log_dct.update(
-            {
-                f"static/l2_dist_at_init/{i}-{i + 1}": torch.norm(v1 - v2).item()
-                for i, (v1, v2) in enumerate(
-                    zip(self.models_at_init, self.models_at_init[1:]), start=1
-                )
-            }
-        )
+        # note: l2_dist_at_init is deprecated because it l2 between models is now logged in train.py in evaluate_element
         # save per-layer L2s
         if self.config.log_per_layer_l2:
             for i, el in enumerate(self.training_elements, start=1):
@@ -132,7 +125,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 self.logger.info(
                     "Model has batch norm, passing training data once to eliminate variance collapse."
                 )
-            # #TODO probably want to move gradient metrics to end of epoch
+            ## TODO also log gradient metrics during eval
             ## TODO: I think we want them here too, if grad norm is hight at the time of perturbance it could suggest that we are not in a basin and hence more instability
             # for num_data_points in [1, 5, -1]:
             #     dl = self.get_train_loader(el.loader_seed, tokenizer=el.tokenizer)

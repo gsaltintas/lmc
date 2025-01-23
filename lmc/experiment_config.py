@@ -218,7 +218,7 @@ class Experiment:
     deterministic: bool = False
     zip_and_save_source: bool = True
     resume_from: Optional[str] = None
-    resume_step: Optional[int] = -1
+    resume_step: Optional[str] = "-1"
     log_to_same_experiment: Optional[bool] = False
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
@@ -250,6 +250,7 @@ class Experiment:
         self.n_models = kwargs.get("n_models", 1)
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
+        self.resume_step = kwargs.get("resume_step", "-1")
         self.deterministic = kwargs.get("deterministic", False)
         self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
 

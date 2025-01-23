@@ -89,7 +89,7 @@ class Step:
             step % steps_per_epoch,
         )
 
-    def to_short_string(self, steps_per_epoch: Optional[int] = None):
+    def to_short_string(self, steps_per_epoch: Optional[int] = None) -> str:
         ep, st = self.get_epoch_step_pair(steps_per_epoch)
         return f"{ep}ep{st}st"
 

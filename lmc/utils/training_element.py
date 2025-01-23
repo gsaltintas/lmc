@@ -76,12 +76,10 @@ class TrainingElement(object):
     def on_epoch_start(self):
         """call on epoch start to prepare for training the epoch"""
         self.opt.zero_grad()
-        self.model.train()
         self.metrics.reset()
 
     def on_epoch_end(self):
         """call on epoch end to prepare for the evaluations"""
-        self.model.eval()
         self.metrics.reset()
 
     def params_equal(self, other: "TrainingElement"):

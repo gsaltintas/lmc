@@ -7,7 +7,7 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -42,17 +42,10 @@ logger = logging.getLogger("setup")
 WANDB_DIR = os.environ.get("SCRATCH", os.environ.get("TMPDIR"))
 
 
-# def load_model_from_checkpoint(
-#     model: nn.Module, path: Union[Path, str], strict: bool = False
-# ) -> None:
-#     """given a checkpoint saved by pytorch, loads the state_dict from the checkpoint to the provided model"""
-#     assert path.exists(), f"Path {path} doesn't exist."
-#     d = torch.load(path, map_location=model.device)
-#     model.load_state_dict(d["state_dict"], strict=False)
-
-
-def load_model_from_checkpoint(
-    model: nn.Module, path: Union[Path, str], ignore_mismatched_sizes: bool = True
+def load_model_from_state_dict(
+    model: nn.Module,
+    state_dict: Dict[str, torch.Tensor],
+    ignore_mismatched_sizes: bool = True,
 ) -> None:
     """
     Load weights from a checkpoint into a model, gracefully handling missing or mismatched keys.
@@ -63,11 +56,7 @@ def load_model_from_checkpoint(
         path: Path to checkpoint file
         ignore_mismatched_sizes: Whether to skip loading weights with mismatched sizes
     """
-    assert Path(path).exists(), f"Path {path} doesn't exist."
-
     # Load checkpoint
-    d = torch.load(path, map_location=model.device)
-    checkpoint_state_dict = d["state_dict"]
     model_state_dict = model.state_dict()
 
     # Track different types of keys
@@ -77,7 +66,7 @@ def load_model_from_checkpoint(
     to_be_loaded = OrderedDict()
 
     # Load matching keys
-    for k, v in checkpoint_state_dict.items():
+    for k, v in state_dict.items():
         if k not in model_state_dict:
             unexpected_keys.append(k)
             continue
@@ -114,27 +103,6 @@ def load_model_from_checkpoint(
             "You should TRAIN these layers to ensure good performance!",
             keys_str,
         )
-
-
-def load_training(
-    training_element: TrainingElement, path: Path, load_opt: bool = True
-) -> None:
-    """loads a saved training element from the given path"""
-    assert path.exists(), f"Path {path} doesn't exist."
-    assert training_element.model is not None
-    d = torch.load(path, map_location=training_element.model.device)
-    training_element.model.load_state_dict(d["state_dict"])
-    if load_opt:
-        training_element.opt.load_state_dict(d["optimizer_state_dict"])
-        if training_element.scheduler:
-            training_element.scheduler.load_state_dict(d["scheduler_state_dict"])
-        elif (
-            training_element.scheduler is None and d["scheduler_state_dict"] is not None
-        ):
-            logger.warn(
-                "Scheduler saved in the checkpoint but the training element doesn't have any scheduler."
-            )
-    training_element.curr_step = d.get("step", 0)
 
 
 def should_freeze_layer(layer_name: str, pattern: str) -> bool:
@@ -241,8 +209,6 @@ def configure_vision_model(config: Trainer, device: torch.device) -> "BaseModel"
             norm=conf.norm,
         )
 
-    # if config.resume_from: 5279952
-
     logger.info("Model created.")
     # logger.info
     model = model.to(device)
@@ -253,7 +219,11 @@ def configure_vision_model(config: Trainer, device: torch.device) -> "BaseModel"
 
 
 def configure_model(
-    config: Trainer, device: torch.device, seed: int = None, print_output=True
+    config: Trainer,
+    device: torch.device,
+    seed: int = None,
+    print_output=True,
+    state_dict=None,
 ) -> Tuple["BaseModel", Optional[AutoTokenizer]]:
     seed_everything(seed)
     """ creates a model given the configuration """
@@ -262,18 +232,18 @@ def configure_model(
         model, tokenizer = configure_nlp_model(config, device)
     else:
         model = configure_vision_model(config, device)
-    if ckpt_path := config.model.ckpt_path:
-        assert Path(ckpt_path).resolve().absolute().exists(), ValueError(
-            f"Provided ckpt path doesn't exist {ckpt_path}"
-        )
-        load_model_from_checkpoint(model, ckpt_path)
-        logger.info("Model loaded from checkpoint %s.", ckpt_path)
+    # optionally load from ckpt
+    if state_dict is None:  # will not be None if called from setup_experiment
+        _, _, state_dict, _, _ = get_resume_state_dicts(config)
+    if state_dict:
+        load_model_from_state_dict(model, state_dict)
+        logger.info("Model state dict updated")
     if print_output:
         print(model)
     return model, tokenizer
 
 
-def configure_optimizer(config: Trainer, model: "BaseModel"):
+def configure_optimizer(config: Trainer, model: "BaseModel", state_dict=None):
     opt_conf = config.trainer.opt
     if opt_conf.optimizer.lower() == "sgd":
         opt = optim.SGD(
@@ -297,8 +267,13 @@ def configure_optimizer(config: Trainer, model: "BaseModel"):
             weight_decay=opt_conf.weight_decay,
         )
     else:
-        raise NotImplementedError(f"Optimizer ({opt_conf.optimizer}) not mplemented.")
-
+        raise NotImplementedError(f"Optimizer ({opt_conf.optimizer}) not implemented.")
+    # optionally load from ckpt
+    if state_dict is None:  # will not be None if called from setup_experiment
+        __, _, _, state_dict, _ = get_resume_state_dicts(config)
+    if state_dict:  # skipped if empty dict
+        opt.load_state_dict(state_dict)
+        logger.info("Optimizer state dict updated")
     return opt
 
 
@@ -310,6 +285,7 @@ def configure_lr_scheduler(
     lr_schedule: dict = None,
     global_step: int = 0,
     warmup_steps: int = None,
+    state_dict=None,
 ):
     warmup_steps = (
         math.ceil(warmup_ratio * training_steps)
@@ -393,6 +369,10 @@ def configure_lr_scheduler(
         )
     else:
         raise ValueError(f"Unkonwn lr_scheduler {lr_scheduler}")
+    # optionally load from ckpt
+    if scheduler is not None and state_dict:  # skipped if empty dict
+        scheduler.load_state_dict(state_dict)
+        logger.info("Scheduler state dict updated")
     return scheduler
 
 
@@ -792,6 +772,10 @@ def setup_model_dir(config: Trainer) -> Path:
     return config.model_dir
 
 
+def get_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def setup_device(config: Experiment) -> torch.device:
     """
     Configure and initialize the computing device for PyTorch operations.
@@ -803,7 +787,7 @@ def setup_device(config: Experiment) -> torch.device:
     else:
         torch.backends.cudnn.benchmark = True
     torch.backends.cuda.matmul.allow_tf32 = True
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     logger.info(f"Using device: {device}.")
     return device
 
@@ -812,21 +796,19 @@ def setup_wandb(config: Experiment) -> None:
     """given the configuration, sets up the wandb project"""
     if config.logger.use_wandb:
         conf_dct = config.wandb_dct()
-        if config.resume_from:
+        if config.log_to_same_experiment and config.resume_from:
             if config.resume_from.startswith("wandb:"):
                 wandb_url = config.resume_from[6:]
             else:
-                wandb_url = config.model_dir.joinpath("wandb").read_text()
+                wandb_url = config.model_dir.joinpath("wandb.txt").read_text()
             url_parts = wandb_url.split("/")
             entity = url_parts[-3]
             project = url_parts[-2]
             run_id = url_parts[-1]
             wandb_kwargs = dict(entity=entity, project=project, dir=WANDB_DIR)
-            if config.log_to_same_experiment:
-                wandb_kwargs["resume"] = "allow"
-                wandb_kwargs["run_id"] = run_id
+            wandb_kwargs["resume"] = "allow"
+            wandb_kwargs["run_id"] = run_id
             run = wandb.init(**wandb_kwargs)
-
         else:
             run = wandb.init(
                 name=config.logger.run_name,
@@ -848,7 +830,102 @@ def setup_wandb(config: Experiment) -> None:
             Path(config.model_dir).joinpath("wandb.txt").write_text(url)
 
 
-def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
+def get_ckpts_by_step(ckpt_dir: Path, steps_per_epoch: int) -> OrderedDict[int, Path]:
+    ckpts = []
+    for ckpt in ckpt_dir.glob("*.ckpt"):
+        if ckpt.stem != "best":
+            step = Step.from_short_string(ckpt.stem, steps_per_epoch).get_step()
+            ckpts.append((step, ckpt))
+    sorted_ckpt_dict = OrderedDict()
+    for k, v in sorted(ckpts, key=lambda x: x[0]):
+        sorted_ckpt_dict[k] = v
+    return sorted_ckpt_dict
+
+
+def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
+    last_ckpt = ckpt_dir / "last.ckpt"
+    if last_ckpt.exists():
+        return last_ckpt
+    ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
+    last_step = list(ckpts.keys())[-1]
+    return ckpts[last_step]
+
+
+def get_resume_state_dicts(
+    config, i: int=1
+) -> Tuple[int, int, Dict, Dict, Dict]:
+    """logic:
+    if only ckpt_path is set, load the model and nothing else
+    if resume_from is set, load the epoch, step, and optimizer states from the checkpoint
+        the checkpoint is inferred from resume_from, resume_step, and i (model index)
+    if both ckpt_path and resume_from are set, ckpt_path is used to initialize everything
+    """
+    device = get_device()
+    model_sd = {}
+    has_ckpt_path = hasattr(config.model, "ckpt_path") and (config.model.ckpt_path)
+    has_resume_from = hasattr(config, "resume_from") and (config.resume_from)
+
+    # don't load anything
+    if not has_ckpt_path and not has_resume_from:
+        return 0, 0, {}, {}, {}
+
+    # load model only
+    if has_ckpt_path and not has_resume_from:
+        ckpt_path = Path(config.model.ckpt_path)
+        if not ckpt_path.exists():
+            raise ValueError(f"resume_from location does not exist: {ckpt_path}")
+        model_sd = torch.load(ckpt_path, map_location=device)["state_dict"]
+        logger.info(f"Model loaded from checkpoint {ckpt_path}")
+        return 0, 0, model_sd, {}, {}
+
+    if config.resume_from.startswith("wandb:"):
+        raise NotImplementedError("Resuming from wandb is under development")
+
+    # load everything from has_resume_from
+    if not has_ckpt_path and has_resume_from:
+        steps_per_epoch = config.data.get_steps_per_epoch()
+        ckpt_dir = Path(config.resume_from) / f"model{i}" / "checkpoints"
+        if not ckpt_dir.exists():
+            raise ValueError(f"resume_from location does not exist: {ckpt_dir}")
+        # resume_step is not set, or -1 or -1st means get last saved checkpoint
+        if (
+            not (hasattr(config, "resume_step") and (config.resume_step))
+            or str(config.resume_step) == "-1"
+            or str(config.resume_step) == "-1st"
+        ):
+            ckpt_file = get_last_ckpt(ckpt_dir, steps_per_epoch)
+            logger.info(
+                "resume_step is not set or is -1, resuming from last ckpt %s",
+                ckpt_file,
+            )
+        # find checkpoint at resume_step
+        else:
+            step = Step.from_short_string(config.resume_step, steps_per_epoch).get_step()
+            ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
+            if step not in ckpts:
+                raise ValueError(
+                    f"Could not find step {config.resume_step} in {ckpt_dir}"
+                )
+            ckpt_file = ckpts[step]
+
+    # load everything from ckpt_path
+    elif has_ckpt_path and has_resume_from:
+        ckpt_file = config.model.ckpt_path
+
+    # load state dicts
+    ckpt_dict = torch.load(ckpt_file, map_location=device)
+
+    epoch = ckpt_dict["epoch"]
+    step = ckpt_dict["step"]
+    model_sd = ckpt_dict["state_dict"]
+    opt_sd = ckpt_dict["optimizer_state_dict"]
+    schedule_sd = ckpt_dict["scheduler_state_dict"]
+    logger.info(f"Model, optimizer, lr schedule loaded from {ckpt_file}, {epoch}ep {step}st.")
+
+    return epoch, step, model_sd, opt_sd, schedule_sd
+
+
+def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, int]:
     config.logger.slurm_job_id = os.environ.get("SLURM_JOB_ID")
     """Creates all necessary elements. models, datamodules, etc."""
     device = setup_device(config)
@@ -876,133 +953,66 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         # Determine if using NLP or vision setup
         is_nlp_task = config.data.is_language_dataset()
         seed_everything(seed)
-        if (
-            hasattr(config, "resume_from")
-            and (config.resume_from)
-            and (config.resume_step is not None and config.resume_step != "")
-        ):
-            if config.resume_from.startswith("wandb:"):
-                raise NotImplementedError("Resuming from wandb is under development")
-                # TODO: parse the model dir, load config from there
-            ## TODO: fix this area
-            # get the last checkpoint if resume step is passed as -1
-            if str(config.resume_step) == "-1":
-                base_dir_ = Path(config.resume_from).resolve().absolute()
-                if "last.ckpt" in base_dir_.rglob("*.ckpt"):
-                    last_ckpt = list(base_dir_.rglob("*last.ckpt"))[-1]
-                    resume_step = torch.load(last_ckpt, map_location=device)["step"]
-                    resume_step = Step(resume_step)
-                    #
-                    config.model.ckpt_path = last_ckpt
-                    logger.info(
-                        "Resume step passed as -1, resuming from last.ckpt at %s",
-                        last_ckpt,
-                    )
-                else:
-                    existing_ckpts = [
-                        Step.from_short_string(ckpt_pt.stem, steps_per_epoch).get_step(
-                            steps_per_epoch
-                        )
-                        for ckpt_pt in base_dir_.rglob("*.ckpt")
-                        if ckpt_pt.stem != "best"
-                    ]
-                    if len(existing_ckpts) == 0:
-                        raise ValueError(
-                            "Model dir is empty and resume_step is passed as -1."
-                        )
-                    resume_step = Step(max(existing_ckpts), steps_per_epoch)
-                    logger.info(
-                        "Resume step passed as -1, resuming from step %s",
-                        resume_step.to_short_string(),
-                    )
-            else:
-                resume_step = Step.from_short_string(
-                    config.resume_step, steps_per_epoch
-                )
-            if config.model.ckpt_path is None:
-                config.model.ckpt_path = Path(config.resume_from).joinpath(
-                    "checkpoints", f"{resume_step.to_short_string()}.ckpt"
-                )
-            logger.info("Model will be loaded from %s.", config.model.ckpt_path)
-            assert config.model.ckpt_path.exists(), (
-                f"Path {config.model.ckpt_path} doesn't exist."
-            )
-            ckpt = torch.load(config.model.ckpt_path, map_location=device)
 
-        model, tokenizer = configure_model(config, device, seed=seed)
+        # load state dicts if resuming
+        epoch, start_step, model_sd, opt_sd, schedule_sd = get_resume_state_dicts(
+            config, i
+        )
+
+        # model
+        model, tokenizer = configure_model(
+            config, device, seed=seed, state_dict=model_sd
+        )
+        #TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
         init_model_vector = (
             nn.utils.parameters_to_vector(model.parameters()).detach().cpu()
         )
+        if hasattr(config, "frozen_layers"):
+            freeze_layers(model, config.frozen_layers)
+        logger.info("Setup model %d with seed=%d.", i, seed)
+
+        # data
+        def get_train_eval_test_loaders(loader_fn, **kwargs):
+            train_loader = loader_fn(train=True, evaluate=False, **kwargs)
+            eval_loader = loader_fn(train=True, evaluate=True, **kwargs)
+            test_loader = loader_fn(train=False, evaluate=True, **kwargs)
+            return train_loader, eval_loader, test_loader
+
         if is_nlp_task:
-            train_loader = setup_nlp_loader(
-                config.data,
-                train=True,
-                evaluate=False,
-                tokenizer=tokenizer,
-                loader_seed=loader_seed,
-            )
-            train_eval_loader = setup_nlp_loader(
-                config.data,
-                train=True,
-                evaluate=True,
-                tokenizer=tokenizer,
-                loader_seed=loader_seed,
-            )
-            test_loader = setup_nlp_loader(
-                config.data,
-                train=False,
-                evaluate=True,
+            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
+                setup_nlp_loader,
+                data_conf=config.data,
                 tokenizer=tokenizer,
                 loader_seed=loader_seed,
             )
         else:
-            train_loader = setup_vision_loader(
-                config.data, train=True, evaluate=False, loader_seed=loader_seed
+            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
+                setup_vision_loader, data_conf=config.data, loader_seed=loader_seed
             )
-            train_eval_loader = setup_vision_loader(
-                config.data, train=True, evaluate=True, loader_seed=loader_seed
-            )
-            test_loader = setup_vision_loader(
-                config.data, train=False, evaluate=True, loader_seed=loader_seed
-            )
-
-        if hasattr(config, "frozen_layers"):
-            freeze_layers(model, config.frozen_layers)
+        assert steps_per_epoch == len(train_loader)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
 
-        logger.info("Setup model %d with seed=%d.", i, seed)
-
-        assert steps_per_epoch == len(train_loader)
-        max_steps = Step(
-            f"{config.trainer.training_steps.get_step(steps_per_epoch)}st",
-            steps_per_epoch,
-        )
+        # optimizer
         seed_everything(seed)
-        opt = configure_optimizer(config, model)
-        total_steps = max_steps.get_step(steps_per_epoch)
+        opt = configure_optimizer(config, model, state_dict=opt_sd)
+        max_steps = config.trainer.training_steps.get_step(steps_per_epoch)
         if (ga := config.trainer.gradient_accumulation_steps) > 1:
-            total_steps = int(total_steps / ga)
+            grad_steps = int(max_steps / ga)
             logger.info(
                 "Gradient accumulation steps %d, modifying lr scheduler accordingly.",
                 ga,
             )
+        else:
+            grad_steps = max_steps
+        # scheduler
         scheduler = configure_lr_scheduler(
             opt,
-            total_steps,
+            grad_steps,
             config.trainer.opt.lr_scheduler,
             config.trainer.opt.warmup_ratio,
             {},
+            state_dict=schedule_sd,
         )
-        if (
-            hasattr(config, "resume_from")
-            and (config.resume_from)
-            and (config.resume_step > 0)
-        ):
-            opt.load_state_dict(ckpt["optimizer_state_dict"])
-            logger.info("Optimizer loaded from ckpt")
-            if scheduler is not None:
-                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-                logger.info("Scheduler loaded from ckpt")
         if config.logger.print_optimizers:
             logger.info("Optimizer %d - %s", i, opt)
             logger.info("Scheduler %d - %s", i, scheduler)
@@ -1019,7 +1029,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
                 train_loader=train_loader,
                 train_eval_loader=train_eval_loader,
                 test_loader=test_loader,
-                max_steps=max_steps,
+                max_steps=Step(max_steps, steps_per_epoch),
                 perturb_seed=perturb_seed,
                 tokenizer=tokenizer,
                 init_model_vector=init_model_vector,
@@ -1033,7 +1043,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device]:
         first_seed,
     )
 
-    return training_elements, device
+    return training_elements, device, start_step
 
 
 def cleanup(config: Experiment):
