@@ -1,6 +1,7 @@
-from collections import OrderedDict
 import logging
+import math
 from abc import abstractmethod
+from collections import OrderedDict
 from copy import deepcopy
 from typing import Dict, Optional, get_args
 
@@ -8,9 +9,14 @@ import numpy as np
 import torch
 from torch import nn
 
-from lmc.permutations import (PermSpec, PermType, get_permutation_sizes,
-                              get_random_permutation_with_fixed_points,
-                              permute_model, permute_state_dct)
+from lmc.permutations import (
+    PermSpec,
+    PermType,
+    get_permutation_sizes,
+    get_random_permutation_with_fixed_points,
+    permute_model,
+    permute_state_dct,
+)
 from lmc.utils.utils import pattern_matched
 
 from .layers import LayerNorm2d
@@ -19,8 +25,8 @@ from .type_declaration import PATTERNS, Activations, Inits, Norms
 __all__ = ["BaseModel"]
 
 
-
 INIT_STRATEGIES = get_args(get_args(Inits)[0])
+
 
 class BaseModel(nn.Module):
     _name: str = None
@@ -84,7 +90,11 @@ class BaseModel(nn.Module):
                     m.reset_parameters()
                 self.logger.debug("%s initialized with %s", name, init_strategy)
 
-            elif isinstance(m, LayerNorm2d) or isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.GroupNorm):
+            elif (
+                isinstance(m, LayerNorm2d)
+                or isinstance(m, nn.BatchNorm2d)
+                or isinstance(m, nn.GroupNorm)
+            ):
                 m.reset_parameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -94,13 +104,14 @@ class BaseModel(nn.Module):
 
     def _permute(self, perms: PermType, inplace: bool = True, **kwargs):
         """permutes the parameters of the model according to the perms dict and its permutation_spec, if inplace is True, the model is modified, otherwise a new model is returned"""
-        permuted_dct = permute_state_dct(self.model.state_dict(), self.permutation_spec(), perms=perms)
+        permuted_dct = permute_state_dct(
+            self.model.state_dict(), self.permutation_spec(), perms=perms
+        )
         model_ = self
         if not inplace:
             model_ = deepcopy(self)
         model_.model.load_state_dict(permuted_dct, strict=not self.is_language_model)
         return model_
-        return permute_model(self.model, self.permutation_spec(), perms, inplace)
 
     @abstractmethod
     def permutation_spec(self, **kwargs) -> PermSpec:
@@ -112,12 +123,14 @@ class BaseModel(nn.Module):
         """returns a random permutation for each parameter of the model according to its permutation_spec, the permutation is a dict of numpy arrays, each array is a permutation of the corresponding parameter"""
         spec = self.permutation_spec(**permutation_spec_kwargs)
         if fixed_points_fraction > 0:
-            perms = self._get_random_permutation_with_fixed_points(fixed_points_fraction)
+            perms = self._get_random_permutation_with_fixed_points(
+                fixed_points_fraction
+            )
         else:
             sizes = get_permutation_sizes(self.model.state_dict(), spec)
             perms = {p: np.random.permutation(n) for p, n in sizes.items()}
         return perms
-    
+
     def _get_random_permutation_with_fixed_points(
         self, fixed_points_fraction: float, **permutation_spec_kwargs
     ) -> Dict[str, np.array]:
@@ -150,8 +163,10 @@ class BaseModel(nn.Module):
                 # if this is the last layer, use 1/sqrt(n) as scaling instead
                 if include_constant_params:
                     if last_randinit_layer is None:
-                        self.logger.info("{k} has constant init but is not followed by another layer, assume 1/sqrt(n) std")
-                        std[k] = 1 / v.shape[0]**0.5
+                        self.logger.info(
+                            f"{k} has constant init but is not followed by another layer, assume 1/sqrt(n) std"
+                        )
+                        std[k] = 1 / v.shape[0] ** 0.5
                     else:
                         # check that output dims matches input dims of weight layer
                         assert last_randinit_inputs == v.shape[0]
@@ -166,14 +181,20 @@ class BaseModel(nn.Module):
                     std[k] = xavier_normal_std(v)
                 elif self.initialization_strategy in ("kaiming_uniform", "he_uniform"):
                     std[k] = kaiming_uniform_std(v)
-                elif self.initialization_strategy in ("kaiming_normal", "he_normal"):
+                elif self.initialization_strategy in (
+                    "kaiming_normal",
+                    "he_normal",
+                    "pretrained",
+                ):
                     std[k] = kaiming_normal_std(v)
                 # ignore shortcut layers when saving next input layer
                 if "shortcut" not in k:
                     last_randinit_layer = k
                     last_randinit_inputs = v.shape[1]
             else:
-                raise ValueError(f"Unknown layer type and std: name={k} shape={v.shape}")
+                raise ValueError(
+                    f"Unknown layer type and std: name={k} shape={v.shape}"
+                )
         reversed_std = OrderedDict()
         for k, v in reversed(std.items()):
             reversed_std[k] = v
@@ -199,8 +220,23 @@ def xavier_normal_std(tensor) -> float:
 def kaiming_uniform_std(tensor) -> float:
     # kaiming uniform(-1/sqrt(k), 1/sqrt(k)), where k = weight.size(1) * prod(*kernel_size)
     # std is 1/sqrt(12)*(b-a), where b-a = 2/sqrt(k)
-    return 2 / (12 * fan_in(tensor))**0.5
+    return 2 / (12 * fan_in(tensor)) ** 0.5
 
 
 def kaiming_normal_std(tensor) -> float:
-    return (2 / fan_in(tensor))**0.5
+    return (2 / fan_in(tensor)) ** 0.5
+    return 2 / (12 * fan_in(tensor)) ** 0.5
+
+
+def kaiming_normal_std(tensor) -> float:
+    return (2 / fan_in(tensor)) ** 0.5
+
+
+def scaled_dot_product_attention_std(dim_k: int) -> float:
+    """Calculate standard deviation for attention weights using 1/sqrt(d_k) scaling"""
+    return 1.0 / math.sqrt(dim_k)
+
+
+def positional_embedding_std(max_len: int, dim: int) -> float:
+    """Calculate standard deviation for positional embeddings"""
+    return 1.0 / math.sqrt(dim)

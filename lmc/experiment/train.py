@@ -12,7 +12,7 @@ from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
-from lmc.utils.lmc_utils import check_lmc
+from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
     Metrics,
@@ -20,8 +20,8 @@ from lmc.utils.metrics import (
     mixup_topk_accuracy,
     report_results,
 )
-from lmc.utils.step import Step
 from lmc.utils.setup_training import setup_experiment
+from lmc.utils.step import Step
 from lmc.utils.training_element import TrainingElement, TrainingElements
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -45,7 +45,6 @@ class TrainingRunner(ExperimentManager):
         self.training_elements: TrainingElements
         self.device: torch.device
         self.training_elements, self.device = setup_experiment(self.config)
-
         self.steps_per_epoch = self.config.data.get_steps_per_epoch()
         self.max_steps = self.training_elements.max_steps.get_step(self.steps_per_epoch)
         self.eval_steps = self.get_steps(
@@ -66,9 +65,14 @@ class TrainingRunner(ExperimentManager):
 
     def get_steps(self, freq, step_list):
         steps = set()
-        if freq is not None and freq != "" and freq.lower() != "none" and freq.lower() != "false":
+        if (
+            freq is not None
+            and freq != ""
+            and freq.lower() != "none"
+            and freq.lower() != "false"
+        ):
             skip = Step.from_short_string(freq, self.steps_per_epoch).get_step()
-            steps = set(range(0, self.max_steps, skip))
+            steps = set(list(range(0, self.max_steps, skip))[1:])
         for step in step_list.split(","):
             if step != "":
                 steps.add(Step.from_short_string(step, self.steps_per_epoch).get_step())
@@ -105,6 +109,7 @@ class TrainingRunner(ExperimentManager):
 
     def on_epoch_end(self):
         self.ep += 1
+        self.training_elements.on_epoch_end()
 
     def run(self):
         self.on_train_start()
@@ -141,6 +146,12 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
+        if self.config.n_models > 2:
+            evaluate_merge(
+                self.training_elements,
+                self.config,
+                log_dct,
+            )
         return log_dct
 
     def on_train_end(self):
@@ -166,12 +177,6 @@ class TrainingRunner(ExperimentManager):
             element = self.training_elements[i]
             if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
                 continue
-            # evaluate
-            if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i + 1))
-            # save checkpoint
-            if element.curr_step in self.save_steps:
-                element.save(self.steps_per_epoch)
             # train
             step_dct.update(
                 self.step_element(
@@ -180,6 +185,12 @@ class TrainingRunner(ExperimentManager):
                     i=i + 1,
                 )
             )
+            # evaluate
+            if element.curr_step in self.eval_steps:
+                log_dct.update(self.evaluate_element(element, i + 1))
+            # save checkpoint
+            if element.curr_step in self.save_steps:
+                element.save(self.steps_per_epoch)
         # print summary if log_dct is not empty
         if self.config.logger.print_summary and log_dct:
             log_dct["step/epoch"] = self.ep
@@ -324,16 +335,10 @@ class TrainingRunner(ExperimentManager):
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""
+
         log_dct = {
-            f"model{model_idx}/train/cross_entropy": element.metrics.cross_entropy.get_avg(
-                percentage=False
-            ),
-            f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
-                percentage=False
-            ),
-            f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(
-                percentage=False
-            ),
+            f"model{model_idx}/train/{key}": val
+            for (key, val) in element.metrics.get_metrics(percentage=False).items()
         }
 
         # Run test evaluation
@@ -350,55 +355,18 @@ class TrainingRunner(ExperimentManager):
             )
 
             self._handle_best_checkpoint(element, test_res["accuracy"])
-
         return log_dct
 
     def _eval_language(
         self, element: TrainingElement, model_idx: int
     ) -> Dict[str, float]:
         """Language-specific evaluation logging"""
-        task_type = self.config.data.task_type
-        # import code; code.interact(local=locals()|globals())
         # Base metrics all tasks have
         ## log train metrics
         log_dct = {
             f"model{model_idx}/train/{key}": val
             for (key, val) in element.metrics.get_metrics(percentage=False).items()
         }
-
-        # # Add task-specific metrics
-        # if task_type in [TaskType.CLASSIFICATION, TaskType.NATURAL_LANGUAGE_INFERENCE]:
-        #     log_dct.update(
-        #         {
-        #             f"model{model_idx}/train/accuracy": element.metrics.total_acc.get_avg(
-        #                 percentage=False
-        #             )
-        #         }
-        #     )
-        # elif task_type == TaskType.QUESTION_ANSWERING:
-        #     log_dct.update(
-        #         {
-        #             f"model{model_idx}/train/em": element.metrics.exact_match.get_avg(
-        #                 percentage=False
-        #             ),
-        #             # todo: f1
-        #             f"model{model_idx}/train/f1": element.metrics.f1_score.get_avg(
-        #                 percentage=False
-        #             ),
-        #             f"model{model_idx}/train/top_3_accuracy": element.metrics.total_topk.get_avg(
-        #                 percentage=False
-        #             ),
-        #         }
-        #     )
-        # elif task_type == TaskType.GENERATION:
-        #     log_dct.update(
-        #         {
-        #             f"model{model_idx}/train/perplexity": element.metrics.perplexity.get_avg(
-        #                 percentage=False
-        #             )
-        #         }
-        #     )
-
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_language(
@@ -415,7 +383,6 @@ class TrainingRunner(ExperimentManager):
                 or -test_res.get("loss", float("inf"))
             )
             self._handle_best_checkpoint(element, best_metric)
-
         return log_dct
 
     def _handle_best_checkpoint(self, element, metric_value: float):
@@ -423,7 +390,7 @@ class TrainingRunner(ExperimentManager):
         if metric_value > element.optimal_acc:
             element.optimal_acc = metric_value
             if self.config.trainer.save_best:
-                self.logger.info(f"Saving best params at epoch {self.ep}")
+                self.logger.info("Saving best params at epoch %d", self.ep)
                 if element.optimal_path is not None:
                     element.optimal_path.unlink()
                 element.save(self.steps_per_epoch, save_name="best.ckpt")
@@ -499,9 +466,6 @@ class TrainingRunner(ExperimentManager):
             metrics.update(**metrics_kwargs)
         # Prepare results dict - only include metrics that were updated
         res = metrics.get_metrics(percentage=False)
-        # {
-        #     k: v.get_avg(percentage=False) for k, v in metrics.items() if v.count > 0
-        # }
 
         iterator.set_postfix(res)
         iterator.refresh()

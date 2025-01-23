@@ -805,7 +805,9 @@ def setup_model_dir(config: Trainer) -> Path:
         now = datetime.now()
         formatted_date = now.strftime("%y-%m-%d")
         short_id = str(now.microsecond)[:5]
-        config.model_dir = Path(config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}")
+        config.model_dir = Path(
+            config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}"
+        )
         logger.info(f"Created model dir: {config.model_dir}")
     elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
         now = datetime.now()
@@ -1076,7 +1078,7 @@ def setup_iterators(
     training_elements: Dict[int, TrainingElement], use_tqdm: bool = True
 ):
     tqdm_cls = tqdm if use_tqdm else Iterator
-    for i, el in enumerate(training_elements):
+    for i, el in enumerate(training_elements, start=1):
         color = COLORS[i % len(COLORS)]
         train_iterator = tqdm_cls(
             total=len(el.train_loader),
