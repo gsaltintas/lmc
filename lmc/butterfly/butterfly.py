@@ -8,6 +8,7 @@ import torch
 from torch import nn
 from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
+from transformers import AutoTokenizer
 
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.seeds import temp_seed
@@ -327,7 +328,12 @@ def scale_noise(
 
 
 def sample_noise_and_perturb(
-    config: PerturbedTrainer, model, perturb_seed: int, loss_fn: nn.Module, ind: int
+    config: PerturbedTrainer,
+    model,
+    perturb_seed: int,
+    loss_fn: nn.Module,
+    ind: int,
+    tokenizer: AutoTokenizer = None,
 ):
     layers = get_perturbed_layers(model, config.dont_perturb_module_patterns)
     if config.perturb_mode == "batch":
@@ -336,11 +342,14 @@ def sample_noise_and_perturb(
             train=True,
             evaluate=False,
             loader_seed=perturb_seed,
+            tokenizer=tokenizer,
         )
         noise = get_batch_noise(model, dataloader=dl, loss_fn=loss_fn, layers=layers)
     elif config.perturb_mode == "gaussian":
         with temp_seed(perturb_seed):
             noise = get_gaussian_noise(model, layers=layers)
+    else:
+        raise ValueError(f"Invalid noise mode {config.perturb_mode}.")
     noise = scale_noise(
         noise,
         model,
@@ -355,4 +364,5 @@ def sample_noise_and_perturb(
         for k, v in noise.items():
             log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
     perturb_model(model, noise)
+    return log_dct
     return log_dct

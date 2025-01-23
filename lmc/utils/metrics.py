@@ -282,6 +282,7 @@ class Metrics:
 
 def report_results(log_dct, epoch: int, n_models: int = 1):
     """given the log_dct, generates and prints a nice looking summary of the training results for the given epoch"""
+    # TODO: modify these with registry
     for prefix, key_prefix in [
         ("", ""),
         ("Permuted - ", "matched-perm-1-2/"),

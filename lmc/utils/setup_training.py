@@ -31,6 +31,7 @@ from lmc.data.data_stats import DatasetRegistry, TaskType
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.bert import Bert
+from lmc.models.roberta import Roberta
 from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
 from lmc.utils.seeds import seed_everything, seed_worker
@@ -157,7 +158,16 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
     )  # This will already raise an appropriate error if dataset not found
 
     if "t5" in conf.model_name.lower():
-        model = T5(conf.model_name)
+        model = T5(
+            conf.model_name,
+            initialization_strategy=conf.initialization_strategy,
+        )
+    elif "roberta" in conf.model_name.lower():
+        model = Roberta(
+            conf.model_name,
+            output_dim=out,
+            initialization_strategy=conf.initialization_strategy,
+        )
     elif "bert" in conf.model_name.lower():
         model = Bert(
             conf.model_name,
@@ -1086,7 +1096,7 @@ def setup_iterators(
     training_elements: Dict[int, TrainingElement], use_tqdm: bool = True
 ):
     tqdm_cls = tqdm if use_tqdm else Iterator
-    for i, el in enumerate(training_elements):
+    for i, el in enumerate(training_elements, start=1):
         color = COLORS[i % len(COLORS)]
         train_iterator = tqdm_cls(
             total=len(el.train_loader),

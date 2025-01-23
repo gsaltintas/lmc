@@ -11,14 +11,17 @@ from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
 from tqdm import tqdm
 
-from lmc.config import Config
+from lmc.config import Config, DataConfig
+from lmc.data.data_stats import TaskType
 from lmc.models.base_model import BaseModel
 from lmc.permutations import get_cost
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import sinkhorn_kl
 from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
+from lmc.utils.metrics import Metrics, compute_metrics
 from lmc.utils.setup_training import Iterator
+from lmc.utils.training_element import TrainingElement
 
 
 @torch.no_grad()
@@ -131,7 +134,23 @@ def evaluate_model_vision(
 
 def get_empty_df() -> pd.DataFrame:
     index = pd.MultiIndex.from_product(
-        [["train", "test"], ["loss", "ce", "acc", "err", "ppl", "em", "f1"]]
+        [
+            ["train", "test"],
+            [
+                "loss",
+                "ce",
+                "acc",
+                "err",
+                "ppl",
+                "em",
+                "f1",
+                "cross_entropy",
+                "accuracy",
+                "perplexity",
+                "matthews_correlation",
+                "pearson_correlation",
+            ],
+        ]
     )
     r = pd.DataFrame(columns=index)
     r["epoch"] = None
@@ -149,14 +168,18 @@ def get_empty_df() -> pd.DataFrame:
 def barrier_from_df(
     results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str
 ) -> dict[str, float]:
-    alpha = results.loc[ep, (split, metric)].idxmax()
-    minalpha = results.loc[ep, (split, metric)].idxmin()
+    results_ = results.dropna(axis=1, how="all")
+
+    if (split, metric) not in results_.columns:
+        return {}
+    alpha = results_.loc[ep, (split, metric)].idxmax()
+    minalpha = results_.loc[ep, (split, metric)].idxmin()
 
     scale = 1 / 100 if metric == "err" else 1
 
-    max_interpolated = results.loc[ep, (split, metric)].max() * scale
-    endpoint_0 = results.loc[(ep, 0)][(split, metric)] * scale
-    endpoint_1 = results.loc[(ep, 1)][(split, metric)] * scale
+    max_interpolated = results_.loc[ep, (split, metric)].max() * scale
+    endpoint_0 = results_.loc[(ep, 0)][(split, metric)] * scale
+    endpoint_1 = results_.loc[(ep, 1)][(split, metric)] * scale
 
     linear_path = (1.0 - alpha) * endpoint_0 + alpha * endpoint_1
     barrier = max_interpolated - linear_path
@@ -179,15 +202,51 @@ def extract_barrier_vision(results: pd.DataFrame, ep: int) -> Dict[str, float]:
 
 def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]:
     """utility function to extract loss & error barriers corresponding to a language task from a dataframe"""
-
-    return {
-        **barrier_from_df(results, ep, "train", "err", "lmc/"),
-        **barrier_from_df(results, ep, "test", "err", "lmc/"),
-        **barrier_from_df(results, ep, "train", "ppl", "lmc/perplexity/"),
-        **barrier_from_df(results, ep, "test", "ppl", "lmc/perplexity/"),
-        **barrier_from_df(results, ep, "train", "ce", "lmc/loss/"),
-        **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
+    # todo: better way to handle these
+    d = {
+        **barrier_from_df(results, ep, "train", "cross_entropy", "lmc/loss/"),
+        **barrier_from_df(results, ep, "test", "cross_entropy", "lmc/loss/"),
     }
+    cols = results.columns.get_level_values(1)
+    if "accuracy" in cols:
+        d.update(
+            {
+                **barrier_from_df(results, ep, "train", "accuracy", "lmc/"),
+                **barrier_from_df(results, ep, "test", "accuracy", "lmc/"),
+            }
+        )
+    if "perplexity" in cols:
+        d.update(
+            {
+                **barrier_from_df(
+                    results, ep, "train", "perplexity", "lmc/perplexity/"
+                ),
+                **barrier_from_df(results, ep, "test", "perplexity", "lmc/perplexity/"),
+            }
+        )
+    if "matthews_correlation" in cols:
+        d.update(
+            {
+                **barrier_from_df(
+                    results, ep, "train", "matthews_correlation", "lmc/loss/"
+                ),
+                **barrier_from_df(
+                    results, ep, "test", "matthews_correlation", "lmc/loss/"
+                ),
+            }
+        )
+    if "pearson_correlation" in cols:
+        d.update(
+            {
+                **barrier_from_df(
+                    results, ep, "train", "pearson_correlation", "lmc/loss/"
+                ),
+                **barrier_from_df(
+                    results, ep, "test", "pearson_correlation", "lmc/loss/"
+                ),
+            }
+        )
+    return d
 
 
 def extract_barrier(
@@ -197,6 +256,105 @@ def extract_barrier(
     if is_language_task:
         return extract_barrier_language(results, ep)
     return extract_barrier_vision(results, ep)
+
+
+@torch.no_grad()
+def evaluate_merge(
+    training_elements,
+    config: Config,
+    log_dct,
+) -> None:
+    """
+    Merge models using different methods and evaluate their performance
+
+    Args:
+        training_elements: List of elements representing training states or models.
+        config: Configuration object with relevant settings.
+        log_dct: Dictionary to log intermediate results.
+        results: DataFrame to store original merge results; created if None.
+        results_merged_wm: DataFrame for weight-matched merge results; created if None.
+        results_merged_act_aligned: DataFrame for activation-aligned merge results; created if None.
+
+    """
+
+    is_language_model = config.data.is_language_dataset()
+    reference_el: TrainingElement = training_elements[0]
+    reference_model = reference_el.model
+    model_dct = {
+        key: val / config.n_models
+        for (key, val) in reference_model.state_dict().items()
+    }
+    after_perms_model_dct = {
+        key: val / config.n_models
+        for (key, val) in reference_model.state_dict().items()
+    }
+    for model_ind, el in enumerate(training_elements):
+        if model_ind == 0:
+            continue
+
+        model = el.model
+        if model is None:
+            continue
+
+        # Vanilla average merging
+        for n, p in model.state_dict().items():
+            model_dct[n] += 1.0 / config.n_models * p.clone().detach().cpu()
+
+        ps = model.permutation_spec()
+        perm = weight_matching(
+            ps,
+            model.model.state_dict(),
+            reference_model.model.state_dict(),
+            init_perm=None,
+            verbose=False,
+        )
+        permuted_ = model._permute(perm, inplace=False)
+        for n, p in permuted_.state_dict().items():
+            after_perms_model_dct[n] += 1.0 / config.n_models * p.clone().detach().cpu()
+    merged_model = deepcopy(model)
+    merged_model.load_state_dict(model_dct)
+    permuted_.load_state_dict(after_perms_model_dct)
+    vanilla_results = {}
+    perm_results = {}
+    for name, loader in [
+        ("train", reference_el.train_eval_loader),
+        ("test", reference_el.test_loader),
+    ]:
+        if loader is None:
+            continue
+        if is_language_model:
+            vanilla_results = evaluate_model_language(
+                merged_model,
+                reference_el.train_eval_loader,
+                config.data,
+                device=reference_model.device,
+                criterion=reference_el.loss_fn,
+            )
+            perm_results = evaluate_model_language(
+                permuted_,
+                reference_el.train_eval_loader,
+                config.data,
+                device=reference_model.device,
+                criterion=reference_el.loss_fn,
+            )
+        else:
+            vanilla_results = evaluate_model_vision(
+                merged_model,
+                reference_el.train_eval_loader,
+                num_classes=config.data.get_num_labels(),
+                criterion=reference_el.loss_fn,
+            )
+            perm_results = evaluate_model_vision(
+                permuted_,
+                reference_el.train_eval_loader,
+                num_classes=config.data.get_num_labels(),
+                criterion=reference_el.loss_fn,
+            )
+
+        log_dct.update(
+            {f"merge/{name}/{key}": val for key, val in vanilla_results.items()}
+        )
+        log_dct.update({f"merge/wm/{name}/{key}": val for key, val in perm_results})
 
 
 @torch.no_grad()
@@ -268,6 +426,7 @@ def check_lmc(
                 inner_tqdm=el.extra_iterator,
                 num_classes=num_classes,
                 is_language_model=is_language_model,
+                data_config=config.data,
             )
             results_["model1_ind"] = model_ind
             results_["model2_ind"] = other_ind
@@ -336,6 +495,7 @@ def check_lmc(
                         inner_tqdm=el.extra_iterator,
                         num_classes=num_classes,
                         is_language_model=is_language_model,
+                        data_config=config.data,
                     )
                     results_perm["model1_ind"] = model_ind
                     results_perm["model2_ind"] = other_ind
@@ -355,7 +515,9 @@ def check_lmc(
     return results, results_perm_wm, results_perm_act_aligned
 
 
-def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
+def evaluate_model_language(
+    model, loader, data_config: DataConfig, device=None, criterion=None
+) -> dict:
     """
     Evaluate language model using HuggingFace model's native functionality.
     The model is expected to have a self.model attribute containing a HuggingFace transformer model.
@@ -363,78 +525,38 @@ def evaluate_model_language(model, loader, device=None, criterion=None) -> dict:
     if device is None:
         device = model.device
     model.eval()
+    dataset = data_config.dataset_info
 
-    total_loss = 0.0
-    total_tokens = 0
-    total_correct = 0
-    cnt = 0
+    metrics = Metrics()
+    metrics_kwargs = {}
     for batch in loader:
-        cnt += 1
-        if cnt == 3:
-            break
-        # Ensure all tensors are on the right device
         batch = {
-            k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+            k: v.to(model.device) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
         }
 
-        with torch.no_grad():
-            # Use the model's forward pass directly with the batch
-            # This will handle loss computation if labels are provided
-            outputs = model(**batch)
+        outputs = model(**batch)
+        n = batch["input_ids"].shape[0]
+        metrics_kwargs = {"n": n}
+        # Always track loss
+        metrics_kwargs["cross_entropy"] = outputs.loss.item()
 
-            # HuggingFace models return loss directly if labels are provided
-            if hasattr(outputs, "loss"):
-                loss = outputs.loss
-                total_loss += loss.item() * (
-                    batch["labels"].numel()
-                    if "labels" in batch
-                    else batch["input_ids"].size(0)
-                )
-                total_tokens += (
-                    batch["labels"].numel()
-                    if "labels" in batch
-                    else batch["input_ids"].size(0)
-                )
+        # Update dataset-specific metrics
+        if dataset.metrics:
+            if data_config.task_type == TaskType.REGRESSION:
+                predictions = outputs.logits
+            else:
+                predictions = outputs.logits.argmax(1)
 
-            # For models that don't return loss directly
-            elif hasattr(outputs, "logits") and "labels" in batch:
-                logits = outputs.logits
-                labels = batch["labels"]
-                if criterion is None:
-                    # Use the model's default loss function if available
-                    if hasattr(model.model, "compute_loss"):
-                        loss = model.model.compute_loss(outputs, labels)
-                    else:
-                        loss = nn.CrossEntropyLoss()(
-                            logits.view(-1, logits.size(-1)), labels.view(-1)
-                        )
-                else:
-                    loss = criterion(logits.view(-1, logits.size(-1)), labels.view(-1))
-
-                total_loss += loss.item() * labels.numel()
-                total_tokens += labels.numel()
-
-                # Calculate accuracy if applicable
-                if (
-                    len(logits.shape) == len(labels.shape) + 1
-                ):  # Classification scenario
-                    pred = logits.argmax(dim=-1)
-                    total_correct += (pred == labels).sum().item()
-
-    # Compute averages
-    metrics = {}
-    if total_tokens > 0:
-        avg_loss = total_loss / total_tokens
-        metrics["ce"] = avg_loss
-        metrics["ppl"] = torch.exp(torch.tensor(avg_loss)).item()
-
-        if total_correct > 0:  # Only include accuracy metrics if we computed them
-            accuracy = total_correct / total_tokens
-            metrics["acc"] = accuracy
-            metrics["err"] = 100 - 100 * accuracy
-        # TODO: add glue metrics
-    return metrics
+            metric_results = compute_metrics(
+                dataset.metrics,
+                predictions.detach(),
+                batch["labels"].detach(),
+            )
+            metrics_kwargs.update(metric_results)
+        metrics.update(**metrics_kwargs)
+    res = metrics.get_metrics(percentage=False)
+    return res
 
 
 def interpolate_evaluate(
@@ -452,6 +574,7 @@ def interpolate_evaluate(
     criterion=None,
     interpolation_func=None,
     is_language_model=False,
+    data_config: DataConfig = None,
 ) -> pd.DataFrame:
     """_summary_
 
@@ -501,7 +624,9 @@ def interpolate_evaluate(
             if loader is None:
                 continue
             if is_language_model:
-                res[name] = evaluate_model_language(model, loader, device=device)
+                res[name] = evaluate_model_language(
+                    model, loader, data_config, device=device
+                )
             else:
                 res[name] = evaluate_model_vision(
                     model,
@@ -516,6 +641,7 @@ def interpolate_evaluate(
             for outerKey, innerDict in res.items()
             for innerKey, values in innerDict.items()
         }
+        print(t, res)
 
         res_dict[i] = {
             f"{outer}/{inner}/{suffix}": it for (outer, inner), it in res.items()
