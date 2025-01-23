@@ -24,7 +24,7 @@ class PerturbedTrainingRunner(TrainingRunner):
     @staticmethod
     def description():
         return "Train n model(s) with perturbations."
-    
+
     def setup(self):
         super().setup()
         # need to extend max_steps if steps are reset after perturbation
@@ -122,7 +122,12 @@ class PerturbedTrainingRunner(TrainingRunner):
             if ind not in self.config.perturb_inds:
                 continue
             noise_stats = sample_noise_and_perturb(
-                self.config, el.model, el.perturb_seed, el.loss_fn, ind
+                self.config,
+                el.model,
+                el.perturb_seed,
+                el.loss_fn,
+                ind,
+                tokenizer=el.tokenizer,
             )
             log_dct.update(noise_stats)
             log_dct[f"step/model{ind}"] = el.curr_step
