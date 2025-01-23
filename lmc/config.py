@@ -420,6 +420,8 @@ class _AdamConfig(Optimizer):
     _description = ""
 
     betas: Tuple[float, float] = (0.9, 0.999)
+    momentum: float = None  # dummy variable
+    _momentum: str = "Dummy variable for cross-compatibility with scripts that call sgd, this value is ignored"
 
 
 @dataclass
