@@ -65,8 +65,6 @@ class BaseModel(nn.Module):
         init_strategy = (
             self.initialization_strategy if init_strategy is None else init_strategy
         )
-        if init_strategy == "pretrained":
-            return
         for name, m in self.named_modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
                 if m.bias is not None:
