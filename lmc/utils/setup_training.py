@@ -268,22 +268,15 @@ def configure_lr_scheduler(
             anneal_strategy="cos",
             pct_start=warmup_ratio,
         )
-    elif lr_scheduler == "flat":
+    elif lr_scheduler == "constant":
         # Adjust the schedule to account for continuation
         start_ind = global_step if global_step < training_steps else 0
         # resetting lr scheduler, needs to be followed by reset_base_lrs
-        if global_step > 0:
-            schedule = np.interp(
-                np.arange(0, training_steps + 1),
-                [0, warmup_steps, global_step, training_steps],
-                [0, 1, 1, 1],
-            )[start_ind:]
-        else:
-            schedule = np.interp(
-                np.arange(0, training_steps + 1),
-                [0, warmup_steps, training_steps],
-                [0, 1, 1],
-            )[start_ind:]
+        schedule = np.interp(
+            np.arange(0, training_steps + 1),
+            [0, warmup_steps, training_steps],
+            [0, 1, 1],
+        )[start_ind:]
         scheduler = optim.lr_scheduler.LambdaLR(
             optimizer, lr_lambda=lambda x: schedule[x]
         )
