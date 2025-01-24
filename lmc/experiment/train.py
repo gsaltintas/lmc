@@ -50,7 +50,7 @@ class TrainingRunner(ExperimentManager):
         self.global_step = 0
         self.ep = 0
         self.steps_per_epoch = self.config.data.get_steps_per_epoch()
-        self.max_steps = self.training_elements.max_steps.get_step(self.steps_per_epoch)
+        self.max_steps = self.training_elements.max_steps
 
         self.eval_steps = self.get_steps(
             self.config.trainer.eval_freq, self.config.trainer.eval_specific_steps
@@ -132,7 +132,6 @@ class TrainingRunner(ExperimentManager):
         self.on_train_end()
 
     def evaluate_element(self, element: TrainingElement, i):
-        element.model.eval()
         log_dct = {f"step/model{i}": element.curr_step}
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
             element.dist_from_init()
@@ -151,7 +150,7 @@ class TrainingRunner(ExperimentManager):
             log_dct.update(self._eval_vision(element, i))
         return log_dct
 
-    def evaluate_lmc(self):
+    def evaluate_multiple_elements(self):
         log_dct = {}
         if self.config.n_models > 1:
             check_lmc(
@@ -182,14 +181,14 @@ class TrainingRunner(ExperimentManager):
             log_dct.update(self.evaluate_element(element, i))
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
-            log_dct.update(self.evaluate_lmc())
+            log_dct.update(self.evaluate_multiple_elements())
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
     def advance_step_without_training(self):
         self.global_step += 1
         for i, element in enumerate(self.training_elements, start=1):
-            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+            if element.curr_step >= element.max_steps:
                 continue
             element.curr_step += 1
 
@@ -197,14 +196,14 @@ class TrainingRunner(ExperimentManager):
         log_dct = {}
         # Compute LMC stats
         if self.global_step in self.lmc_steps:
-            log_dct.update(self.evaluate_lmc())
+            log_dct.update(self.evaluate_multiple_elements())
         # go through each training element
         step_dct = {"step/global": self.global_step}
         self.global_step += 1
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
-            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+            if element.curr_step >= element.max_steps:
                 continue
             # evaluate
             if element.curr_step in self.eval_steps:
@@ -215,12 +214,6 @@ class TrainingRunner(ExperimentManager):
                     batch,
                 )
             )
-            # evaluate
-            if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i))
-            # save checkpoint
-            if element.curr_step in self.save_steps:
-                element.save(self.steps_per_epoch)
         # print summary if log_dct is not empty
         if self.config.logger.print_summary and log_dct:
             log_dct["step/epoch"] = self.ep
@@ -232,6 +225,7 @@ class TrainingRunner(ExperimentManager):
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""
+        element.model.eval()
 
         log_dct = {
             f"model{model_idx}/train/{key}": val
@@ -257,6 +251,7 @@ class TrainingRunner(ExperimentManager):
     def _eval_language(
         self, element: TrainingElement, model_idx: int
     ) -> Dict[str, float]:
+        element.model.eval()
         """Language-specific evaluation logging"""
         # Base metrics all tasks have
         ## log train metrics
@@ -288,8 +283,6 @@ class TrainingRunner(ExperimentManager):
             element.optimal_acc = metric_value
             if self.config.trainer.save_best:
                 self.logger.info("Saving best params at epoch %d", self.ep)
-                if element.optimal_path is not None:
-                    element.optimal_path.unlink()
                 element.save(self.steps_per_epoch, save_name="best.ckpt")
 
     @torch.no_grad()

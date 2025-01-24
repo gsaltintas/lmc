@@ -217,6 +217,8 @@ class Experiment:
     n_models: int = 1
     deterministic: bool = False
     zip_and_save_source: bool = True
+    evaluate_ckpt1: str = None
+    evaluate_ckpt2: str = None
     resume_from: Optional[str] = None
     resume_step: Optional[str] = "-1"
     log_to_same_experiment: Optional[bool] = False
@@ -233,6 +235,8 @@ class Experiment:
     _subconfigs: Tuple[str] = ("trainer", "model", "data", "logger")
     _description: str = field(init=True, default="")
     _deterministic: str = "If true, make CUDA exactly deterministic."
+    _evaluate_ckpt1: str = "Replaces model1 with pretrained checkpoints for evaluation only: a checkpoint must exist for every step in eval_freq or eval_specific_steps"
+    _evaluate_ckpt2: str = "Replaces model2 with pretrained checkpoints for evaluation only: a checkpoint must exist for every step in eval_freq or eval_specific_steps"
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
     _resume_from: str = "Directory to load and resume checkpoint or wandb run by specifying wandb:ENTITY/PROJECT/PROJECT_ID"
 
@@ -251,6 +255,8 @@ class Experiment:
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
         self.resume_step = kwargs.get("resume_step", "-1")
+        self.evaluate_ckpt1 = kwargs.get("evaluate_ckpt1", None)
+        self.evaluate_ckpt2 = kwargs.get("evaluate_ckpt2", None)
         self.deterministic = kwargs.get("deterministic", False)
         self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
 

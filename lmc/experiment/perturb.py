@@ -74,7 +74,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         steps_per_epoch = len(element.train_loader)
 
         if prev_max_steps is None:
-            prev_max_steps = element.max_steps.get_step(steps_per_epoch)
+            prev_max_steps = element.max_steps
         warmup_remaining = max(
             0, self.config.trainer.opt.warmup_ratio - self.global_step / prev_max_steps
         )
@@ -88,7 +88,7 @@ class PerturbedTrainingRunner(TrainingRunner):
         # start from 0
         element.scheduler = configure_lr_scheduler(
             element.opt,
-            element.max_steps.get_step(steps_per_epoch),
+            element.max_steps,
             self.config.trainer.opt.lr_scheduler,
             warmup_ratio,
             {},
@@ -156,7 +156,7 @@ class PerturbedTrainingRunner(TrainingRunner):
             if self.config.same_steps_pperturb:
                 if self.global_step < 1:
                     continue
-                prev_max_steps = el.max_steps.get_step(self.steps_per_epoch)
+                prev_max_steps = el.max_steps
                 steps = prev_max_steps + self.config.perturb_step.get_step(
                     self.steps_per_epoch
                 )

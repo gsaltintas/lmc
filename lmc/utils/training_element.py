@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass, field
+import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Tuple
 
 import torch
 from torch import nn, optim
@@ -13,6 +15,93 @@ from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Trainer
 from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
+
+
+logger = logging.getLogger("setup")
+
+
+def get_ckpts_by_step(ckpt_dir: Path, steps_per_epoch: int) -> OrderedDict[int, Path]:
+    ckpts = []
+    for ckpt in ckpt_dir.glob("*.ckpt"):
+        if ckpt.stem != "best":
+            step = Step.from_short_string(ckpt.stem, steps_per_epoch).get_step()
+            ckpts.append((step, ckpt))
+    sorted_ckpt_dict = OrderedDict()
+    for k, v in sorted(ckpts, key=lambda x: x[0]):
+        sorted_ckpt_dict[k] = v
+    return sorted_ckpt_dict
+
+
+def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
+    last_ckpt = ckpt_dir / "last.ckpt"
+    if last_ckpt.exists():
+        return last_ckpt
+    ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
+    last_step = list(ckpts.keys())[-1]
+    return ckpts[last_step]
+
+
+def load_model_from_state_dict(
+    model: nn.Module,
+    state_dict: Dict[str, torch.Tensor],
+    ignore_mismatched_sizes: bool = True,
+) -> None:
+    """
+    Load weights from a checkpoint into a model, gracefully handling missing or mismatched keys.
+    Similar to HuggingFace's approach, where missing keys retain their random initialization.
+
+    Args:
+        model: PyTorch model to load weights into
+        path: Path to checkpoint file
+        ignore_mismatched_sizes: Whether to skip loading weights with mismatched sizes
+    """
+    # Load checkpoint
+    model_state_dict = model.state_dict()
+
+    # Track different types of keys
+    missing_keys = []
+    unexpected_keys = []
+    mismatched_keys = []
+    to_be_loaded = OrderedDict()
+
+    # Load matching keys
+    for k, v in state_dict.items():
+        if k not in model_state_dict:
+            unexpected_keys.append(k)
+            continue
+
+        if v.shape != model_state_dict[k].shape:
+            if ignore_mismatched_sizes:
+                print(k)
+                mismatched_keys.append(k)
+                continue
+            else:
+                raise ValueError(
+                    f"Size mismatch for {k}: checkpoint has {v.shape}, model has {model_state_dict[k].shape}"
+                )
+
+        to_be_loaded[k] = v
+
+    # Identify missing keys
+    missing_keys = [k for k in model_state_dict.keys() if k not in to_be_loaded]
+
+    # Load the matching weights
+    model.load_state_dict(to_be_loaded, strict=False)
+
+    # Log informative messages
+    if unexpected_keys:
+        logger.info("Keys in checkpoint but not in model: %s", unexpected_keys)
+
+    if mismatched_keys:
+        logger.info("Keys skipped due to size mismatch: %s", mismatched_keys)
+
+    if missing_keys:
+        keys_str = ", ".join(missing_keys)
+        logger.warning(
+            "Some weights are newly initialized and should be trained: %s\n"
+            "You should TRAIN these layers to ensure good performance!",
+            keys_str,
+        )
 
 
 class Iterator(tqdm):
@@ -46,36 +135,67 @@ class Iterator(tqdm):
 @dataclass
 class TrainingElement(ABC):
     """dataclass holding everything pertaining to the training elements, models, loaders, optimizers steps, etc."""
-
     config: Trainer
-    model: nn.Module
-    opt: optim.Optimizer
+    element_ind: int
+    device: torch.device
+    max_steps: int
     train_loader: DataLoader
     train_eval_loader: DataLoader
     test_loader: DataLoader
-    element_ind: int = None
+    model: nn.Module
+    opt: optim.Optimizer
     scheduler: optim.lr_scheduler.LRScheduler = None
-    seed: int = 42
-    loader_seed: int = 42
-    aug_seed: int = 42
-    perturb_seed: int = None
-    optimal_acc: float = -1
-    optimal_path: Path = None
-    permutation = None
-    prev_perm_wm = None
-    prev_perm_am = None
-    max_steps: Step = None
-    curr_step: int = 0  # not sure if this is the best way?
-    train_iterator: tqdm = Iterator()
-    test_iterator: tqdm = Iterator()
-    train_eval_iterator: tqdm = Iterator()
-    extra_iterator: tqdm = Iterator()
-    metrics: Metrics = field(init=True, default_factory=Metrics)
-    # TODO: later add the loss func for nlp models
-    loss_fn: callable = nn.CrossEntropyLoss()
-    device: torch.device = None
     tokenizer: AutoTokenizer = None
-    init_model_vector: torch.Tensor = None
+    perturb_seed: int = None
+    metrics: Metrics = field(init=True, default_factory=Metrics)
+    loss_fn: callable = nn.CrossEntropyLoss()  # TODO: later add the loss func for nlp models
+
+    ITERATOR_COLORS: Tuple[str] = ("#75507b", "#4f42b5", "#808080")
+
+    def __post_init__(self):
+        self.curr_step = 0
+        self.optimal_acc: float = -1
+        self.setup_iterators()
+        #TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
+        self.init_model_vector = (
+            nn.utils.parameters_to_vector(self.model.parameters()).detach().cpu()
+        )
+
+    def setup_iterators(self):
+        if self.config.logger.use_tqdm:
+            color = self.ITERATOR_COLORS[self.element_ind % len(self.ITERATOR_COLORS)]
+            self.train_iterator = tqdm(
+                total=len(self.train_loader),
+                desc=f"Training model {self.element_ind} - epoch: ",
+                position=2 * self.element_ind,
+                leave=True,
+                # leave=False, disable=None,
+                colour=color,
+            )
+            self.train_eval_iterator = tqdm(
+                total=len(self.train_loader),
+                desc=f"Evaluating model {self.element_ind} on train - epoch: ",
+                position=2 + 2 * self.element_ind,
+                leave=True,
+                # leave=False, disable=None,
+                colour=color,
+            )
+            self.test_iterator = tqdm(
+                total=len(self.test_loader),
+                desc=f"Evaluating model {self.element_ind} - epoch: ",
+                position=1 + 2 * self.element_ind,
+                leave=True,
+                # leave=False, disable=None,
+                colour=color,
+            )
+            self.extra_iterator = tqdm(
+                position=2 + 2 * self.element_ind, desc="Extra iterator used for anything", colour="white"
+            )
+        else:
+            self.train_iterator = Iterator()
+            self.test_iterator = Iterator()
+            self.train_eval_iterator = Iterator()
+            self.extra_iterator = Iterator()
 
     def on_epoch_start(self):
         """call on epoch start to prepare for training the epoch"""
@@ -266,6 +386,80 @@ class NLPTrainingElement(TrainingElement):
         return log_dct
 
 
+@dataclass(init=False)
+class CheckpointEvaluationElement(TrainingElement):
+
+    class DummyMetrics(Metrics):
+        def get_metrics(self, percentage = False, task_type = TaskType.CLASSIFICATION):
+            return {}  # checkpoints save no metrics during training
+
+    def __init__(self,
+        config: Trainer,
+        element_ind: int,
+        device: torch.device,
+        max_steps: int,
+        train_loader: DataLoader,
+        train_eval_loader: DataLoader,
+        test_loader: DataLoader,
+        model: nn.Module,
+        opt: optim.Optimizer,
+        scheduler: optim.lr_scheduler.LRScheduler = None,
+        tokenizer: AutoTokenizer = None,
+        perturb_seed: int = None,
+        metrics: Metrics = field(init=True, default_factory=Metrics),
+        loss_fn: callable = nn.CrossEntropyLoss(),  # TODO: later add the loss func for nlp models,
+    ):
+        self.config = config
+        self.element_ind = element_ind
+        self.device = device
+        self.max_steps = max_steps
+        self.train_loader = train_loader
+        self.train_eval_loader = train_eval_loader
+        self.test_loader = test_loader
+        self._model = model  # save this way to access through getter
+        self.scheduler = None
+        self.tokenizer = tokenizer
+        self.perturb_seed = None
+        self.metrics = self.DummyMetrics()
+        self.loss_fn = loss_fn
+
+        self.loaded_model_step = None
+        self.ckpt_dir = Path(getattr(config, f"evaluate_ckpt{self.element_ind}"))
+        if (self.ckpt_dir /  "checkpoints").exists():
+            self.ckpt_dir = self.ckpt_dir / "checkpoints"
+        steps_per_epoch = self.config.data.get_steps_per_epoch()
+        self.ckpts = get_ckpts_by_step(self.ckpt_dir, steps_per_epoch)
+        logger.info(f"model{self.element_ind}: using checkpoints for evaluation from {self.ckpt_dir} with steps {list(self.ckpts.keys())}")
+        self.__post_init__()
+
+    def step(self, batch):
+        self.train_iterator.update()
+        self.curr_step += 1
+        return {}
+
+    def on_epoch_start(self):
+        pass  # do nothing
+
+    def on_epoch_end(self):
+        pass  # do nothing
+
+    @property
+    def model(self):
+        if self.loaded_model_step != self.curr_step:
+            if self.curr_step in self.ckpts:
+                ckpt_path = self.ckpts[self.curr_step]
+                ckpt = torch.load(ckpt_path, map_location=self.device)
+                logger.info(f"model{self.element_ind} loaded from checkpoint {ckpt_path}")
+                load_model_from_state_dict(self._model, ckpt["state_dict"])
+                self.loaded_model_step = self.curr_step
+            else:
+                raise ValueError(f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}")
+        return self._model
+
+    def save(self, steps_per_epoch, save_name=None):
+        pass  # do nothing
+
+
 class TrainingElements(object):
     """container for training elements"""
 
@@ -295,14 +489,7 @@ class TrainingElements(object):
 
     @property
     def max_steps(self) -> Step:
-        max_step = None
-        for el in self._elements:
-            if max_step is None:
-                max_step = el.max_steps
-                continue
-            if max_step.get_step() < el.max_steps.get_step():
-                max_step = el.max_steps
-        return max_step
+        return max(el.max_steps for el in self._elements)
 
     def on_epoch_start(self):
         for el in self._elements:
