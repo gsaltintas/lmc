@@ -43,19 +43,16 @@ class TestNoise(BaseTest):
         self.assertEqual(expected_l2, 11**0.5)
         actual_norm = get_l2(noise_dict)
         self.assertEqual(actual_norm, 89**0.5)
-        print(expected_l2, actual_norm)
 
         no_scale = scale_noise(noise_dict, model, layers, 1, False, False)
         self.assertAlmostEqual(get_l2(no_scale).item(), actual_norm, places=6)
         self.assertTrue(self.state_dicts_equal(no_scale, make_param_dict(1)))
 
         normalized = scale_noise(noise_dict, model, ["param.weight", "param.bias"], 1, True, False)
-        print(normalized, get_l2(normalized))
         self.assertAlmostEqual(get_l2(normalized).item(), 1, places=6)
         self.assertTrue(self.state_dicts_equal(normalized, make_param_dict(1 / actual_norm)))
 
         normalized = scale_noise(noise_dict, model, ["param.weight", "param.bias"], 1, True, True)
-        print(normalized)
         self.assertAlmostEqual(get_l2(normalized).item(), expected_l2, places=6)
         self.assertTrue(self.state_dicts_equal(normalized, make_param_dict(expected_l2 / actual_norm)))
 

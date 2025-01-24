@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Dict
 
 import numpy as np
 import torch
@@ -211,10 +211,8 @@ class TrainingRunner(ExperimentManager):
                 log_dct.update(self.evaluate_element(element, i))
             # train
             step_dct.update(
-                self.step_element(
-                    element,
+                element.step(
                     batch,
-                    i=i,
                 )
             )
             # evaluate
@@ -231,140 +229,6 @@ class TrainingRunner(ExperimentManager):
         log_dct.update(step_dct)
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
-
-    def step_element(self, element, batch, i: int = 1) -> Dict[str, Any]:
-        element.model.train()
-        log_dct = {f"step/model{i}": element.curr_step}
-        element.train_iterator.update()
-        element.curr_step += 1
-        # Get learning rate
-        if element.scheduler is None:
-            lr = element.opt.param_groups[0]["lr"]
-        else:
-            lr = element.scheduler.get_last_lr()[-1]
-        log_dct[f"lr/model{i}"] = lr
-
-        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            element.opt.zero_grad()
-        if self.config.data.is_language_dataset():
-            self._step_element_language(element, batch)
-        else:
-            self._step_element_vision(element, batch)
-
-        return log_dct
-
-    def _step_element_language(self, element, batch):
-        # Pre-fetch next batch while computing current one
-        batch = {
-            k: v.to(self.device, non_blocking=True)
-            if isinstance(v, torch.Tensor)
-            else v
-            for k, v in batch.items()
-        }
-
-        # Forward pass depends on task type
-        if self.config.data.task_type == TaskType.GENERATION:
-            # Language modeling
-            outputs = element.model(**batch)
-            loss = outputs.loss
-
-        elif self.config.data.task_type in [
-            TaskType.CLASSIFICATION,
-            TaskType.NATURAL_LANGUAGE_INFERENCE,
-            TaskType.SEQUENCE_PAIR,
-        ]:
-            # Classification tasks
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            logits = outputs.logits
-        elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
-            # Question answering
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            start_logits = outputs.start_logits
-            end_logits = outputs.end_logits
-        elif self.config.data.task_type == TaskType.REGRESSION:
-            # Regression tasks (like STS-B)
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            logits = outputs.logits.squeeze(
-                -1
-            )  # Remove last dimension since it's regression
-        else:
-            raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
-
-        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            loss.backward()
-            if clip_val := self.config.trainer.opt.gradient_clip_val:
-                torch.nn.utils.clip_grad_norm_(element.model.parameters(), clip_val)
-            element.opt.step()
-            if element.scheduler is not None:
-                element.scheduler.step()
-
-        # Update metrics based on task
-        with torch.no_grad():
-            metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
-            dataset = self.config.data.dataset_info
-            if dataset.metrics:
-                if self.config.data.task_type == TaskType.REGRESSION:
-                    predictions = outputs.logits
-                else:
-                    predictions = outputs.logits.argmax(1)
-                d = compute_metrics(
-                    dataset.metrics, predictions.detach(), batch["labels"].detach()
-                )
-                metrics_kwargs.update(d)
-            else:
-                if self.config.data.task_type == TaskType.GENERATION:
-                    perplexity = torch.exp(loss)
-                    metrics_kwargs["perplexity"] = perplexity.item()
-
-                elif self.config.data.task_type in [
-                    TaskType.CLASSIFICATION,
-                    TaskType.NATURAL_LANGUAGE_INFERENCE,
-                ]:
-                    acc, topk = mixup_topk_accuracy(
-                        logits.detach(), batch["labels"].detach(), None, k=3, avg=True
-                    )
-                    metrics_kwargs["total_acc"] = acc.item()
-                    metrics_kwargs["total_topk"] = topk.item()
-
-                elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
-                    # For QA, we typically track EM (Exact Match) and F1 score
-                    # This would require post-processing with the tokenizer
-                    start_pred = torch.argmax(start_logits, dim=-1)
-                    end_pred = torch.argmax(end_logits, dim=-1)
-                    # Simplified metric for training (just position accuracy)
-                    start_correct = (
-                        (start_pred == batch["start_positions"]).float().mean()
-                    )
-                    end_correct = (end_pred == batch["end_positions"]).float().mean()
-                    avg_correct = (start_correct + end_correct) / 2
-                    metrics_kwargs["accuracy"] = avg_correct.item()
-
-        element.metrics.update(**metrics_kwargs)
-        return loss.detach()
-
-    def _step_element_vision(self, element, batch):
-        x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
-        out = element.model(x)
-        loss = self.loss_fn(out, y)
-        targs_perm = None  # depreceated, when using mixup/cutmix
-        loss.backward()
-        # TODO: gradclipping
-
-        element.opt.step()
-        if element.scheduler is not None:
-            element.scheduler.step()
-
-        # update metrics
-        acc, topk = mixup_topk_accuracy(
-            out.detach(), y.detach(), targs_perm, k=3, avg=True
-        )
-        element.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
-        return loss.detach()
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""

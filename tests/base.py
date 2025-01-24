@@ -65,8 +65,8 @@ class BaseTest(unittest.TestCase):
         )
         self.log_dir = test_path / "tmp"
         # remove log dir if it already exists
-        # if self.log_dir.exists():
-        #     rmtree(self.log_dir)
+        if self.log_dir.exists():
+            rmtree(self.log_dir)
         self.log_dir.mkdir(exist_ok=True)
 
         self.data_dir = test_path / "data"
@@ -76,8 +76,8 @@ class BaseTest(unittest.TestCase):
         if not self.data_dir.exists() and data_dir_env_var is not None:
             os.symlink(data_dir_env_var, self.data_dir, target_is_directory=True)
 
-    # def tearDown(self):
-    #     rmtree(self.log_dir)
+    def tearDown(self):
+        rmtree(self.log_dir)
 
     def get_test_config(self,
         experiment="perturb",

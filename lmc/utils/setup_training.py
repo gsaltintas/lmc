@@ -36,7 +36,7 @@ from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
-from lmc.utils.training_element import Iterator, TrainingElement, TrainingElements
+from lmc.utils.training_element import Iterator, NLPTrainingElement, TrainingElement, TrainingElements, VisionTrainingElement
 
 logger = logging.getLogger("setup")
 
@@ -984,23 +984,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         # data
-        def get_train_eval_test_loaders(loader_fn, **kwargs):
-            train_loader = loader_fn(train=True, evaluate=False, **kwargs)
-            eval_loader = loader_fn(train=True, evaluate=True, **kwargs)
-            test_loader = loader_fn(train=False, evaluate=True, **kwargs)
-            return train_loader, eval_loader, test_loader
-
-        if is_nlp_task:
-            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
-                setup_nlp_loader,
-                data_conf=config.data,
-                tokenizer=tokenizer,
-                loader_seed=loader_seed,
-            )
-        else:
-            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
-                setup_vision_loader, data_conf=config.data, loader_seed=loader_seed
-            )
+        train_loader = setup_loader(config.data, train=True, evaluate=False, loader_seed=loader_seed, tokenizer=tokenizer)
+        train_eval_loader = setup_loader(config.data, train=True, evaluate=True, loader_seed=loader_seed, tokenizer=tokenizer)
+        test_loader = setup_loader(config.data, train=False, evaluate=True, loader_seed=loader_seed, tokenizer=tokenizer)
         assert steps_per_epoch == len(train_loader)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
 
@@ -1029,13 +1015,17 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
             logger.info("Optimizer %d - %s", i, opt)
             logger.info("Scheduler %d - %s", i, scheduler)
 
+        if is_nlp_task:
+            training_element_class = NLPTrainingElement
+        else:
+            training_element_class = VisionTrainingElement
         training_elements.add_element(
-            TrainingElement(
+            training_element_class(
+                config=config,
                 element_ind=i,
                 model=model,
                 opt=opt,
                 scheduler=scheduler,
-                model_dir=model_dir_,
                 seed=seed,
                 loader_seed=loader_seed,
                 train_loader=train_loader,
@@ -1045,6 +1035,7 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
                 perturb_seed=perturb_seed,
                 tokenizer=tokenizer,
                 init_model_vector=init_model_vector,
+                device=device,
             )
         )
     seed_everything(first_seed)

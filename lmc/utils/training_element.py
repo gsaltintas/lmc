@@ -1,6 +1,7 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Mapping
+from typing import Any, Dict, List, Mapping
 
 import torch
 from torch import nn, optim
@@ -8,7 +9,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from lmc.utils.metrics import Metrics
+from lmc.data.data_stats import TaskType
+from lmc.experiment_config import Trainer
+from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
 
 
@@ -41,9 +44,10 @@ class Iterator(tqdm):
 
 
 @dataclass
-class TrainingElement(object):
+class TrainingElement(ABC):
     """dataclass holding everything pertaining to the training elements, models, loaders, optimizers steps, etc."""
 
+    config: Trainer
     model: nn.Module
     opt: optim.Optimizer
     train_loader: DataLoader
@@ -62,7 +66,6 @@ class TrainingElement(object):
     prev_perm_am = None
     max_steps: Step = None
     curr_step: int = 0  # not sure if this is the best way?
-    model_dir: Path = None
     train_iterator: tqdm = Iterator()
     test_iterator: tqdm = Iterator()
     train_eval_iterator: tqdm = Iterator()
@@ -70,6 +73,7 @@ class TrainingElement(object):
     metrics: Metrics = field(init=True, default_factory=Metrics)
     # TODO: later add the loss func for nlp models
     loss_fn: callable = nn.CrossEntropyLoss()
+    device: torch.device = None
     tokenizer: AutoTokenizer = None
     init_model_vector: torch.Tensor = None
 
@@ -121,9 +125,145 @@ class TrainingElement(object):
                 "epoch": ep,
                 "step": st,
             },
-            self.model_dir / "checkpoints" / save_name,
+            self.config.model_dir / f"model{self.element_ind}" / "checkpoints" / save_name,
             pickle_protocol=4,
         )
+
+    @abstractmethod
+    def step(self, batch) -> Dict[str, Any]:
+        self.model.train()
+        log_dct = {f"step/model{self.element_ind}": self.curr_step}
+        self.train_iterator.update()
+        self.curr_step += 1
+        # Get learning rate
+        if self.scheduler is None:
+            lr = self.opt.param_groups[0]["lr"]
+        else:
+            lr = self.scheduler.get_last_lr()[-1]
+        log_dct[f"lr/model{self.element_ind}"] = lr
+
+        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
+            self.opt.zero_grad()
+        return log_dct
+
+
+class VisionTrainingElement(TrainingElement):
+    def step(self, batch):
+        log_dct = super().step(batch)
+        x, y = batch
+        x = x.to(self.device)
+        y = y.to(self.device)
+        out = self.model(x)
+        loss = self.loss_fn(out, y)
+        targs_perm = None  # depreceated, when using mixup/cutmix
+        loss.backward()
+        # TODO: gradclipping
+
+        self.opt.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
+
+        # update metrics
+        acc, topk = mixup_topk_accuracy(
+            out.detach(), y.detach(), targs_perm, k=3, avg=True
+        )
+        self.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
+        return log_dct
+
+
+class NLPTrainingElement(TrainingElement):
+    def step(self, batch):
+        log_dct = super().step(batch)
+        # Pre-fetch next batch while computing current one
+        batch = {
+            k: v.to(self.device, non_blocking=True)
+            if isinstance(v, torch.Tensor)
+            else v
+            for k, v in batch.items()
+        }
+
+        # Forward pass depends on task type
+        if self.config.data.task_type == TaskType.GENERATION:
+            # Language modeling
+            outputs = self.model(**batch)
+            loss = outputs.loss
+
+        elif self.config.data.task_type in [
+            TaskType.CLASSIFICATION,
+            TaskType.NATURAL_LANGUAGE_INFERENCE,
+            TaskType.SEQUENCE_PAIR,
+        ]:
+            # Classification tasks
+            outputs = self.model(**batch)
+            loss = outputs.loss
+            logits = outputs.logits
+        elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
+            # Question answering
+            outputs = self.model(**batch)
+            loss = outputs.loss
+            start_logits = outputs.start_logits
+            end_logits = outputs.end_logits
+        elif self.config.data.task_type == TaskType.REGRESSION:
+            # Regression tasks (like STS-B)
+            outputs = self.model(**batch)
+            loss = outputs.loss
+            logits = outputs.logits.squeeze(
+                -1
+            )  # Remove last dimension since it's regression
+        else:
+            raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
+
+        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
+            loss.backward()
+            if clip_val := self.config.trainer.opt.gradient_clip_val:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_val)
+            self.opt.step()
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+        # Update metrics based on task
+        with torch.no_grad():
+            metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
+            dataset = self.config.data.dataset_info
+            if dataset.metrics:
+                if self.config.data.task_type == TaskType.REGRESSION:
+                    predictions = outputs.logits
+                else:
+                    predictions = outputs.logits.argmax(1)
+                d = compute_metrics(
+                    dataset.metrics, predictions.detach(), batch["labels"].detach()
+                )
+                metrics_kwargs.update(d)
+            else:
+                if self.config.data.task_type == TaskType.GENERATION:
+                    perplexity = torch.exp(loss)
+                    metrics_kwargs["perplexity"] = perplexity.item()
+
+                elif self.config.data.task_type in [
+                    TaskType.CLASSIFICATION,
+                    TaskType.NATURAL_LANGUAGE_INFERENCE,
+                ]:
+                    acc, topk = mixup_topk_accuracy(
+                        logits.detach(), batch["labels"].detach(), None, k=3, avg=True
+                    )
+                    metrics_kwargs["total_acc"] = acc.item()
+                    metrics_kwargs["total_topk"] = topk.item()
+
+                elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
+                    # For QA, we typically track EM (Exact Match) and F1 score
+                    # This would require post-processing with the tokenizer
+                    start_pred = torch.argmax(start_logits, dim=-1)
+                    end_pred = torch.argmax(end_logits, dim=-1)
+                    # Simplified metric for training (just position accuracy)
+                    start_correct = (
+                        (start_pred == batch["start_positions"]).float().mean()
+                    )
+                    end_correct = (end_pred == batch["end_positions"]).float().mean()
+                    avg_correct = (start_correct + end_correct) / 2
+                    metrics_kwargs["accuracy"] = avg_correct.item()
+
+        self.metrics.update(**metrics_kwargs)
+        return log_dct
 
 
 class TrainingElements(object):
