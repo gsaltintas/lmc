@@ -3,8 +3,9 @@ from collections import defaultdict
 import unittest
 
 import torch
+import torch.nn as nn
 
-from lmc.butterfly.butterfly import get_l2, get_all_init_l2s, get_perturbed_layers, sample_noise_and_perturb
+from lmc.butterfly.butterfly import get_l2, get_all_init_l2s, get_perturbed_layers, sample_noise_and_perturb, scale_noise
 from lmc.experiment_config import PerturbedTrainer, Trainer
 from lmc.models.bert import Bert
 from lmc.utils.seeds import seed_everything
@@ -20,6 +21,43 @@ class TestNoise(BaseTest):
         non_constant_layers = [k for k in layers if "conv" in k]
         self.expected_l2_all, self.expected_l2_per_layer = get_all_init_l2s(self.model, layers)
         self.expected_l2, _ = get_all_init_l2s(self.model, non_constant_layers)
+
+
+    def test_scale_noise(self):
+        class DummyModel(nn.Module):
+            def __init__(self, weight_scale, bias_scale):
+                super().__init__()
+                self.weight_scale = weight_scale
+                self.bias_scale = bias_scale
+                self.param = nn.Linear(10, 1)
+            def get_init_stds(self, include_constant_params):
+                return {"param.weight": self.weight_scale, "param.bias": self.bias_scale if include_constant_params else 0}
+        
+        def make_param_dict(scale):
+            return {"param.weight": torch.arange(-5, 5, dtype=torch.float).reshape(1, 10) * scale, "param.bias": torch.tensor([2], dtype=float) * scale}
+
+        model = DummyModel(1, 1)
+        noise_dict = make_param_dict(1)
+        layers = list(noise_dict.keys())
+        expected_l2, _ = get_all_init_l2s(model, layers)
+        self.assertEqual(expected_l2, 11**0.5)
+        actual_norm = get_l2(noise_dict)
+        self.assertEqual(actual_norm, 89**0.5)
+        print(expected_l2, actual_norm)
+
+        no_scale = scale_noise(noise_dict, model, layers, 1, False, False)
+        self.assertAlmostEqual(get_l2(no_scale).item(), actual_norm, places=6)
+        self.assertTrue(self.state_dicts_equal(no_scale, make_param_dict(1)))
+
+        normalized = scale_noise(noise_dict, model, ["param.weight", "param.bias"], 1, True, False)
+        print(normalized, get_l2(normalized))
+        self.assertAlmostEqual(get_l2(normalized).item(), 1, places=6)
+        self.assertTrue(self.state_dicts_equal(normalized, make_param_dict(1 / actual_norm)))
+
+        normalized = scale_noise(noise_dict, model, ["param.weight", "param.bias"], 1, True, True)
+        print(normalized)
+        self.assertAlmostEqual(get_l2(normalized).item(), expected_l2, places=6)
+        self.assertTrue(self.state_dicts_equal(normalized, make_param_dict(expected_l2 / actual_norm)))
 
     def _check_init_std(self, name, model_iterator):
         with self.subTest(name):
