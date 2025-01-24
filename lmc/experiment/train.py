@@ -115,7 +115,6 @@ class TrainingRunner(ExperimentManager):
 
     def on_epoch_end(self):
         self.ep += 1
-        self.training_elements.on_epoch_end()
 
     def run(self):
         self.on_train_start()
@@ -139,9 +138,8 @@ class TrainingRunner(ExperimentManager):
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
             element.dist_from_init()
         )
-        if (
-            i < self.config.n_models
-        ):  # i is index of element + 1, in range [1, n_models], so next element is at i in self.training_elements
+        if i < self.config.n_models:
+            # i is index of element + 1, in range [1, n_models], so next element is at i in self.training_elements
             next_el = self.training_elements[i]
             log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}-{i + 1}").log_name] = (
                 element.dist_from_element(next_el)
@@ -191,6 +189,9 @@ class TrainingRunner(ExperimentManager):
         # eval always happens on the last step
         log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
         for i, element in enumerate(self.training_elements, start=1):
+            # log any training metrics that haven't been logged since the end of the last epoch
+            if self.global_step % self.steps_per_epoch != 0:
+                log_dct.update(element.log_train_metrics())
             log_dct.update(self.evaluate_element(element, i))
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
@@ -208,18 +209,17 @@ class TrainingRunner(ExperimentManager):
     def step_all_training_elements(self, batches):
         # go through each training element
         self.global_step += 1
-        log_dct = {"step/ep": self.ep, "step/global": self.global_step}
+        log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
             if element.curr_step >= element.max_steps:
                 continue
             # train
-            log_dct.update(
-                element.step(
-                    batch
-                )
-            )
+            log_dct.update(element.step(batch))
+            # if at end of batch, log training metrics
+            if self.global_step % self.steps_per_epoch == 0:
+                log_dct.update(element.log_train_metrics())
         # log all of the info together at once
         log_dct.update(self.eval_and_save())
         if self.config.logger.use_wandb:
@@ -229,23 +229,16 @@ class TrainingRunner(ExperimentManager):
         """Vision-specific evaluation logging"""
         element.model.eval()
 
-        log_dct = {
-            f"model{model_idx}/train/{key}": val
-            for (key, val) in element.metrics.get_metrics(percentage=False).items()
-        }
-
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_vision(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update(
-                {
-                    f"model{model_idx}/test/accuracy": test_res["accuracy"],
-                    f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
-                    f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
-                }
-            )
+            log_dct = {
+                f"model{model_idx}/test/accuracy": test_res["accuracy"],
+                f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
+                f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
+            }
 
             self._handle_best_checkpoint(element, test_res["accuracy"])
         return log_dct
@@ -256,19 +249,12 @@ class TrainingRunner(ExperimentManager):
         element.model.eval()
         """Language-specific evaluation logging"""
         # Base metrics all tasks have
-        ## log train metrics
-        log_dct = {
-            f"model{model_idx}/train/{key}": val
-            for (key, val) in element.metrics.get_metrics(percentage=False).items()
-        }
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_language(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update(
-                {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
-            )
+            log_dct = {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
 
             # Use appropriate metric for best checkpoint
             best_metric = (

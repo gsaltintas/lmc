@@ -274,7 +274,7 @@ class TestTraining(BaseTest):
         # check that loading from ckpt is identical to full train
         # - run n_models=2, then rerun n_models=1 with identical hparams and load second run from model2 ckpt of first run, check results identical
         # - repeat but change hparams (specifically, perturb_seed1 and perturb_scale), check results not identical
-        ref_ce = self.run_command_and_return_result("test-ckpt-ref", "model2/test/cross_entropy", seed1=1, seed2=2, perturb_seed1=99, perturb_scale=0, perturb_step="100st", args=["--save_specific_steps", "100st"], n_models=2, lmc_on_train_end=True)
+        ref_ce = self.run_command_and_return_result("test-ckpt-ref", "model2/train/cross_entropy", seed1=1, seed2=2, perturb_seed1=99, perturb_scale=0, perturb_step="100st", args=["--save_specific_steps", "100st"], n_models=2, lmc_on_train_end=True)
         self.assertFalse(self.ckpts_match(self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep0st.ckpt", self.log_dir / "test-ckpt-ref" / "model1" / "checkpoints" / "0ep0st.ckpt"))
         path_to_model2 = str(self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep0st.ckpt")
 
@@ -311,7 +311,7 @@ class TestTraining(BaseTest):
             self.assertTrue(self.state_dicts_equal(element.model.state_dict(), ref_ckpt["state_dict"]))
 
             # check training with loaded model gives identical result
-            test_ce = self.run_command_and_return_result("test-ckpt-path", "model1/test/cross_entropy", seed1=99, loader_seed1=2, perturb_seed1=99, perturb_scale=0, perturb_step="100st", n_models=1, args=["--save_specific_steps", "100st", "--ckpt_path", str(self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep0st.ckpt")])
+            test_ce = self.run_command_and_return_result("test-ckpt-path", "model1/train/cross_entropy", seed1=99, loader_seed1=2, perturb_seed1=99, perturb_scale=0, perturb_step="100st", n_models=1, args=["--save_specific_steps", "100st", "--ckpt_path", str(self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep0st.ckpt")])
             self.assertEqual(test_ce, ref_ce)
             self.assertFalse(self.ckpts_match(self.log_dir / "test-ckpt-path" / "model1" / "checkpoints" / "0ep0st.ckpt", self.log_dir / "test-ckpt-ref" / "model1" / "checkpoints" / "0ep0st.ckpt"))
             self.assertTrue(self.ckpts_match(self.log_dir / "test-ckpt-path" / "model1" / "checkpoints" / "0ep0st.ckpt", self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep0st.ckpt"))
@@ -320,7 +320,7 @@ class TestTraining(BaseTest):
             self.assertFalse((self.log_dir / "test-ckpt-path" / "model2").exists())
 
         with self.subTest("resume_from"):
-            test_ce = self.run_command_and_return_result("test-ckpt-resume", "model2/test/cross_entropy", seed1=1, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--resume_from", str(self.log_dir / "test-ckpt-ref"), "--resume_step", "100st"])
+            test_ce = self.run_command_and_return_result("test-ckpt-resume", "model2/train/cross_entropy", seed1=1, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--resume_from", str(self.log_dir / "test-ckpt-ref"), "--resume_step", "100st"])
             # check that resuming run doesn't save checkpoint for 0ep
             self.assertFalse((self.log_dir / "test-ckpt-resume" / "model1" / "checkpoints" / "0ep0st.ckpt").exists())
             self.assertFalse((self.log_dir / "test-ckpt-resume" / "model2" / "checkpoints" / "0ep0st.ckpt").exists())
@@ -331,7 +331,7 @@ class TestTraining(BaseTest):
 
         with self.subTest("evaluate_ckpt"):
             # replace previous run model1 with evaluate_ckpt, see if run is identical
-            test_ce = self.run_command_and_return_result("test-ckpt-eval", "model2/test/cross_entropy", seed1=99, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--evaluate_ckpt1", str(self.log_dir / "test-ckpt-ref" / "model1")], lmc_on_train_end=True)
+            test_ce = self.run_command_and_return_result("test-ckpt-eval", "model2/train/cross_entropy", seed1=99, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--evaluate_ckpt1", str(self.log_dir / "test-ckpt-ref" / "model1")], lmc_on_train_end=True)
             self.assertEqual(test_ce, ref_ce)
             barrier = self.get_summary_value(self.log_dir / "test-ckpt-ref", "lmc-0-1/lmc/loss/weighted/barrier_train")
             ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-eval", "lmc-0-1/lmc/loss/weighted/barrier_train")

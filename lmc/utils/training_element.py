@@ -202,10 +202,6 @@ class TrainingElement(ABC):
         self.opt.zero_grad()
         self.metrics.reset()
 
-    def on_epoch_end(self):
-        """call on epoch end to prepare for the evaluations"""
-        self.metrics.reset()
-
     def params_equal(self, other: "TrainingElement"):
         for (n1, p1), (n2, p2) in zip(
             self.model.named_parameters(),
@@ -227,6 +223,13 @@ class TrainingElement(ABC):
             current_vector.detach().cpu() - other_vector.detach().cpu()
         )
         return dist.item()
+
+    def log_train_metrics(self):
+        log_dct = {
+            f"model{self.element_ind}/train/{key}": val
+            for (key, val) in self.metrics.get_metrics(percentage=False).items()
+        }
+        return log_dct
 
     def save(self, steps_per_epoch, save_name=None):
         """Saves the model state, optimizer and scheduler state along with epoch."""
@@ -440,9 +443,6 @@ class CheckpointEvaluationElement(TrainingElement):
     def on_epoch_start(self):
         pass  # do nothing
 
-    def on_epoch_end(self):
-        pass  # do nothing
-
     @property
     def model(self):
         if self.loaded_model_step != self.curr_step:
@@ -498,10 +498,6 @@ class TrainingElements(object):
             el.train_iterator.set_description_str(
                 f"Training model {el.element_ind} - epoch: "
             )
-
-    def on_epoch_end(self):
-        for el in self._elements:
-            el.on_epoch_end()
 
     def __iter__(self):
         for el in self._elements:
