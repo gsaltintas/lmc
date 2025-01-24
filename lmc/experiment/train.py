@@ -103,8 +103,12 @@ class TrainingRunner(ExperimentManager):
 
     def on_train_start(self):
         print(self.config.display)
+        self.training_elements.on_epoch_start()
         if self.training_elements.is_same_model():
             self.logger.info("Models are the same at initialization.")
+        # don't eval/save if advancing to start_step
+        if self.start_step == 0:
+            self.eval_and_save()
 
     def on_epoch_start(self):
         self.training_elements.on_epoch_start()
@@ -126,7 +130,6 @@ class TrainingRunner(ExperimentManager):
                     # advance batches to bring dataloader state to start_step
                     self.advance_step_without_training()
                 else:
-                    self.save_all_training_elements()
                     self.step_all_training_elements(batches)
             self.on_epoch_end()
         self.on_train_end()
@@ -150,7 +153,7 @@ class TrainingRunner(ExperimentManager):
             log_dct.update(self._eval_vision(element, i))
         return log_dct
 
-    def evaluate_multiple_elements(self):
+    def evaluate_lmc(self):
         log_dct = {}
         if self.config.n_models > 1:
             check_lmc(
@@ -168,11 +171,21 @@ class TrainingRunner(ExperimentManager):
             )
         return log_dct
 
-    def save_all_training_elements(self):
-        # save checkpoints before doing anything to get a precise snapshot of this iteration
-        for element in self.training_elements:
+    def eval_and_save(self):
+        log_dct = {}
+        for i, element in enumerate(self.training_elements, start=1):
+            if element.curr_step >= element.max_steps:
+                continue
+            if element.curr_step in self.eval_steps:
+                log_dct.update(self.evaluate_element(element, i))
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
+        if self.global_step in self.lmc_steps:
+            log_dct.update(self.evaluate_lmc())
+        # print summary if log_dct is not empty
+        if self.config.logger.print_summary and log_dct:
+            report_results(log_dct, self.ep, self.config.n_models)
+        return log_dct
 
     def on_train_end(self):
         # eval always happens on the last step
@@ -181,7 +194,7 @@ class TrainingRunner(ExperimentManager):
             log_dct.update(self.evaluate_element(element, i))
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
-            log_dct.update(self.evaluate_multiple_elements())
+            log_dct.update(self.evaluate_lmc())
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
@@ -193,33 +206,22 @@ class TrainingRunner(ExperimentManager):
             element.curr_step += 1
 
     def step_all_training_elements(self, batches):
-        log_dct = {}
-        # Compute LMC stats
-        if self.global_step in self.lmc_steps:
-            log_dct.update(self.evaluate_multiple_elements())
         # go through each training element
-        step_dct = {"step/global": self.global_step}
         self.global_step += 1
+        log_dct = {"step/ep": self.ep, "step/global": self.global_step}
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
             if element.curr_step >= element.max_steps:
                 continue
-            # evaluate
-            if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i))
             # train
-            step_dct.update(
+            log_dct.update(
                 element.step(
-                    batch,
+                    batch
                 )
             )
-        # print summary if log_dct is not empty
-        if self.config.logger.print_summary and log_dct:
-            log_dct["step/epoch"] = self.ep
-            report_results(log_dct, self.ep, self.config.n_models)
         # log all of the info together at once
-        log_dct.update(step_dct)
+        log_dct.update(self.eval_and_save())
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 

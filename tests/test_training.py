@@ -324,8 +324,6 @@ class TestTraining(BaseTest):
             # check that resuming run doesn't save checkpoint for 0ep
             self.assertFalse((self.log_dir / "test-ckpt-resume" / "model1" / "checkpoints" / "0ep0st.ckpt").exists())
             self.assertFalse((self.log_dir / "test-ckpt-resume" / "model2" / "checkpoints" / "0ep0st.ckpt").exists())
-            self.assertTrue(self.ckpts_match(self.log_dir / "test-ckpt-resume" / "model1" / "checkpoints" / "0ep100st.ckpt", self.log_dir / "test-ckpt-ref" / "model1" / "checkpoints" / "0ep100st.ckpt"))
-            self.assertTrue(self.ckpts_match(self.log_dir / "test-ckpt-resume" / "model2" / "checkpoints" / "0ep100st.ckpt", self.log_dir / "test-ckpt-ref" / "model2" / "checkpoints" / "0ep100st.ckpt"))
             self.assertFalse(self.ckpts_match(self.log_dir / "test-ckpt-resume" / "model1" / "checkpoints" / "2ep0st.ckpt", self.log_dir / "test-ckpt-ref" / "model1" / "checkpoints" / "2ep0st.ckpt"))
             # #TODO resume_from is not perfectly deterministic, so these fail:
             # self.assertEqual(test_ce, ref_ce)

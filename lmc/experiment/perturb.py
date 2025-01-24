@@ -12,7 +12,6 @@ from lmc.models.layers import has_batch_norm
 from lmc.utils.lmc_utils import repair
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import configure_lr_scheduler, setup_loader
-from lmc.utils.step import Step
 from lmc.utils.training_element import TrainingElement
 
 
@@ -157,14 +156,13 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if self.global_step < 1:
                     continue
                 prev_max_steps = el.max_steps
-                steps = prev_max_steps + self.config.perturb_step.get_step(
+                el.max_steps = prev_max_steps + self.config.perturb_step.get_step(
                     self.steps_per_epoch
                 )
-                el.max_steps = Step(steps, self.steps_per_epoch)
                 self.logger.info(
                     "Model %d steps set to %d.",
                     ind,
-                    steps,
+                    el.max_steps,
                 )
                 if el.scheduler is not None:
                     self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
