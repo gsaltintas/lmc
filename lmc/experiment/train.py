@@ -138,12 +138,13 @@ class TrainingRunner(ExperimentManager):
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
             element.dist_from_init()
         )
-        if i < self.config.n_models:
-            # i is index of element + 1, in range [1, n_models], so next element is at i in self.training_elements
-            next_el = self.training_elements[i]
-            log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}-{i + 1}").log_name] = (
-                element.dist_from_element(next_el)
-            )
+        for next_el_ind in range(i, self.config.n_models):
+            next_el = self.training_elements[next_el_ind]
+            log_dct[
+                self.wandb_registry.get_metric(
+                    f"l2_dist_{i}-{next_el_ind + 1}"
+                ).log_name
+            ] = element.dist_from_element(next_el)
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))
