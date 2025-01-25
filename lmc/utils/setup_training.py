@@ -3,7 +3,6 @@ import logging
 import math
 import os
 import re
-from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
@@ -11,11 +10,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from torch import optim
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from datasets import load_dataset
-from torch import nn, optim
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -36,74 +34,19 @@ from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
-from lmc.utils.training_element import Iterator, TrainingElement, TrainingElements
+from lmc.utils.training_element import (
+    NLPTrainingElement,
+    CheckpointEvaluationElement,
+    TrainingElements,
+    VisionTrainingElement,
+    get_ckpts_by_step,
+    get_last_ckpt,
+    load_model_from_state_dict,
+)
 
 logger = logging.getLogger("setup")
 
 WANDB_DIR = os.environ.get("SCRATCH", os.environ.get("TMPDIR"))
-
-
-def load_model_from_state_dict(
-    model: nn.Module,
-    state_dict: Dict[str, torch.Tensor],
-    ignore_mismatched_sizes: bool = True,
-) -> None:
-    """
-    Load weights from a checkpoint into a model, gracefully handling missing or mismatched keys.
-    Similar to HuggingFace's approach, where missing keys retain their random initialization.
-
-    Args:
-        model: PyTorch model to load weights into
-        path: Path to checkpoint file
-        ignore_mismatched_sizes: Whether to skip loading weights with mismatched sizes
-    """
-    # Load checkpoint
-    model_state_dict = model.state_dict()
-
-    # Track different types of keys
-    missing_keys = []
-    unexpected_keys = []
-    mismatched_keys = []
-    to_be_loaded = OrderedDict()
-
-    # Load matching keys
-    for k, v in state_dict.items():
-        if k not in model_state_dict:
-            unexpected_keys.append(k)
-            continue
-
-        if v.shape != model_state_dict[k].shape:
-            if ignore_mismatched_sizes:
-                print(k)
-                mismatched_keys.append(k)
-                continue
-            else:
-                raise ValueError(
-                    f"Size mismatch for {k}: checkpoint has {v.shape}, model has {model_state_dict[k].shape}"
-                )
-
-        to_be_loaded[k] = v
-
-    # Identify missing keys
-    missing_keys = [k for k in model_state_dict.keys() if k not in to_be_loaded]
-
-    # Load the matching weights
-    model.load_state_dict(to_be_loaded, strict=False)
-
-    # Log informative messages
-    if unexpected_keys:
-        logger.info("Keys in checkpoint but not in model: %s", unexpected_keys)
-
-    if mismatched_keys:
-        logger.info("Keys skipped due to size mismatch: %s", mismatched_keys)
-
-    if missing_keys:
-        keys_str = ", ".join(missing_keys)
-        logger.warning(
-            "Some weights are newly initialized and should be trained: %s\n"
-            "You should TRAIN these layers to ensure good performance!",
-            keys_str,
-        )
 
 
 def should_freeze_layer(layer_name: str, pattern: str) -> bool:
@@ -325,22 +268,15 @@ def configure_lr_scheduler(
             anneal_strategy="cos",
             pct_start=warmup_ratio,
         )
-    elif lr_scheduler == "flat":
+    elif lr_scheduler == "constant":
         # Adjust the schedule to account for continuation
         start_ind = global_step if global_step < training_steps else 0
         # resetting lr scheduler, needs to be followed by reset_base_lrs
-        if global_step > 0:
-            schedule = np.interp(
-                np.arange(0, training_steps + 1),
-                [0, warmup_steps, global_step, training_steps],
-                [0, 1, 1, 1],
-            )[start_ind:]
-        else:
-            schedule = np.interp(
-                np.arange(0, training_steps + 1),
-                [0, warmup_steps, training_steps],
-                [0, 1, 1],
-            )[start_ind:]
+        schedule = np.interp(
+            np.arange(0, training_steps + 1),
+            [0, warmup_steps, training_steps],
+            [0, 1, 1],
+        )[start_ind:]
         scheduler = optim.lr_scheduler.LambdaLR(
             optimizer, lr_lambda=lambda x: schedule[x]
         )
@@ -840,27 +776,6 @@ def setup_wandb(config: Experiment) -> None:
             Path(config.model_dir).joinpath("wandb.txt").write_text(url)
 
 
-def get_ckpts_by_step(ckpt_dir: Path, steps_per_epoch: int) -> OrderedDict[int, Path]:
-    ckpts = []
-    for ckpt in ckpt_dir.glob("*.ckpt"):
-        if ckpt.stem != "best":
-            step = Step.from_short_string(ckpt.stem, steps_per_epoch).get_step()
-            ckpts.append((step, ckpt))
-    sorted_ckpt_dict = OrderedDict()
-    for k, v in sorted(ckpts, key=lambda x: x[0]):
-        sorted_ckpt_dict[k] = v
-    return sorted_ckpt_dict
-
-
-def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
-    last_ckpt = ckpt_dir / "last.ckpt"
-    if last_ckpt.exists():
-        return last_ckpt
-    ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
-    last_step = list(ckpts.keys())[-1]
-    return ckpts[last_step]
-
-
 def get_resume_state_dicts(config, i: int = 1) -> Tuple[int, int, Dict, Dict, Dict]:
     """logic:
     if only ckpt_path is set, load the model and nothing else
@@ -943,19 +858,17 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
     device = setup_device(config)
     model_dir = setup_model_dir(config)
     steps_per_epoch = config.data.get_steps_per_epoch()
-    # config.model_dir.joinpath("barriers").mkdir(exist_ok=True)
 
     setup_wandb(config)
     training_elements = TrainingElements()
     assert config.n_models >= 1, f"n_models ({config.n_models}) should be >= 1."
     first_seed = config.seeds.seed1
     for i in range(1, config.n_models + 1):
-        suffix = str(i)
-        seed = getattr(config.seeds, f"seed{suffix}")
-        loader_seed = getattr(config.seeds, f"loader_seed{suffix}")
+        seed = getattr(config.seeds, f"seed{i}")
+        loader_seed = getattr(config.seeds, f"loader_seed{i}")
         perturb_seed = seed
-        if hasattr(config, f"perturb_seed{suffix}"):
-            perturb_seed = getattr(config.seeds, f"perturb_seed{suffix}")
+        if hasattr(config, f"perturb_seed{i}"):
+            perturb_seed = getattr(config.seeds, f"perturb_seed{i}")
 
         ## setup individual model dir
         model_dir_ = model_dir.joinpath(f"model{i}")
@@ -975,32 +888,32 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
         model, tokenizer = configure_model(
             config, device, seed=seed, state_dict=model_sd
         )
-        # TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
-        init_model_vector = (
-            nn.utils.parameters_to_vector(model.parameters()).detach().cpu()
-        )
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup model %d with seed=%d.", i, seed)
 
         # data
-        def get_train_eval_test_loaders(loader_fn, **kwargs):
-            train_loader = loader_fn(train=True, evaluate=False, **kwargs)
-            eval_loader = loader_fn(train=True, evaluate=True, **kwargs)
-            test_loader = loader_fn(train=False, evaluate=True, **kwargs)
-            return train_loader, eval_loader, test_loader
-
-        if is_nlp_task:
-            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
-                setup_nlp_loader,
-                data_conf=config.data,
-                tokenizer=tokenizer,
-                loader_seed=loader_seed,
-            )
-        else:
-            train_loader, train_eval_loader, test_loader = get_train_eval_test_loaders(
-                setup_vision_loader, data_conf=config.data, loader_seed=loader_seed
-            )
+        train_loader = setup_loader(
+            config.data,
+            train=True,
+            evaluate=False,
+            loader_seed=loader_seed,
+            tokenizer=tokenizer,
+        )
+        train_eval_loader = setup_loader(
+            config.data,
+            train=True,
+            evaluate=True,
+            loader_seed=loader_seed,
+            tokenizer=tokenizer,
+        )
+        test_loader = setup_loader(
+            config.data,
+            train=False,
+            evaluate=True,
+            loader_seed=loader_seed,
+            tokenizer=tokenizer,
+        )
         assert steps_per_epoch == len(train_loader)
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
 
@@ -1029,27 +942,32 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
             logger.info("Optimizer %d - %s", i, opt)
             logger.info("Scheduler %d - %s", i, scheduler)
 
+        # make training element
+        if hasattr(config, f"evaluate_ckpt{i}") and getattr(
+            config, f"evaluate_ckpt{i}"
+        ):
+            training_element_class = CheckpointEvaluationElement
+        elif is_nlp_task:
+            training_element_class = NLPTrainingElement
+        else:
+            training_element_class = VisionTrainingElement
         training_elements.add_element(
-            TrainingElement(
+            training_element_class(
+                config=config,
                 element_ind=i,
-                model=model,
-                opt=opt,
-                scheduler=scheduler,
-                model_dir=model_dir_,
-                seed=seed,
-                loader_seed=loader_seed,
+                device=device,
+                max_steps=max_steps,
                 train_loader=train_loader,
                 train_eval_loader=train_eval_loader,
                 test_loader=test_loader,
-                max_steps=Step(max_steps, steps_per_epoch),
-                perturb_seed=perturb_seed,
+                model=model,
+                opt=opt,
+                scheduler=scheduler,
                 tokenizer=tokenizer,
-                init_model_vector=init_model_vector,
+                perturb_seed=perturb_seed,
             )
         )
     seed_everything(first_seed)
-    if config.logger.use_tqdm:
-        setup_iterators(training_elements, use_tqdm=True)
     logger.info(
         "Model setups complete, switching seed to %d, which is passed to the first model.",
         first_seed,
@@ -1069,67 +987,3 @@ def cleanup(config: Experiment):
 
         logger.info("Deleting the experiment directory (%s)", config.model_dir)
         rmtree(config.model_dir)
-
-
-# something wrong with the steps
-def save_training(
-    el: TrainingElement, path: Path, epoch: int = None, step: int = None
-) -> None:
-    """Given a training element, saves the model state, optimizer and scheduler state along with epoch."""
-    torch.save(
-        {
-            "state_dict": el.model.state_dict(),
-            "optimizer_state_dict": el.opt.state_dict(),
-            "scheduler_state_dict": el.scheduler.state_dict()
-            if el.scheduler is not None
-            else None,
-            "epoch": epoch,
-            "step": step,
-        },
-        path,
-        pickle_protocol=4,
-    )
-
-
-COLORS = ["#75507b", "#4f42b5", "#808080"]
-
-
-def setup_iterators(
-    training_elements: Dict[int, TrainingElement], use_tqdm: bool = True
-):
-    tqdm_cls = tqdm if use_tqdm else Iterator
-    for i, el in enumerate(training_elements, start=1):
-        color = COLORS[i % len(COLORS)]
-        train_iterator = tqdm_cls(
-            total=len(el.train_loader),
-            desc=f"Training model {i} - epoch: ",
-            position=2 * i,
-            leave=True,
-            # leave=False, disable=None,
-            colour=color,
-        )
-        train_eval_iterator = tqdm_cls(
-            total=len(el.train_loader),
-            desc=f"Evaluating model {i} on train - epoch: ",
-            position=2 + 2 * i,
-            leave=True,
-            # leave=False, disable=None,
-            colour=color,
-        )
-        test_iterator = tqdm_cls(
-            total=len(el.test_loader),
-            desc=f"Evaluating model {i} - epoch: ",
-            position=1 + 2 * i,
-            leave=True,
-            # leave=False, disable=None,
-            colour=color,
-        )
-        el.extra_iterator = tqdm_cls(
-            position=2 + 2 * i, desc="Extra iterator used for anything", colour="white"
-        )
-        el.train_iterator = train_iterator
-        el.test_iterator = test_iterator
-        el.train_eval_iterator = train_eval_iterator
-        el.train_iterator = train_iterator
-        el.test_iterator = test_iterator
-        el.train_eval_iterator = train_eval_iterator

@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Dict
 
 import numpy as np
 import torch
@@ -50,7 +50,7 @@ class TrainingRunner(ExperimentManager):
         self.global_step = 0
         self.ep = 0
         self.steps_per_epoch = self.config.data.get_steps_per_epoch()
-        self.max_steps = self.training_elements.max_steps.get_step(self.steps_per_epoch)
+        self.max_steps = self.training_elements.max_steps
 
         self.eval_steps = self.get_steps(
             self.config.trainer.eval_freq, self.config.trainer.eval_specific_steps
@@ -103,15 +103,18 @@ class TrainingRunner(ExperimentManager):
 
     def on_train_start(self):
         print(self.config.display)
+        self.training_elements.on_epoch_start()
         if self.training_elements.is_same_model():
             self.logger.info("Models are the same at initialization.")
+        # don't eval/save if advancing to start_step
+        if self.start_step == 0:
+            self.eval_and_save()
 
     def on_epoch_start(self):
         self.training_elements.on_epoch_start()
 
     def on_epoch_end(self):
         self.ep += 1
-        self.training_elements.on_epoch_end()
 
     def run(self):
         self.on_train_start()
@@ -126,13 +129,11 @@ class TrainingRunner(ExperimentManager):
                     # advance batches to bring dataloader state to start_step
                     self.advance_step_without_training()
                 else:
-                    self.save_all_training_elements()
                     self.step_all_training_elements(batches)
             self.on_epoch_end()
         self.on_train_end()
 
     def evaluate_element(self, element: TrainingElement, i):
-        element.model.eval()
         log_dct = {f"step/model{i}": element.curr_step}
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
             element.dist_from_init()
@@ -169,16 +170,29 @@ class TrainingRunner(ExperimentManager):
             )
         return log_dct
 
-    def save_all_training_elements(self):
-        # save checkpoints before doing anything to get a precise snapshot of this iteration
-        for element in self.training_elements:
+    def eval_and_save(self):
+        log_dct = {}
+        for i, element in enumerate(self.training_elements, start=1):
+            if element.curr_step >= element.max_steps:
+                continue
+            if element.curr_step in self.eval_steps:
+                log_dct.update(self.evaluate_element(element, i))
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
+        if self.global_step in self.lmc_steps:
+            log_dct.update(self.evaluate_lmc())
+        # print summary if log_dct is not empty
+        if self.config.logger.print_summary and log_dct:
+            report_results(log_dct, self.ep, self.config.n_models)
+        return log_dct
 
     def on_train_end(self):
         # eval always happens on the last step
         log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
         for i, element in enumerate(self.training_elements, start=1):
+            # log any training metrics that haven't been logged since the end of the last epoch
+            if self.global_step % self.steps_per_epoch != 0:
+                log_dct.update(element.log_train_metrics())
             log_dct.update(self.evaluate_element(element, i))
             element.save(self.steps_per_epoch)
         if self.config.lmc.lmc_on_train_end:
@@ -189,200 +203,43 @@ class TrainingRunner(ExperimentManager):
     def advance_step_without_training(self):
         self.global_step += 1
         for i, element in enumerate(self.training_elements, start=1):
-            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+            if element.curr_step >= element.max_steps:
                 continue
             element.curr_step += 1
 
     def step_all_training_elements(self, batches):
-        log_dct = {}
-        # Compute LMC stats
-        if self.global_step in self.lmc_steps:
-            log_dct.update(self.evaluate_lmc())
         # go through each training element
-        step_dct = {"step/global": self.global_step}
         self.global_step += 1
+        log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
-            if element.curr_step >= element.max_steps.get_step(self.steps_per_epoch):
+            if element.curr_step >= element.max_steps:
                 continue
             # train
-            step_dct.update(
-                self.step_element(
-                    element,
-                    batch,
-                    i=i,
-                )
-            )
-            # evaluate
-            if element.curr_step in self.eval_steps:
-                log_dct.update(self.evaluate_element(element, i))
-            # save checkpoint
-            if element.curr_step in self.save_steps:
-                element.save(self.steps_per_epoch)
-        # print summary if log_dct is not empty
-        if self.config.logger.print_summary and log_dct:
-            log_dct["step/epoch"] = self.ep
-            report_results(log_dct, self.ep, self.config.n_models)
+            log_dct.update(element.step(batch))
+            # if at end of batch, log training metrics
+            if self.global_step % self.steps_per_epoch == 0:
+                log_dct.update(element.log_train_metrics())
         # log all of the info together at once
-        log_dct.update(step_dct)
+        log_dct.update(self.eval_and_save())
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
-    def step_element(self, element, batch, i: int = 1) -> Dict[str, Any]:
-        element.model.train()
-        log_dct = {f"step/model{i}": element.curr_step}
-        element.train_iterator.update()
-        element.curr_step += 1
-        # Get learning rate
-        if element.scheduler is None:
-            lr = element.opt.param_groups[0]["lr"]
-        else:
-            lr = element.scheduler.get_last_lr()[-1]
-        log_dct[f"lr/model{i}"] = lr
-
-        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            element.opt.zero_grad()
-        if self.config.data.is_language_dataset():
-            self._step_element_language(element, batch)
-        else:
-            self._step_element_vision(element, batch)
-
-        return log_dct
-
-    def _step_element_language(self, element, batch):
-        # Pre-fetch next batch while computing current one
-        batch = {
-            k: v.to(self.device, non_blocking=True)
-            if isinstance(v, torch.Tensor)
-            else v
-            for k, v in batch.items()
-        }
-
-        # Forward pass depends on task type
-        if self.config.data.task_type == TaskType.GENERATION:
-            # Language modeling
-            outputs = element.model(**batch)
-            loss = outputs.loss
-
-        elif self.config.data.task_type in [
-            TaskType.CLASSIFICATION,
-            TaskType.NATURAL_LANGUAGE_INFERENCE,
-            TaskType.SEQUENCE_PAIR,
-        ]:
-            # Classification tasks
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            logits = outputs.logits
-        elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
-            # Question answering
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            start_logits = outputs.start_logits
-            end_logits = outputs.end_logits
-        elif self.config.data.task_type == TaskType.REGRESSION:
-            # Regression tasks (like STS-B)
-            outputs = element.model(**batch)
-            loss = outputs.loss
-            logits = outputs.logits.squeeze(
-                -1
-            )  # Remove last dimension since it's regression
-        else:
-            raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
-
-        if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            loss.backward()
-            if clip_val := self.config.trainer.opt.gradient_clip_val:
-                torch.nn.utils.clip_grad_norm_(element.model.parameters(), clip_val)
-            element.opt.step()
-            if element.scheduler is not None:
-                element.scheduler.step()
-
-        # Update metrics based on task
-        with torch.no_grad():
-            metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
-            dataset = self.config.data.dataset_info
-            if dataset.metrics:
-                if self.config.data.task_type == TaskType.REGRESSION:
-                    predictions = outputs.logits
-                else:
-                    predictions = outputs.logits.argmax(1)
-                d = compute_metrics(
-                    dataset.metrics, predictions.detach(), batch["labels"].detach()
-                )
-                metrics_kwargs.update(d)
-            else:
-                if self.config.data.task_type == TaskType.GENERATION:
-                    perplexity = torch.exp(loss)
-                    metrics_kwargs["perplexity"] = perplexity.item()
-
-                elif self.config.data.task_type in [
-                    TaskType.CLASSIFICATION,
-                    TaskType.NATURAL_LANGUAGE_INFERENCE,
-                ]:
-                    acc, topk = mixup_topk_accuracy(
-                        logits.detach(), batch["labels"].detach(), None, k=3, avg=True
-                    )
-                    metrics_kwargs["total_acc"] = acc.item()
-                    metrics_kwargs["total_topk"] = topk.item()
-
-                elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
-                    # For QA, we typically track EM (Exact Match) and F1 score
-                    # This would require post-processing with the tokenizer
-                    start_pred = torch.argmax(start_logits, dim=-1)
-                    end_pred = torch.argmax(end_logits, dim=-1)
-                    # Simplified metric for training (just position accuracy)
-                    start_correct = (
-                        (start_pred == batch["start_positions"]).float().mean()
-                    )
-                    end_correct = (end_pred == batch["end_positions"]).float().mean()
-                    avg_correct = (start_correct + end_correct) / 2
-                    metrics_kwargs["accuracy"] = avg_correct.item()
-
-        element.metrics.update(**metrics_kwargs)
-        return loss.detach()
-
-    def _step_element_vision(self, element, batch):
-        x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
-        out = element.model(x)
-        loss = self.loss_fn(out, y)
-        targs_perm = None  # depreceated, when using mixup/cutmix
-        loss.backward()
-        # TODO: gradclipping
-
-        element.opt.step()
-        if element.scheduler is not None:
-            element.scheduler.step()
-
-        # update metrics
-        acc, topk = mixup_topk_accuracy(
-            out.detach(), y.detach(), targs_perm, k=3, avg=True
-        )
-        element.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
-        return loss.detach()
-
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""
-
-        log_dct = {
-            f"model{model_idx}/train/{key}": val
-            for (key, val) in element.metrics.get_metrics(percentage=False).items()
-        }
+        element.model.eval()
 
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_vision(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update(
-                {
-                    f"model{model_idx}/test/accuracy": test_res["accuracy"],
-                    f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
-                    f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
-                }
-            )
+            log_dct = {
+                f"model{model_idx}/test/accuracy": test_res["accuracy"],
+                f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
+                f"model{model_idx}/test/cross_entropy": test_res["cross_entropy"],
+            }
 
             self._handle_best_checkpoint(element, test_res["accuracy"])
         return log_dct
@@ -390,21 +247,15 @@ class TrainingRunner(ExperimentManager):
     def _eval_language(
         self, element: TrainingElement, model_idx: int
     ) -> Dict[str, float]:
+        element.model.eval()
         """Language-specific evaluation logging"""
         # Base metrics all tasks have
-        ## log train metrics
-        log_dct = {
-            f"model{model_idx}/train/{key}": val
-            for (key, val) in element.metrics.get_metrics(percentage=False).items()
-        }
         # Run test evaluation
         with torch.no_grad():
             test_res = self._test_language(
                 element.model, element.test_loader, element.test_iterator
             )
-            log_dct.update(
-                {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
-            )
+            log_dct = {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
 
             # Use appropriate metric for best checkpoint
             best_metric = (
@@ -421,8 +272,6 @@ class TrainingRunner(ExperimentManager):
             element.optimal_acc = metric_value
             if self.config.trainer.save_best:
                 self.logger.info("Saving best params at epoch %d", self.ep)
-                if element.optimal_path is not None:
-                    element.optimal_path.unlink()
                 element.save(self.steps_per_epoch, save_name="best.ckpt")
 
     @torch.no_grad()
