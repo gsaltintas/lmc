@@ -34,9 +34,11 @@ class PerturbedTrainingRunner(TrainingRunner):
     def on_train_start(self):
         super().on_train_start()
         print("Running perturbed training.")
-        self.models_at_init = [
-            parameters_to_vector(el.model.parameters()) for el in self.training_elements
+        all_params = [
+            [p.detach().cpu().contiguous() for p in el.model.parameters()]
+            for el in self.training_elements
         ]
+        self.models_at_init = [parameters_to_vector(params) for params in all_params]
         log_dct = dict()
         log_dct.update(
             {

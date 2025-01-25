@@ -976,9 +976,8 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
             config, device, seed=seed, state_dict=model_sd
         )
         # TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
-        init_model_vector = (
-            nn.utils.parameters_to_vector(model.parameters()).detach().cpu()
-        )
+        params = [p.detach().cpu().contiguous() for p in model.parameters()]
+        init_model_vector = nn.utils.parameters_to_vector(params)
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup model %d with seed=%d.", i, seed)

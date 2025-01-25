@@ -436,7 +436,7 @@ def check_lmc(
                 results = results_
             else:
                 results = pd.concat([results, results_])
-            lmc_res = extract_barrier(results, ep, is_language_task=is_language_model)
+            lmc_res = extract_barrier(results_, ep, is_language_task=is_language_model)
             log_dct.update(
                 {f"lmc-{other_ind}-{model_ind}/{k}": v for k, v in lmc_res.items()}
             )
@@ -514,11 +514,12 @@ def check_lmc(
                         }
                     )
     print("=" * 25, " LMC Results ", "=" * 25)
-    print(results)
+    print(results.dropna(axis=1, how="all"))
     print("=" * 22, " LMC Results (WM) ", "=" * 23)
-    print(results_perm_wm)
+    print(results_perm_wm.dropna(axis=1, how="all"))
     print("=" * 22, " LMC Results (AM) ", "=" * 23)
-    print(results_perm_act_aligned)
+    print(results_perm_act_aligned.dropna(axis=1, how="all"))
+    print(log_dct)
     return results, results_perm_wm, results_perm_act_aligned
 
 

@@ -92,13 +92,20 @@ class TrainingElement(object):
         return True
 
     def dist_from_init(self) -> float:
-        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
+        current_params = [
+            p.detach().cpu().contiguous() for p in self.model.parameters()
+        ]
+        current_vector = torch.nn.utils.parameters_to_vector(current_params)
         dist = torch.linalg.norm(current_vector.detach().cpu() - self.init_model_vector)
         return dist.item()
 
     def dist_from_element(self, el: "TrainingElement") -> float:
-        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
-        other_vector = torch.nn.utils.parameters_to_vector(el.model.parameters())
+        current_params = [
+            p.detach().cpu().contiguous() for p in self.model.parameters()
+        ]
+        current_vector = torch.nn.utils.parameters_to_vector(current_params)
+        other_params = [p.detach().cpu().contiguous() for p in el.model.parameters()]
+        other_vector = torch.nn.utils.parameters_to_vector(other_params)
         dist = torch.linalg.norm(
             current_vector.detach().cpu() - other_vector.detach().cpu()
         )
