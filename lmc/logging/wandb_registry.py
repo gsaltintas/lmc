@@ -424,13 +424,14 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
 
-            if model_idx < self.n_models:
+            for next_el_ind in range(model_idx + 1, self.n_models + 1):
+                # if model_idx < self.n_models:
                 self.add_metric(
-                    f"l2_dist_{model_idx}-{model_idx + 1}",
+                    f"l2_dist_{model_idx}-{next_el_ind}",
                     WandbMetric(
-                        f"l2/dist_{model_idx}-{model_idx + 1}",
-                        rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{model_idx + 1}}}}} \rVert_F$",
-                        f"l2_dist_{model_idx}-{model_idx + 1}",
+                        f"l2/dist_{model_idx}-{next_el_ind}",
+                        rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \rVert_F$",
+                        f"l2_dist_{model_idx}-{next_el_ind}",
                         category=MetricCategory.L2_DISTANCE,
                     ),
                 )

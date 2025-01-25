@@ -298,7 +298,7 @@ def evaluate_merge(
 
         # Vanilla average merging
         for n, p in model.state_dict().items():
-            model_dct[n] += 1.0 / config.n_models * p.clone().detach().cpu()
+            model_dct[n] += 1.0 / config.n_models * p.clone().detach()
 
         ps = model.permutation_spec()
         perm = weight_matching(
@@ -310,7 +310,7 @@ def evaluate_merge(
         )
         permuted_ = model._permute(perm, inplace=False)
         for n, p in permuted_.state_dict().items():
-            after_perms_model_dct[n] += 1.0 / config.n_models * p.clone().detach().cpu()
+            after_perms_model_dct[n] += 1.0 / config.n_models * p.clone().detach()
     merged_model = deepcopy(model)
     merged_model.load_state_dict(model_dct)
     permuted_.load_state_dict(after_perms_model_dct)
@@ -354,7 +354,9 @@ def evaluate_merge(
         log_dct.update(
             {f"merge/{name}/{key}": val for key, val in vanilla_results.items()}
         )
-        log_dct.update({f"merge/wm/{name}/{key}": val for key, val in perm_results})
+        log_dct.update(
+            {f"merge/wm/{name}/{key}": val for key, val in perm_results.items()}
+        )
 
 
 @torch.no_grad()
@@ -511,7 +513,12 @@ def check_lmc(
                             ).items()
                         }
                     )
-
+    print("=" * 25, " LMC Results ", "=" * 25)
+    print(results)
+    print("=" * 22, " LMC Results (WM) ", "=" * 23)
+    print(results_perm_wm)
+    print("=" * 22, " LMC Results (AM) ", "=" * 23)
+    print(results_perm_act_aligned)
     return results, results_perm_wm, results_perm_act_aligned
 
 
@@ -641,7 +648,6 @@ def interpolate_evaluate(
             for outerKey, innerDict in res.items()
             for innerKey, values in innerDict.items()
         }
-        print(t, res)
 
         res_dict[i] = {
             f"{outer}/{inner}/{suffix}": it for (outer, inner), it in res.items()
