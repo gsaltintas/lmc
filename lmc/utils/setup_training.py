@@ -694,7 +694,7 @@ def setup_model_dir(config: Trainer) -> Path:
                 f"Must provide an existing log_dir ({config.logger.log_dir})"
             )
     if config.model_dir is None:
-        hashname = config.hashname[:5]
+        hashname = config.hashname[:-24]
         now = datetime.now()
         formatted_date = now.strftime("%y-%m-%d")
         short_id = str(now.microsecond)[:5]
