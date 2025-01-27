@@ -263,7 +263,10 @@ class TrainingRunner(ExperimentManager):
         if self.config.data.task_type == TaskType.GENERATION:
             # Language modeling
             outputs = element.model(**batch)
-            loss = outputs.loss
+            # loss = outputs.loss
+            loss = (
+                outputs.loss / self.config.trainer.gradient_accumulation_steps
+            )  # Scale loss
 
         elif self.config.data.task_type in [
             TaskType.CLASSIFICATION,
@@ -272,26 +275,35 @@ class TrainingRunner(ExperimentManager):
         ]:
             # Classification tasks
             outputs = element.model(**batch)
-            loss = outputs.loss
+            # loss = outputs.loss
+            loss = (
+                outputs.loss / self.config.trainer.gradient_accumulation_steps
+            )  # Scale loss
             logits = outputs.logits
         elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
             # Question answering
             outputs = element.model(**batch)
-            loss = outputs.loss
+            # loss = outputs.loss
+            loss = (
+                outputs.loss / self.config.trainer.gradient_accumulation_steps
+            )  # Scale loss
             start_logits = outputs.start_logits
             end_logits = outputs.end_logits
         elif self.config.data.task_type == TaskType.REGRESSION:
             # Regression tasks (like STS-B)
             outputs = element.model(**batch)
-            loss = outputs.loss
+            # loss = outputs.loss
+            loss = (
+                outputs.loss / self.config.trainer.gradient_accumulation_steps
+            )  # Scale loss
             logits = outputs.logits.squeeze(
                 -1
             )  # Remove last dimension since it's regression
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
 
+        loss.backward()
         if element.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            loss.backward()
             if clip_val := self.config.trainer.opt.gradient_clip_val:
                 torch.nn.utils.clip_grad_norm_(element.model.parameters(), clip_val)
             element.opt.step()

@@ -109,7 +109,10 @@ def compute_classification_metrics(predictions, references):
 
 def compute_f1_metrics(predictions, references):
     """Compute F1 score (used for MRPC, QQP)"""
-    return f1_score(y_true=references, y_pred=predictions)
+    return f1_score(
+        y_true=references.detach().cpu().numpy(),
+        y_pred=predictions.detach().cpu().numpy(),
+    )
     metric = evaluate.load("f1")
     results = metric.compute(
         predictions=predictions,
@@ -120,13 +123,19 @@ def compute_f1_metrics(predictions, references):
 
 def compute_matthews_correlation(predictions, references):
     """Compute Matthews Correlation (used for CoLA)"""
-    return matthews_corrcoef(references, predictions)
+    return matthews_corrcoef(
+        references.detach().cpu().numpy(), predictions.detach().cpu().numpy()
+    )
 
 
 def compute_pearson_spearman_corr(predictions, references):
     """Compute Pearson & Spearman correlation (used for STS-B)"""
-    pearson_corr, _ = pearsonr(references, predictions)
-    spearman_corr, _ = spearmanr(references, predictions)
+    r, p = (
+        references.detach().cpu().numpy(),
+        predictions.detach().cpu().numpy().flatten(),
+    )
+    pearson_corr = pearsonr(r, p).statistic
+    spearman_corr = spearmanr(r, p).statistic
     return {
         "pearson_correlation": pearson_corr,
         "spearman_correlation": spearman_corr,
