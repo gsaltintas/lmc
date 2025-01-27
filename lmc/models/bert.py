@@ -198,12 +198,14 @@ class Bert(BaseModel):
             )
 
         return model_
-    
+
     def get_init_stds(self, include_constant_params=False):
         std = OrderedDict()
         default_std = 0.02
         if "multiberts" in self.model_name:
-            default_std = 0.01759  # empirically computed based on tensorflow TruncatedNormal
+            default_std = (
+                0.01759  # empirically computed based on tensorflow TruncatedNormal
+            )
         for k, v in self.named_parameters():
             # everything has same std
             if include_constant_params:

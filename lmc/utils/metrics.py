@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from rich.console import Console
 from rich.table import Table
+from scipy.stats import pearsonr, spearmanr
+from sklearn.metrics import f1_score, matthews_corrcoef
 from tabulate import tabulate
 
 from lmc.data.data_stats import TaskType
@@ -107,6 +109,7 @@ def compute_classification_metrics(predictions, references):
 
 def compute_f1_metrics(predictions, references):
     """Compute F1 score (used for MRPC, QQP)"""
+    return f1_score(y_true=references, y_pred=predictions)
     metric = evaluate.load("f1")
     results = metric.compute(
         predictions=predictions,
@@ -117,12 +120,27 @@ def compute_f1_metrics(predictions, references):
 
 def compute_matthews_correlation(predictions, references):
     """Compute Matthews Correlation (used for CoLA)"""
+    return matthews_corrcoef(references, predictions)
+
+
+def compute_pearson_spearman_corr(predictions, references):
+    """Compute Pearson & Spearman correlation (used for STS-B)"""
+    pearson_corr, _ = pearsonr(references, predictions)
+    spearman_corr, _ = spearmanr(references, predictions)
+    return {
+        "pearson_correlation": pearson_corr,
+        "spearman_correlation": spearman_corr,
+    }
+
+
+def compute_matthews_correlation_hf(predictions, references):
+    """Compute Matthews Correlation (used for CoLA)"""
     metric = evaluate.load("matthews_correlation")
     results = metric.compute(predictions=predictions, references=references)
     return results["matthews_correlation"]
 
 
-def compute_pearson_spearman_corr(predictions, references):
+def compute_pearson_spearman_corr_hf(predictions, references):
     """Compute Pearson & Spearman correlation (used for STS-B)"""
     metric = evaluate.load("glue", "stsb")
     results = metric.compute(predictions=predictions, references=references)
@@ -412,5 +430,7 @@ def print_to_rich(
         table.add_row(*row_content)
 
     console.print(table)
+    console.print("\n" * 2)
+    console.print("\n" * 2)
     console.print("\n" * 2)
     console.print("\n" * 2)
