@@ -377,9 +377,19 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
             self.add_metric(
-                f"noise_l2_scaled_{model_idx}",
+                f"noise_l2_scaled_{model_idx}_old",
                 WandbMetric(
                     f"static/noise/{model_idx}-l2-scaled",
+                    f"Effective Noise L2 for Model {model_idx}",
+                    f"noise_scaled{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
+            self.add_metric(
+                f"noise_l2_scaled_{model_idx}",
+                WandbMetric(
+                    f"static/noise_l2/{model_idx}/total",
+                    # f"static/noise/{model_idx}-l2-scaled",
                     f"Effective Noise L2 for Model {model_idx}",
                     f"noise_scaled{model_idx}",
                     category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
