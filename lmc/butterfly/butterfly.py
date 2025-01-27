@@ -335,7 +335,7 @@ def scale_noise(
 def sample_noise_and_perturb(
     config: PerturbedTrainer,
     model,
-    perturb_seed: int,
+    perturb_seed: Optional[int],
     loss_fn: nn.Module,
     ind: int,
     tokenizer: AutoTokenizer = None,

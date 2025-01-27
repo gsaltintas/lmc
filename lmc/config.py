@@ -395,7 +395,7 @@ class Optimizer(Config):
     warmup_ratio: float = 0.0
     gradient_clip_val: float = 0.0
     gradient_clip_algorithm: Literal["norm", "value", ""] = None
-    lr_scheduler: Literal["linear", "exponential", "onecycle", "cosine", "triangle"] = (
+    lr_scheduler: Literal["linear", "exponential", "onecycle", "cosine", "triangle", "constant"] = (
         None
     )
 

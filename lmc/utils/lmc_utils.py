@@ -14,13 +14,11 @@ from tqdm import tqdm
 from lmc.config import Config, DataConfig
 from lmc.data.data_stats import TaskType
 from lmc.models.base_model import BaseModel
-from lmc.permutations import get_cost
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import sinkhorn_kl
 from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
 from lmc.utils.metrics import Metrics, compute_metrics
-from lmc.utils.setup_training import Iterator
 from lmc.utils.training_element import TrainingElement
 
 
