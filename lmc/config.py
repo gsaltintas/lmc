@@ -713,12 +713,14 @@ class ModelConfig_(Config):
     initialization_strategy: Inits = "kaiming_normal"
     ckpt_path: Optional[Path] = None
     gradient_checkpointing: bool = True
+    revision: Optional[str] = None
 
     _model_name: str = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
     _initialization_strategy: str = "Initialization strategy for the model's layers"
     _gradient_checkpointing: str = (
         "Only implemented for HuggingFace models, disable by passing false"
     )
+    _revision: str = "Pass revision for using earlier checkpoints from huggingface, e.g. '--model_name=allenai/OLMo-2-1124-7B --revision=step1000-tokens5B'"
 
     _name: str = "model"
     _description: str = ""

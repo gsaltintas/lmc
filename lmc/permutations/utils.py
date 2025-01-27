@@ -8,6 +8,7 @@ import logging
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
+from pprint import pprint
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -52,23 +53,51 @@ class PermSpec:
                 for axis, perm in enumerate(perm_names):
                     if perm is not None:
                         if isinstance(perm, tuple):
-                            # Handle head permutations
-                            perm_head, perm_dhead = perm
-                            if perm_head not in perms_to_names:
-                                perms_to_names[perm_head] = []
-                            if perm_dhead not in perms_to_names:
-                                perms_to_names[perm_dhead] = []
-                            perms_to_names[perm_head].append(
-                                (param_name, axis, "head")
-                            )  # Add type
-                            perms_to_names[perm_dhead].append(
-                                (param_name, axis, "d_head")
-                            )  # Add type
+                            if len(perm) == 3:  # OLMo QKV case
+                                perm_head, perm_dhead, code = perm
+                                assert code in [
+                                    "combined",
+                                    "swiglu_out",
+                                    "swiglu_in",
+                                ], (
+                                    "Currently 3-way permutations are only possible when attention projection weights are combined into one layer or swiglu, %s not recognized",
+                                    code,
+                                )
+                                if perm_head and perm_head not in perms_to_names:
+                                    perms_to_names[perm_head] = []
+                                if perm_dhead and perm_dhead not in perms_to_names:
+                                    perms_to_names[perm_dhead] = []
+                                if "swi" in code:
+                                    assert perm_dhead is None, (
+                                        "SwiGLU in the attention is not supported yet"
+                                    )
+                                    perms_to_names[perm_head].append(
+                                        (param_name, axis, code)
+                                    )
+                                else:
+                                    perms_to_names[perm_head].append(
+                                        (param_name, axis, "combined_head")
+                                    )
+                                    perms_to_names[perm_dhead].append(
+                                        (param_name, axis, "combined_d_head")
+                                    )
+                            else:  # Regular head permutation
+                                perm_head, perm_dhead = perm
+                                if perm_head not in perms_to_names:
+                                    perms_to_names[perm_head] = []
+                                if perm_dhead not in perms_to_names:
+                                    perms_to_names[perm_dhead] = []
+                                perms_to_names[perm_head].append(
+                                    (param_name, axis, "head")
+                                )
+                                perms_to_names[perm_dhead].append(
+                                    (param_name, axis, "d_head")
+                                )
                         else:
                             if perm not in perms_to_names:
                                 perms_to_names[perm] = []
                             perms_to_names[perm].append((param_name, axis))
-            self.perms_to_names = perms_to_names
+        self.perms_to_names = perms_to_names
 
         if self.acts_to_perms is not None and self.perms_to_acts is None:
             perms_to_acts = OrderedDict()
@@ -99,23 +128,7 @@ class PermSpec:
     def from_names_to_perms(
         names_to_perms: Dict[str, List[Union[str, Tuple[str, str], None]]],
     ) -> "PermSpec":
-        perms_to_names = OrderedDict()
-        for param_name, perm_names in names_to_perms.items():
-            for axis, perm in enumerate(perm_names):
-                if perm is not None:
-                    if isinstance(perm, tuple):
-                        # Handle head permutations
-                        perm_head, perm_dhead = perm
-                        if perm_head not in perms_to_names:
-                            perms_to_names[perm_head] = []
-                        if perm_dhead not in perms_to_names:
-                            perms_to_names[perm_dhead] = []
-                        perms_to_names[perm_head].append((param_name, axis))
-                        perms_to_names[perm_dhead].append((param_name, axis))
-                    else:
-                        if perm not in perms_to_names:
-                            perms_to_names[perm] = []
-                        perms_to_names[perm].append((param_name, axis))
+        perms_to_names = None  # OrderedDict()
         return PermSpec(names_to_perms=names_to_perms, perms_to_names=perms_to_names)
 
     def __str__(self):
@@ -198,6 +211,84 @@ def apply_head_permutation(
     return param
 
 
+def apply_olmo_qkv_permutation(
+    param: torch.Tensor,
+    perm_head: np.ndarray,
+    perm_dhead: np.ndarray,
+    num_heads: int,
+    d_head: int,
+    axis: int,
+) -> torch.Tensor:
+    """Apply permutations to OLMo's QKV combined weights"""
+    if axis == 0:
+        shape = param.shape
+        # Reshape to [num_heads, 3, d_head, hidden_size]
+        param = param.view(num_heads, 3, d_head, shape[-1])
+        # Permute heads
+        param = torch.index_select(
+            param, 0, torch.from_numpy(perm_head).to(param.device)
+        )
+        # Permute d_head, keeping QKV dimension fixed
+        param = torch.index_select(
+            param, 2, torch.from_numpy(perm_dhead).to(param.device)
+        )
+        # Reshape back
+        param = param.reshape(shape)
+    else:
+        # Input dimension permutation
+        shape = param.shape
+        param = param.view(*shape[:-1], num_heads, 3, d_head)
+        param = torch.index_select(
+            param, -3, torch.from_numpy(perm_head).to(param.device)
+        )
+        param = torch.index_select(
+            param, -1, torch.from_numpy(perm_dhead).to(param.device)
+        )
+        param = param.reshape(shape)
+    return param
+
+
+def apply_permutation(
+    param: torch.Tensor,
+    perm_spec: PermSpec,
+    perms: Dict[str, np.ndarray],
+    param_name: str,
+    axis: int,
+) -> torch.Tensor:
+    """Updated apply_permutation function handling OLMo's 3-way permutations"""
+    perm_type = perm_spec.names_to_perms[param_name][axis]
+
+    if perm_type is None:
+        return param
+
+    if isinstance(perm_type, tuple):
+        if len(perm_type) == 3:  # OLMo QKV case
+            print("oooolmo")
+            perm_head, _, perm_dhead = perm_type
+            return apply_olmo_qkv_permutation(
+                param,
+                perms[perm_head],
+                perms[perm_dhead],
+                perm_spec.num_heads,
+                perm_spec.d_head,
+                axis,
+            )
+        else:  # Regular head permutation case
+            perm_head, perm_dhead = perm_type
+            return apply_head_permutation(
+                param,
+                perms[perm_head],
+                perms[perm_dhead],
+                perm_spec.num_heads,
+                perm_spec.d_head,
+                axis,
+            )
+    else:
+        # Regular permutation
+        perm = torch.from_numpy(perms[perm_type]).to(param.device)
+        return torch.index_select(param, axis, perm)
+
+
 def permute_model(
     model: "BaseModel", perm_spec: PermSpec, perms: PermType, inplace: bool = False
 ) -> Union["BaseModel", nn.Module]:
@@ -252,53 +343,108 @@ def permute_param(
 
         if perm_name is not None:
             if isinstance(perm_name, tuple):
-                # Handle head-level permutations
-                perm_head_name, perm_dhead_name = perm_name
-                if perm_head_name is not None and perm_dhead_name is not None:
+                if len(perm_name) == 3:
+                    perm_head_name, perm_dhead_name, code = perm_name
                     shape = permuted_param.shape
-                    # Reshape to separate head dimensions
-                    if axis == 0:
-                        # For output dimension
-                        permuted_param = permuted_param.view(
-                            num_heads, d_head, *shape[1:]
+                    if code == "swiglu_in":
+                        # in_features=X, out_features=D
+                        assert perm_dhead_name is None
+                        assert axis == 1, "swi_in should be axis 1"
+                        out_perm = torch.from_numpy(perms[perm_name[0]]).to(
+                            permuted_param.device
                         )
+                        permuted_param = torch.index_select(
+                            permuted_param, axis, out_perm
+                        )
+                        # perm_dhead = torch.from_numpy(perms[perm_name[2]]).to(
+                        #     permuted_param.device
+                        # )
+                        # permuted_param = torch.index_select(permuted_param, 2, perm_dhead)
+
+                    elif code == "swiglu_out":
+                        # in_features=D, out_features=2X
+                        assert perm_dhead_name is None
+                        assert axis == 0, "swi_out should be axis 0"
+                        permuted_param = permuted_param.view(-1, 2, shape[1])
+                        out_perm = torch.from_numpy(perms[perm_name[0]]).to(
+                            permuted_param.device
+                        )
+                        permuted_param = torch.index_select(
+                            permuted_param, axis, out_perm
+                        )
+                    else:
+                        # Reshape to (num_heads, 3, d_head, input_dim)
+                        permuted_param = permuted_param.view(
+                            num_heads, 3, d_head, shape[-1]
+                        )
+
                         # Apply head permutation
-                        perm_head = torch.from_numpy(perms[perm_head_name]).to(
+                        perm_head = torch.from_numpy(perms[perm_name[0]]).to(
                             permuted_param.device
                         )
                         permuted_param = torch.index_select(
                             permuted_param, 0, perm_head
                         )
+
+                        # QKV dimension stays fixed
                         # Apply d_head permutation
-                        perm_dhead = torch.from_numpy(perms[perm_dhead_name]).to(
-                            permuted_param.device
-                        )
-                        permuted_param = torch.index_select(
-                            permuted_param, 1, perm_dhead
-                        )
-                        # Reshape back
-                        permuted_param = permuted_param.reshape(shape)
-                    else:
-                        # For input dimension
-                        permuted_param = permuted_param.view(
-                            *shape[:-1], num_heads, d_head
-                        )
-                        # Apply head permutation
-                        perm_head = torch.from_numpy(perms[perm_head_name]).to(
-                            permuted_param.device
-                        )
-                        permuted_param = torch.index_select(
-                            permuted_param, -2, perm_head
-                        )
-                        # Apply d_head permutation
-                        perm_dhead = torch.from_numpy(perms[perm_dhead_name]).to(
-                            permuted_param.device
-                        )
-                        permuted_param = torch.index_select(
-                            permuted_param, -1, perm_dhead
-                        )
-                        # Reshape back
-                        permuted_param = permuted_param.reshape(shape)
+                        # perm_dhead = torch.from_numpy(perms[perm_name[1]]).to(
+                        #     permuted_param.device
+                        # )
+                        # permuted_param = torch.index_select(
+                        #     permuted_param, 2, perm_dhead
+                        # )
+
+                    # Reshape back
+                    permuted_param = permuted_param.reshape(shape)
+                else:
+                    # Handle head-level permutations
+                    perm_head_name, perm_dhead_name = perm_name
+                    if perm_head_name is not None and perm_dhead_name is not None:
+                        shape = permuted_param.shape
+                        # Reshape to separate head dimensions
+                        if axis == 0:
+                            # For output dimension
+                            permuted_param = permuted_param.view(
+                                num_heads, d_head, *shape[1:]
+                            )
+                            # Apply head permutation
+                            perm_head = torch.from_numpy(perms[perm_head_name]).to(
+                                permuted_param.device
+                            )
+                            permuted_param = torch.index_select(
+                                permuted_param, 0, perm_head
+                            )
+                            # Apply d_head permutation
+                            perm_dhead = torch.from_numpy(perms[perm_dhead_name]).to(
+                                permuted_param.device
+                            )
+                            permuted_param = torch.index_select(
+                                permuted_param, 1, perm_dhead
+                            )
+                            # Reshape back
+                            permuted_param = permuted_param.reshape(shape)
+                        else:
+                            # For input dimension
+                            permuted_param = permuted_param.view(
+                                *shape[:-1], num_heads, d_head
+                            )
+                            # Apply head permutation
+                            perm_head = torch.from_numpy(perms[perm_head_name]).to(
+                                permuted_param.device
+                            )
+                            permuted_param = torch.index_select(
+                                permuted_param, -2, perm_head
+                            )
+                            # Apply d_head permutation
+                            perm_dhead = torch.from_numpy(perms[perm_dhead_name]).to(
+                                permuted_param.device
+                            )
+                            permuted_param = torch.index_select(
+                                permuted_param, -1, perm_dhead
+                            )
+                            # Reshape back
+                            permuted_param = permuted_param.reshape(shape)
             else:
                 # Regular permutation
                 perm = torch.from_numpy(perms[perm_name]).to(permuted_param.device)
@@ -325,12 +471,18 @@ def get_permutation_sizes(
     for perm_name, params in perm_spec.perms_to_names.items():
         for param_name, axis, *ptype in params:
             if ptype:  # This is a head permutation
-                if ptype[0] == "head":
-                    perm_sizes[perm_name] = (
-                        num_heads  # perm_spec.head_info["num_heads"]
-                    )
+                if ptype[0] in ["combined_head", "head"]:
+                    perm_sizes[perm_name] = num_heads
                 elif ptype[0] == "d_head":
-                    perm_sizes[perm_name] = d_head  # perm_spec.head_info["d_head"]
+                    perm_sizes[perm_name] = d_head
+                elif ptype[0] == "combined_d_head":
+                    perm_sizes[perm_name] = d_head
+                elif ptype[0] == "swiglu_out":
+                    perm_sizes[perm_name] = model_dct[param_name].shape[axis] // 2
+                elif ptype[0] == "swiglu_in":
+                    perm_sizes[perm_name] = model_dct[param_name].shape[axis]
+                else:
+                    raise ValueError("Unkown perm type: %s", ptype[0])
             else:  # Regular permutation
                 perm_sizes[perm_name] = model_dct[param_name].shape[axis]
             break  # Only need one parameter to determine size
@@ -344,7 +496,6 @@ def generate_random_permutations(
 ) -> Dict[str, np.ndarray]:
     """Generate random permutations according to the permutation spec"""
     num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
-
     if model_dct is not None:
         perm_sizes = get_permutation_sizes(model_dct, perm_spec)
     else:
@@ -368,92 +519,6 @@ def generate_random_permutations(
             perms[perm_name] = np.random.permutation(size)
 
     return perms
-
-
-def permute_attention(attn_layer, perm):
-    d_model = attn_layer.d_model
-    num_heads = attn_layer.num_heads
-    head_dim = attn_layer.head_dim
-
-    # Permute Q, K, V weights
-    attn_layer.q.weight.data = (
-        attn_layer.q.weight.data.view(num_heads, head_dim, d_model)
-        .index_select(0, perm)
-        .view(d_model, d_model)
-    )
-    attn_layer.k.weight.data = (
-        attn_layer.k.weight.data.view(num_heads, head_dim, d_model)
-        .index_select(0, perm)
-        .view(d_model, d_model)
-    )
-    attn_layer.v.weight.data = (
-        attn_layer.v.weight.data.view(num_heads, head_dim, d_model)
-        .index_select(0, perm)
-        .view(d_model, d_model)
-    )
-
-    # Permute out weights
-    attn_layer.o.weight.data = (
-        attn_layer.o.weight.data.view(d_model, num_heads, head_dim)
-        .index_select(1, perm)
-        .view(d_model, d_model)
-    )
-
-
-def get_non_permuted_sizes(
-    model_dct: Dict[str, torch.Tensor],
-    perm_spec: PermSpec,
-) -> Dict[str, int]:
-    """
-    For each permutation in perm_spec, sum up the non-permuted axes of the related parameters.
-    Handles both regular and head-level (tuple) permutations.
-
-    Args:
-        model_dct: Dictionary of model parameters
-        perm_spec: Permutation specification
-        num_heads: Number of attention heads
-        d_head: Size of each attention head
-
-    Returns:
-        Dictionary mapping permutation names to their non-permuted sizes
-    """
-    non_permuted_sizes = {}
-    num_heads, d_head = perm_spec.num_heads, perm_spec.d_head
-
-    def compute_non_permuted_size(
-        param_shape: Tuple[int, ...], permuted_dim: int, is_head_dim: bool = False
-    ) -> int:
-        """Helper to compute non-permuted size for a single parameter"""
-        if is_head_dim:
-            # For head dimensions, we need to consider the combined head dimension
-            head_dim_size = num_heads * d_head
-            other_dims = list(param_shape)
-            head_dim = other_dims[permuted_dim]
-            other_dims[permuted_dim] = head_dim_size
-            return np.product(other_dims) // head_dim_size
-        else:
-            # Regular case
-            return np.product(param_shape) // param_shape[permuted_dim]
-
-    for perm_name, params in perm_spec.perms_to_names.items():
-        total_size = 0
-        for param_name, permuted_dim in params:
-            shape = model_dct[param_name].shape
-
-            # Check if this parameter uses head permutations
-            uses_head_perm = False
-            for perms in perm_spec.names_to_perms[param_name]:
-                if isinstance(perms, tuple) and any(p == perm_name for p in perms):
-                    uses_head_perm = True
-                    break
-
-            # Compute size
-            size = compute_non_permuted_size(shape, permuted_dim, uses_head_perm)
-            total_size += size
-
-        non_permuted_sizes[perm_name] = total_size
-
-    return non_permuted_sizes
 
 
 def get_random_permutation_with_fixed_points(

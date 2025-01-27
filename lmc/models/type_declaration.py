@@ -38,6 +38,10 @@ PATTERNS = {
         "roberta-large-mnli",
         r".*roberta.*",
     ],
+    "olmo": [
+        "olmo-1b",
+        "olmo-7b",
+    ],
 }
 MODEL_NAME_PATTERNS = np.concatenate(list(PATTERNS.values()))
 Inits = Optional[
