@@ -337,16 +337,16 @@ class TestTraining(BaseTest):
             ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-eval", "lmc-0-1/lmc/loss/weighted/barrier_train")
             self.assertEqual(barrier, ref_barrier)
 
-        with self.subTest("eval only"):
-            _ = self.run_command_and_return_result("test-ckpt-eval", "model1/test/cross_entropy", seed1=99, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--evaluate_ckpt1", str(self.log_dir / "test-ckpt-ref" / "model2"),  "--evaluate_ckpt2", str(self.log_dir / "test-ckpt-ref" / "model1"), "--lmc_specific_steps", "100st"], lmc_on_train_end=True)
+        with self.subTest("no training, eval only"):
+            _ = self.run_command_and_return_result("test-ckpt-notrain", "model1/test/cross_entropy", seed1=99, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--evaluate_ckpt1", str(self.log_dir / "test-ckpt-ref" / "model2"),  "--evaluate_ckpt2", str(self.log_dir / "test-ckpt-ref" / "model1"), "--lmc_specific_steps", "100st"], lmc_on_train_end=True)
             ref_ce = self.get_summary_value(self.log_dir / "test-ckpt-ref", "model1/test/cross_entropy")
-            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-eval", "model2/test/cross_entropy")
+            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "model2/test/cross_entropy")
             self.assertEqual(test_ce, ref_ce)
             ref_ce = self.get_summary_value(self.log_dir / "test-ckpt-ref", "model2/test/cross_entropy")
-            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-eval", "model1/test/cross_entropy")
+            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "model1/test/cross_entropy")
             self.assertEqual(test_ce, ref_ce)
             barrier = self.get_summary_value(self.log_dir / "test-ckpt-ref", "lmc-0-1/lmc/loss/weighted/barrier_train")
-            ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-eval", "lmc-0-1/lmc/loss/weighted/barrier_train")
+            ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "lmc-0-1/lmc/loss/weighted/barrier_train")
             self.assertEqual(barrier, ref_barrier)
 
 if __name__ == "__main__":
