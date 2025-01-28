@@ -255,7 +255,14 @@ class TrainingElement(ABC):
     @abstractmethod
     def step(self, batch) -> Dict[str, Any]:
         self.model.train()
-        log_dct = {f"step/model{self.element_ind}": self.curr_step}
+        x, y = batch
+        hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
+        hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
+        log_dct = {
+            f"step/model{self.element_ind}": self.curr_step,
+            f"data_hash/model{self.element_ind}/x": hash_x,
+            f"data_hash/model{self.element_ind}/y": hash_y,
+        }
         self.train_iterator.update()
         self.curr_step += 1
         # Get learning rate
