@@ -655,7 +655,7 @@ def setup_vision_loader(
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=train,
+        shuffle=train and not evaluate,
         num_workers=data_conf.num_workers,
         generator=g,
         worker_init_fn=seed_worker,

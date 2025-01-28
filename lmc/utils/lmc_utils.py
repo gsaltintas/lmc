@@ -463,7 +463,7 @@ def check_lmc(
                             ps,
                             model,
                             prev_model,
-                            dataloader=el.train_loader,
+                            dataloader=el.train_eval_loader,
                             verbose=False,
                             num_samples=config.lmc.activation_matching_samples,
                         )

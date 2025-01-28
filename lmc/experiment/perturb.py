@@ -70,7 +70,6 @@ class PerturbedTrainingRunner(TrainingRunner):
             assert g["lr"] == current_lr, (
                 f"Lr of the parameter group {g} is not configured properly."
             )
-        steps_per_epoch = len(element.train_loader)
 
         if prev_max_steps is None:
             prev_max_steps = element.max_steps
