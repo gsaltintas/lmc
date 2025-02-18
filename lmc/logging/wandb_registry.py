@@ -424,6 +424,16 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
 
+            self.add_metric(
+                f"cos_dist_from_init_{model_idx}",
+                WandbMetric(
+                    f"cos/dist_from_init_{model_idx}",
+                    rf"$\cos \left ( \theta_{{t_{{{model_idx}}}}}, \theta_{{{0}_{{{model_idx}}}}} \right )$",
+                    f"cos_dist_from_init_{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,
+                ),
+            )
+
             for next_el_ind in range(model_idx + 1, self.n_models + 1):
                 # if model_idx < self.n_models:
                 self.add_metric(
@@ -432,6 +442,15 @@ class WandbMetricsRegistry(MetricsRegistry):
                         f"l2/dist_{model_idx}-{next_el_ind}",
                         rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \rVert_F$",
                         f"l2_dist_{model_idx}-{next_el_ind}",
+                        category=MetricCategory.L2_DISTANCE,
+                    ),
+                )
+                self.add_metric(
+                    f"cos_dist_{model_idx}-{next_el_ind}",
+                    WandbMetric(
+                        f"cos/dist_{model_idx}-{next_el_ind}",
+                        rf"\cos \left ( \theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \right )$",
+                        f"cos_dist_{model_idx}-{next_el_ind}",
                         category=MetricCategory.L2_DISTANCE,
                     ),
                 )

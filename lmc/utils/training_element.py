@@ -3,7 +3,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Tuple, Iterable
 
 import torch
 from torch import nn, optim
@@ -39,6 +39,15 @@ def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
     ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
     last_step = list(ckpts.keys())[-1]
     return ckpts[last_step]
+
+
+def params_to_vector(params: Iterable[torch.Tensor]) -> torch.Tensor:
+    return torch.nn.utils.parameters_to_vector(params).detach().cpu()
+
+
+def params_l2(params: Iterable[torch.Tensor]) -> float:
+    noise = params_to_vector(params)
+    return torch.linalg.norm(noise).item()
 
 
 def load_model_from_state_dict(
@@ -210,19 +219,20 @@ class TrainingElement(ABC):
             if not torch.allclose(p1, p2):
                 return False
         return True
+    
+    def _dist_statistics(self, other_vector):
+        current_vector = params_to_vector(self.model.parameters())
+        current_vector = current_vector.detach().cpu()
+        dist = torch.linalg.norm(current_vector - other_vector)
+        cosine = torch.nn.functional.cosine_similarity(current_vector, other_vector, dim=0)
+        return dist.item(), cosine.item()
 
-    def dist_from_init(self) -> float:
-        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
-        dist = torch.linalg.norm(current_vector.detach().cpu() - self.init_model_vector)
-        return dist.item()
+    def dist_from_init(self) -> Tuple[float, float]:
+        return self._dist_statistics(self.init_model_vector)
 
-    def dist_from_element(self, el: "TrainingElement") -> float:
-        current_vector = torch.nn.utils.parameters_to_vector(self.model.parameters())
-        other_vector = torch.nn.utils.parameters_to_vector(el.model.parameters())
-        dist = torch.linalg.norm(
-            current_vector.detach().cpu() - other_vector.detach().cpu()
-        )
-        return dist.item()
+    def dist_from_element(self, el: "TrainingElement") -> Tuple[float, float]:
+        other_vector = params_to_vector(el.model.parameters())
+        return self._dist_statistics(other_vector)
 
     def log_train_metrics(self):
         log_dct = {

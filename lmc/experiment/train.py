@@ -135,16 +135,21 @@ class TrainingRunner(ExperimentManager):
 
     def evaluate_element(self, element: TrainingElement, i):
         log_dct = {f"step/model{i}": element.curr_step}
+        init_l2, init_cos = element.dist_from_init()
         log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
-            element.dist_from_init()
+            init_l2
+        )
+        log_dct[self.wandb_registry.get_metric(f"cos_dist_from_init_{i}").log_name] = (
+            init_cos
         )
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]
-            log_dct[
-                self.wandb_registry.get_metric(
-                    f"l2_dist_{i}-{next_el_ind + 1}"
-                ).log_name
-            ] = element.dist_from_element(next_el)
+            j = next_el.element_ind
+            el_l2, el_cos = element.dist_from_element(next_el)
+            log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}-{j}").log_name] = el_l2
+            log_dct[self.wandb_registry.get_metric(f"cos_dist_{i}-{j}").log_name] = (
+                el_cos
+            )
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))

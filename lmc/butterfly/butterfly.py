@@ -1,18 +1,17 @@
 import logging
-import math
 import re
 from copy import deepcopy
-from typing import Dict, List, Optional, OrderedDict, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
-from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.seeds import temp_seed
 from lmc.utils.setup_training import setup_loader
+from lmc.utils.training_element import params_l2
 
 logger = logging.getLogger(__name__)  # Add this line to define the logger
 
@@ -184,12 +183,6 @@ def perturb_model(
     return model
 
 
-def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
-    if isinstance(noise, dict):
-        noise = parameters_to_vector(noise.values())
-    return torch.linalg.norm(noise)
-
-
 def get_all_init_l2s(model, layers) -> Tuple[float, Dict[str, float]]:
     """Return standard deviation of specified layers at init,
     i.e. the expected L2 norm of the parameters minus their mean at init"""
@@ -316,7 +309,7 @@ def scale_noise(
     # log expected l2 (std) and per-layer std
     expected_l2, _ = get_all_init_l2s(model, layers)
     # log l2 of noise before scaling
-    actual_norm = get_l2(noise_dct)
+    actual_norm = params_l2(noise_dct.values())
     # do the scaling
     if normalize:
         scale /= actual_norm
@@ -359,10 +352,10 @@ def sample_noise_and_perturb(
         config.scale_to_init_if_normalized,
     )
     # log l2 and per-layer l2 of scaled noise
-    log_dct = {f"static/noise_l2/{ind}/total": get_l2(noise)}
+    log_dct = {f"static/noise_l2/{ind}/total": params_l2(noise.values())}
     if config.log_per_layer_l2:
         for k, v in noise.items():
-            log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
+            log_dct[f"static/noise_l2/{ind}/layer/{k}"] = torch.linalg.norm(v.flatten())
     perturb_model(model, noise)
     return log_dct
     return log_dct
