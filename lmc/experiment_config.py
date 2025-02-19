@@ -498,7 +498,7 @@ class PerturbedTrainer(Trainer):
         self.log_per_layer_l2 = kwargs.get("log_per_layer_l2", False)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
-        self.perturb_fraction = kwargs.get("perturb_mask_frac", 1)
+        self.perturb_fraction = kwargs.get("perturb_fraction", 1)
         self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
         self.dont_perturb_module_patterns = kwargs.get(
             "dont_perturb_module_patterns", []
