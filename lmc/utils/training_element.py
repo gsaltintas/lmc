@@ -45,6 +45,28 @@ def params_to_vector(params: Iterable[torch.Tensor]) -> torch.Tensor:
     return torch.nn.utils.parameters_to_vector(params).detach().cpu()
 
 
+def vector_to_params(
+    vector: torch.Tensor, reference_state_dict: Dict[str, torch.Tensor]
+):
+    """Convert a vector back into a state dict with the same shapes as reference state_dict."""
+
+    if len(vector.shape) > 1:
+        raise ValueError("vector has more than one dimension.")
+
+    state_dict = {}
+    for k in sorted(reference_state_dict.keys()):
+        if vector.nelement() == 0:
+            raise ValueError("Ran out of values.")
+
+        size, shape = reference_state_dict[k].nelement(), reference_state_dict[k].shape
+        this, vector = vector[:size], vector[size:]
+        state_dict[k] = this.reshape(shape)
+
+    if vector.nelement() > 0:
+        raise ValueError("Excess values.")
+    return state_dict
+
+
 def params_l2(params: Iterable[torch.Tensor]) -> float:
     noise = params_to_vector(params)
     return torch.linalg.norm(noise).item()
@@ -144,6 +166,7 @@ class Iterator(tqdm):
 @dataclass
 class TrainingElement(ABC):
     """dataclass holding everything pertaining to the training elements, models, loaders, optimizers steps, etc."""
+
     config: Trainer
     element_ind: int
     device: torch.device
@@ -157,7 +180,9 @@ class TrainingElement(ABC):
     tokenizer: AutoTokenizer = None
     perturb_seed: int = None
     metrics: Metrics = field(init=True, default_factory=Metrics)
-    loss_fn: callable = nn.CrossEntropyLoss()  # TODO: later add the loss func for nlp models
+    loss_fn: callable = (
+        nn.CrossEntropyLoss()
+    )  # TODO: later add the loss func for nlp models
 
     ITERATOR_COLORS: Tuple[str] = ("#75507b", "#4f42b5", "#808080")
 
@@ -165,7 +190,7 @@ class TrainingElement(ABC):
         self.curr_step = 0
         self.optimal_acc: float = -1
         self.setup_iterators()
-        #TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
+        # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
         self.init_model_vector = (
             nn.utils.parameters_to_vector(self.model.parameters()).detach().cpu()
         )
@@ -198,7 +223,9 @@ class TrainingElement(ABC):
                 colour=color,
             )
             self.extra_iterator = tqdm(
-                position=2 + 2 * self.element_ind, desc="Extra iterator used for anything", colour="white"
+                position=2 + 2 * self.element_ind,
+                desc="Extra iterator used for anything",
+                colour="white",
             )
         else:
             self.train_iterator = Iterator()
@@ -219,12 +246,14 @@ class TrainingElement(ABC):
             if not torch.allclose(p1, p2):
                 return False
         return True
-    
+
     def _dist_statistics(self, other_vector):
         current_vector = params_to_vector(self.model.parameters())
         current_vector = current_vector.detach().cpu()
         dist = torch.linalg.norm(current_vector - other_vector)
-        cosine = torch.nn.functional.cosine_similarity(current_vector, other_vector, dim=0)
+        cosine = torch.nn.functional.cosine_similarity(
+            current_vector, other_vector, dim=0
+        )
         return dist.item(), cosine.item()
 
     def dist_from_init(self) -> Tuple[float, float]:
@@ -258,7 +287,10 @@ class TrainingElement(ABC):
                 "epoch": ep,
                 "step": st,
             },
-            self.config.model_dir / f"model{self.element_ind}" / "checkpoints" / save_name,
+            self.config.model_dir
+            / f"model{self.element_ind}"
+            / "checkpoints"
+            / save_name,
             pickle_protocol=4,
         )
 
@@ -408,12 +440,12 @@ class NLPTrainingElement(TrainingElement):
 
 @dataclass(init=False)
 class CheckpointEvaluationElement(TrainingElement):
-
     class DummyMetrics(Metrics):
-        def get_metrics(self, percentage = False, task_type = TaskType.CLASSIFICATION):
+        def get_metrics(self, percentage=False, task_type=TaskType.CLASSIFICATION):
             return {}  # checkpoints save no metrics during training
 
-    def __init__(self,
+    def __init__(
+        self,
         config: Trainer,
         element_ind: int,
         device: torch.device,
@@ -445,11 +477,13 @@ class CheckpointEvaluationElement(TrainingElement):
 
         self.loaded_model_step = None
         self.ckpt_dir = Path(getattr(config, f"evaluate_ckpt{self.element_ind}"))
-        if (self.ckpt_dir /  "checkpoints").exists():
+        if (self.ckpt_dir / "checkpoints").exists():
             self.ckpt_dir = self.ckpt_dir / "checkpoints"
         steps_per_epoch = self.config.data.get_steps_per_epoch()
         self.ckpts = get_ckpts_by_step(self.ckpt_dir, steps_per_epoch)
-        logger.info(f"model{self.element_ind}: using checkpoints for evaluation from {self.ckpt_dir} with steps {list(self.ckpts.keys())}")
+        logger.info(
+            f"model{self.element_ind}: using checkpoints for evaluation from {self.ckpt_dir} with steps {list(self.ckpts.keys())}"
+        )
         self.__post_init__()
 
     def step(self, batch):
@@ -466,11 +500,15 @@ class CheckpointEvaluationElement(TrainingElement):
             if self.curr_step in self.ckpts:
                 ckpt_path = self.ckpts[self.curr_step]
                 ckpt = torch.load(ckpt_path, map_location=self.device)
-                logger.info(f"model{self.element_ind} loaded from checkpoint {ckpt_path}")
+                logger.info(
+                    f"model{self.element_ind} loaded from checkpoint {ckpt_path}"
+                )
                 load_model_from_state_dict(self._model, ckpt["state_dict"])
                 self.loaded_model_step = self.curr_step
             else:
-                raise ValueError(f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}")
+                raise ValueError(
+                    f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
+                )
         return self._model
 
     def save(self, steps_per_epoch, save_name=None):

@@ -164,6 +164,7 @@ class TestNoise(BaseTest):
         normalize_perturb=True,
         scale_to_init_if_normalized=True,
         dont_perturb_module_patterns=[],
+        perturb_fraction=1,
     ):
         model = deepcopy(self.model)
         sd = self.model.state_dict()
@@ -176,7 +177,9 @@ class TestNoise(BaseTest):
             normalize_perturb=normalize_perturb,
             scale_to_init_if_normalized=scale_to_init_if_normalized,
             dont_perturb_module_patterns=dont_perturb_module_patterns,
+            perturb_fraction=perturb_fraction,
         )
+        config.perturb_fraction = perturb_fraction
         _ = sample_noise_and_perturb(
             config, model, perturb_seed=42, loss_fn=None, ind=0
         )
@@ -258,6 +261,14 @@ class TestNoise(BaseTest):
                 dont_perturb_module_patterns=[".*norm.*", "model.fc.bias"],
             )
             self.assertAlmostEqual(noise_l2, 31.608178063272423)
+        with self.subTest("perturb fraction"):
+            noise_l2, per_layer_l2 = self._get_noise(
+                mode="batch",
+                normalize_perturb=False,
+                dont_perturb_module_patterns=[".*norm.*", "model.fc.bias"],
+                perturb_fraction=0.5
+            )
+            self.assertAlmostEqual(noise_l2, 22.37011788592581)
 
 
 if __name__ == "__main__":

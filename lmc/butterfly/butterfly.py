@@ -11,7 +11,7 @@ from transformers import AutoTokenizer
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.seeds import temp_seed
 from lmc.utils.setup_training import setup_loader
-from lmc.utils.training_element import params_l2
+from lmc.utils.training_element import params_l2, params_to_vector, vector_to_params
 
 logger = logging.getLogger(__name__)  # Add this line to define the logger
 
@@ -181,7 +181,7 @@ def perturb_model(
             # to avoid an unknown floating point issue
             # compare original and perturbed weights, mask out any that are unchanged
             perturbed = p + noise_dct[n]
-            unchanged = ((perturbed - p) == 0)
+            unchanged = (perturbed - p) == 0
             masked_noise[n] = noise_dct[n]
             masked_noise[n][unchanged] = 0
             perturb_params[n] = p + masked_noise[n]
@@ -336,10 +336,30 @@ def scale_noise(
     return noise_dct
 
 
+def shuffle_tensor(tensor: torch.Tensor, seed: int) -> torch.Tensor:
+    shape = tensor.shape
+    perm = torch.randperm(
+        tensor.nelement(), generator=torch.Generator().manual_seed(seed), device=tensor.device
+    )
+    return tensor.reshape(-1)[perm].reshape(shape)
+
+
+def mask_noise(
+    noise_dct: Dict[str, torch.Tensor], unmasked_frac: float, seed: int
+) -> Dict[str, torch.Tensor]:
+    mask = {k: torch.zeros_like(v) for k, v in noise_dct.items()}
+    flat_mask = params_to_vector(mask.values())
+    n_mask = round(unmasked_frac * flat_mask.nelement())
+    flat_mask[:n_mask] = 1
+    mask = vector_to_params(shuffle_tensor(flat_mask, seed=seed), noise_dct)
+    noise_dct = {k: v * mask[k].to(device=v.device) for k, v in noise_dct.items()}
+    return noise_dct
+
+
 def sample_noise_and_perturb(
     config: PerturbedTrainer,
     model,
-    perturb_seed: Optional[int],
+    perturb_seed: int,
     loss_fn: nn.Module,
     ind: int,
     tokenizer: AutoTokenizer = None,
@@ -367,6 +387,7 @@ def sample_noise_and_perturb(
         config.normalize_perturb,
         config.scale_to_init_if_normalized,
     )
+    noise = mask_noise(noise, config.perturb_fraction, perturb_seed)
 
     # modify model in-place
     _, masked_noise, changed_frac, changed_per_layer = perturb_model(model, noise)
