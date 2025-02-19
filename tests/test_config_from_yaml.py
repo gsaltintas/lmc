@@ -97,6 +97,7 @@ class TestConfig(BaseTest):
             "obj: run programmatically using config object, and change hparams"
         ):
             base_config.seeds.seed1 += 1
+            base_config.perturb_seeds.perturb_seed1 += 1
             exp = PerturbedTrainingRunner(copy_config("test-config-obj"))
             self.assertTrue(exp.run_experiment())
             ckpts_match_1, ckpts_match_2, value_obj = get_last_run_results(
