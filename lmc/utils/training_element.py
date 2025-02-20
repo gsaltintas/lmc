@@ -495,7 +495,6 @@ class CheckpointEvaluationElement(TrainingElement):
     def step(self, batch):
         self.train_iterator.update()
         self.curr_step += 1
-        return {}
 
     def on_epoch_start(self):
         pass  # do nothing
@@ -516,6 +515,9 @@ class CheckpointEvaluationElement(TrainingElement):
                     f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
                 )
         return self._model
+    
+    def log_train_metrics(self):
+        return {}  # saved checkpoints have no training metrics
 
     def save(self, steps_per_epoch, save_name=None):
         pass  # do nothing
