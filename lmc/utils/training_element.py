@@ -268,6 +268,8 @@ class TrainingElement(ABC):
             f"model{self.element_ind}/train/{key}": val
             for (key, val) in self.metrics.get_metrics(percentage=False).items()
         }
+        # log lr, batch hashes of last step
+        log_dct.update(self.get_step_snapshot())
         return log_dct
 
     def save(self, steps_per_epoch, save_name=None):
@@ -294,34 +296,40 @@ class TrainingElement(ABC):
             pickle_protocol=4,
         )
 
-    @abstractmethod
-    def step(self, batch) -> Dict[str, Any]:
-        self.model.train()
-        x, y = batch
+    def update_step_snapshot(self, batch):
+        self.last_step_batch = batch
+        # Get learning rate
+        if self.scheduler is None:
+            self.last_step_lr = self.opt.param_groups[0]["lr"]
+        else:
+            self.last_step_lr = self.scheduler.get_last_lr()[-1]
+
+    def get_step_snapshot(self):
+        x, y = self.last_step_batch
         hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
         hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
         log_dct = {
             f"step/model{self.element_ind}": self.curr_step,
             f"data_hash/model{self.element_ind}/x": hash_x,
             f"data_hash/model{self.element_ind}/y": hash_y,
+            f"lr/model{self.element_ind}": self.last_step_lr,
         }
+        return log_dct
+
+    @abstractmethod
+    def step(self, batch):
+        # save information from the last step that was run, to log occasionally
+        self.update_step_snapshot(batch)
+        self.model.train()
         self.train_iterator.update()
         self.curr_step += 1
-        # Get learning rate
-        if self.scheduler is None:
-            lr = self.opt.param_groups[0]["lr"]
-        else:
-            lr = self.scheduler.get_last_lr()[-1]
-        log_dct[f"lr/model{self.element_ind}"] = lr
-
         if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             self.opt.zero_grad()
-        return log_dct
 
 
 class VisionTrainingElement(TrainingElement):
     def step(self, batch):
-        log_dct = super().step(batch)
+        super().step(batch)
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
@@ -340,12 +348,11 @@ class VisionTrainingElement(TrainingElement):
             out.detach(), y.detach(), targs_perm, k=3, avg=True
         )
         self.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
-        return log_dct
 
 
 class NLPTrainingElement(TrainingElement):
     def step(self, batch):
-        log_dct = super().step(batch)
+        super().step(batch)
         # Pre-fetch next batch while computing current one
         batch = {
             k: v.to(self.device, non_blocking=True)
@@ -435,7 +442,6 @@ class NLPTrainingElement(TrainingElement):
                     metrics_kwargs["accuracy"] = avg_correct.item()
 
         self.metrics.update(**metrics_kwargs)
-        return log_dct
 
 
 @dataclass(init=False)
@@ -489,7 +495,6 @@ class CheckpointEvaluationElement(TrainingElement):
     def step(self, batch):
         self.train_iterator.update()
         self.curr_step += 1
-        return {}
 
     def on_epoch_start(self):
         pass  # do nothing
@@ -510,6 +515,9 @@ class CheckpointEvaluationElement(TrainingElement):
                     f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
                 )
         return self._model
+    
+    def log_train_metrics(self):
+        return {}  # saved checkpoints have no training metrics
 
     def save(self, steps_per_epoch, save_name=None):
         pass  # do nothing

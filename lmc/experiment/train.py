@@ -215,20 +215,21 @@ class TrainingRunner(ExperimentManager):
     def step_all_training_elements(self, batches):
         # go through each training element
         self.global_step += 1
-        log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
+        log_dct = {}
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
             if element.curr_step >= element.max_steps:
                 continue
             # train
-            log_dct.update(element.step(batch))
-            # if at end of batch, log training metrics
+            element.step(batch)
+            # if at end of batch, log lr, batch hashes, training metrics
             if self.global_step % self.steps_per_epoch == 0:
                 log_dct.update(element.log_train_metrics())
         # log all of the info together at once
         log_dct.update(self.eval_and_save())
-        if self.config.logger.use_wandb:
+        if self.config.logger.use_wandb and log_dct:
+            log_dct.update({"step/epoch": self.ep, "step/global": self.global_step})
             wandb.log(log_dct)
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
