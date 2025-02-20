@@ -187,6 +187,7 @@ class TrainingElement(ABC):
     ITERATOR_COLORS: Tuple[str] = ("#75507b", "#4f42b5", "#808080")
 
     def __post_init__(self):
+        self.last_step_batch = None
         self.curr_step = 0
         self.optimal_acc: float = -1
         self.setup_iterators()
@@ -305,6 +306,8 @@ class TrainingElement(ABC):
             self.last_step_lr = self.scheduler.get_last_lr()[-1]
 
     def get_step_snapshot(self):
+        if self.last_step_batch is None:
+            return {}  # this prevents get_step_snapshot from logging the same step twice
         x, y = self.last_step_batch
         hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
         hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
@@ -314,6 +317,7 @@ class TrainingElement(ABC):
             f"data_hash/model{self.element_ind}/y": hash_y,
             f"lr/model{self.element_ind}": self.last_step_lr,
         }
+        self.last_step_batch = None
         return log_dct
 
     @abstractmethod

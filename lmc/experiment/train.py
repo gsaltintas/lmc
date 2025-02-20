@@ -182,6 +182,8 @@ class TrainingRunner(ExperimentManager):
                 continue
             if element.curr_step in self.eval_steps:
                 log_dct.update(self.evaluate_element(element, i))
+                # log lr, batch hashes of last step
+                log_dct.update(element.get_step_snapshot())
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
         if self.global_step in self.lmc_steps:
@@ -226,6 +228,8 @@ class TrainingRunner(ExperimentManager):
             # if at end of batch, log lr, batch hashes, training metrics
             if self.global_step % self.steps_per_epoch == 0:
                 log_dct.update(element.log_train_metrics())
+                # log lr, batch hashes of last step
+                log_dct.update(element.get_step_snapshot())
         # log all of the info together at once
         log_dct.update(self.eval_and_save())
         if self.config.logger.use_wandb and log_dct:
