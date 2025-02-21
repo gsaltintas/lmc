@@ -11,7 +11,6 @@ import wandb
 from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
-from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
@@ -65,7 +64,6 @@ class TrainingRunner(ExperimentManager):
             "1ep" if self.config.lmc.lmc_on_epoch_end else self.config.lmc.lmc_freq
         )
         self.lmc_steps = self.get_steps(lmc_freq, self.config.lmc.lmc_specific_steps)
-        self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
 
     def get_steps(self, freq, step_list):
         steps = set()
@@ -135,21 +133,10 @@ class TrainingRunner(ExperimentManager):
 
     def evaluate_element(self, element: TrainingElement, i):
         log_dct = {f"step/model{i}": element.curr_step}
-        init_l2, init_cos = element.dist_from_init()
-        log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
-            init_l2
-        )
-        log_dct[self.wandb_registry.get_metric(f"cos_dist_from_init_{i}").log_name] = (
-            init_cos
-        )
+        log_dct.update(element.dist_from_init())
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]
-            j = next_el.element_ind
-            el_l2, el_cos = element.dist_from_element(next_el)
-            log_dct[self.wandb_registry.get_metric(f"l2_dist_{i}-{j}").log_name] = el_l2
-            log_dct[self.wandb_registry.get_metric(f"cos_dist_{i}-{j}").log_name] = (
-                el_cos
-            )
+            log_dct.update(element.dist_from_element(next_el))
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))

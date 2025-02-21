@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 
 from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Trainer
+from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
 
@@ -191,10 +192,12 @@ class TrainingElement(ABC):
         self.curr_step = 0
         self.optimal_acc: float = -1
         self.setup_iterators()
+        self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
+        self.init_model_vector = self.get_init_model_vector()
+
+    def get_init_model_vector(self):
         # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
-        self.init_model_vector = (
-            nn.utils.parameters_to_vector(self.model.parameters()).detach().cpu()
-        )
+        return params_to_vector(self.model.parameters())
 
     def setup_iterators(self):
         if self.config.logger.use_tqdm:
@@ -257,12 +260,27 @@ class TrainingElement(ABC):
         )
         return dist.item(), cosine.item()
 
-    def dist_from_init(self) -> Tuple[float, float]:
-        return self._dist_statistics(self.init_model_vector)
+    def dist_from_init(self) -> Dict[str, Any]:
+        init_l2, init_cos = self._dist_statistics(self.init_model_vector)
+        i = self.element_ind
+        log_dct = {
+            self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name: init_l2,
+            self.wandb_registry.get_metric(
+                f"cos_dist_from_init_{i}"
+            ).log_name: init_cos,
+        }
+        return log_dct
 
-    def dist_from_element(self, el: "TrainingElement") -> Tuple[float, float]:
+    def dist_from_element(self, el: "TrainingElement") -> Dict[str, Any]:
         other_vector = params_to_vector(el.model.parameters())
-        return self._dist_statistics(other_vector)
+        i = self.element_ind
+        j = el.element_ind
+        el_l2, el_cos = self._dist_statistics(other_vector)
+        log_dct = {
+            self.wandb_registry.get_metric(f"l2_dist_{i}-{j}").log_name: el_l2,
+            self.wandb_registry.get_metric(f"cos_dist_{i}-{j}").log_name: el_cos,
+        }
+        return log_dct
 
     def log_train_metrics(self):
         log_dct = {
@@ -496,6 +514,9 @@ class CheckpointEvaluationElement(TrainingElement):
         )
         self.__post_init__()
 
+    def get_init_model_vector(self):
+        return None  # this shouldn't be accessed as dist_from_init returns nothing
+
     def step(self, batch):
         self.train_iterator.update()
         self.curr_step += 1
@@ -519,9 +540,12 @@ class CheckpointEvaluationElement(TrainingElement):
                     f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
                 )
         return self._model
-    
+
     def log_train_metrics(self):
         return {}  # saved checkpoints have no training metrics
+
+    def dist_from_init(self):
+        return {}
 
     def save(self, steps_per_epoch, save_name=None):
         pass  # do nothing
