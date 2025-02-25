@@ -336,10 +336,11 @@ def scale_noise(
     return noise_dct
 
 
-def shuffle_tensor(tensor: torch.Tensor, seed: int) -> torch.Tensor:
+def shuffle_tensor(tensor: torch.Tensor, seed: Optional[int]) -> torch.Tensor:
     shape = tensor.shape
+    generator = None if seed is None else torch.Generator().manual_seed(seed)
     perm = torch.randperm(
-        tensor.nelement(), generator=torch.Generator().manual_seed(seed), device=tensor.device
+        tensor.nelement(), generator=generator, device=tensor.device
     )
     return tensor.reshape(-1)[perm].reshape(shape)
 

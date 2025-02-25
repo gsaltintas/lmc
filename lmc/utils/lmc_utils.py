@@ -389,8 +389,6 @@ def check_lmc(
         TODO: missing stats
     """
     n_models = len(training_elements)
-    if results is None:
-        results = get_empty_df()
 
     # Initialize results DataFrames if not provided
     if results is None:
@@ -430,14 +428,11 @@ def check_lmc(
             )
             results_["model1_ind"] = model_ind
             results_["model2_ind"] = other_ind
-            if results is None:
-                results = results_
-            else:
-                results = pd.concat([results, results_])
-            lmc_res = extract_barrier(results, ep, is_language_task=is_language_model)
+            lmc_res = extract_barrier(results_, ep, is_language_task=is_language_model)
             log_dct.update(
                 {f"lmc-{other_ind}-{model_ind}/{k}": v for k, v in lmc_res.items()}
             )
+            results = results_ if results is None else pd.concat([results, results_])
 
             # Check permutations if required
             if check_perms:
@@ -452,7 +447,7 @@ def check_lmc(
                             init_perm=None,
                             verbose=False,
                         )
-                        res_df = results_perm_wm
+                        results_perm = results_perm_wm
 
                     # Activation matching
                     else:
@@ -467,7 +462,7 @@ def check_lmc(
                             verbose=False,
                             num_samples=config.lmc.activation_matching_samples,
                         )
-                        res_df = results_perm_act_aligned
+                        results_perm = results_perm_act_aligned
 
                     if config.logger.report_permutation_stats:
                         ## TODO: log costs
@@ -483,7 +478,7 @@ def check_lmc(
                             }
                         )
                     permuted_ = prev_model._permute(perm, inplace=False)
-                    results_perm = interpolate_evaluate(
+                    results_perm_ = interpolate_evaluate(
                         ep,
                         permuted_,
                         model,
@@ -497,20 +492,15 @@ def check_lmc(
                         is_language_model=is_language_model,
                         data_config=config.data,
                     )
-                    results_perm["model1_ind"] = model_ind
-                    results_perm["model2_ind"] = other_ind
-                    if res_df is None:
-                        res_df = results_perm
-                    else:
-                        res_df = pd.concat([res_df, results_perm])
+                    results_perm_["model1_ind"] = model_ind
+                    results_perm_["model2_ind"] = other_ind
+                    perm_res = extract_barrier(
+                                results_perm_, ep, is_language_task=is_language_model
+                            )
                     log_dct.update(
-                        {
-                            f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v
-                            for k, v in extract_barrier(
-                                results_perm, ep, is_language_task=is_language_model
-                            ).items()
-                        }
+                        {f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v for k, v in perm_res.items()}
                     )
+                    results_perm = results_perm_ if results_perm is None else pd.concat([results_perm, results_perm_])
     print("=" * 25, " LMC Results ", "=" * 25)
     print(results)
     print("=" * 22, " LMC Results (WM) ", "=" * 23)
