@@ -219,6 +219,7 @@ class Experiment:
     zip_and_save_source: bool = True
     evaluate_ckpt1: str = None
     evaluate_ckpt2: str = None
+    evaluate_ckpt3: str = None
     resume_from: Optional[str] = None
     resume_step: Optional[str] = "-1"
     log_to_same_experiment: Optional[bool] = False
@@ -237,6 +238,7 @@ class Experiment:
     _deterministic: str = "If true, make CUDA exactly deterministic."
     _evaluate_ckpt1: str = "Replaces model1 with pretrained checkpoints for evaluation only: a checkpoint must exist for every step in eval_freq or eval_specific_steps"
     _evaluate_ckpt2: str = "Replaces model2 with pretrained checkpoints for evaluation only: a checkpoint must exist for every step in eval_freq or eval_specific_steps"
+    _evaluate_ckpt3: str = "Replaces model3 with pretrained checkpoints for evaluation only: a checkpoint must exist for every step in eval_freq or eval_specific_steps"
     _zip_and_save_source: str = "If true, copy code to output dir and zip compress"
     _resume_from: str = "Directory to load and resume checkpoint or wandb run by specifying wandb:ENTITY/PROJECT/PROJECT_ID"
 
@@ -257,6 +259,7 @@ class Experiment:
         self.resume_step = kwargs.get("resume_step", "-1")
         self.evaluate_ckpt1 = kwargs.get("evaluate_ckpt1", None)
         self.evaluate_ckpt2 = kwargs.get("evaluate_ckpt2", None)
+        self.evaluate_ckpt3 = kwargs.get("evaluate_ckpt3", None)
         self.deterministic = kwargs.get("deterministic", False)
         self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
 
@@ -463,6 +466,7 @@ class PerturbedTrainer(Trainer):
         init=True, default_factory=lambda: []
     )
     log_per_layer_l2: bool = False
+    perturb_fraction: float = 1
     perturb_debug_dummy_run: bool = False
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
@@ -494,6 +498,7 @@ class PerturbedTrainer(Trainer):
         self.log_per_layer_l2 = kwargs.get("log_per_layer_l2", False)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
+        self.perturb_fraction = kwargs.get("perturb_fraction", 1)
         self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
         self.dont_perturb_module_patterns = kwargs.get(
             "dont_perturb_module_patterns", []

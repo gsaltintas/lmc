@@ -349,5 +349,12 @@ class TestTraining(BaseTest):
             ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "lmc-0-1/lmc/loss/weighted/barrier_train")
             self.assertEqual(barrier, ref_barrier)
 
+    def test_three_models(self):
+        # check that lmc-0-1, lmc-0-2, and lmc-1-2 keys exist
+        self.run_command_and_return_result("test-three", "lmc-0-1/lmc/loss/weighted/barrier_test",  model_name="resnet8-4", dataset="cifar10", n_models=3, lmc_on_train_end=True)
+        self.get_summary_value(self.log_dir / "test-three", "lmc-0-2/lmc/loss/weighted/barrier_test")
+        self.get_summary_value(self.log_dir / "test-three", "lmc-1-2/lmc/loss/weighted/barrier_test")
+
+
 if __name__ == "__main__":
     unittest.main()
