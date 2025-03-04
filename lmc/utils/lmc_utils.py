@@ -1,4 +1,5 @@
 import gc
+import json
 import time
 from collections import OrderedDict
 from copy import deepcopy
@@ -11,15 +12,16 @@ from torch.utils.data import DataLoader
 from torchmetrics import Accuracy
 from tqdm import tqdm
 
-from lmc.config import Config, DataConfig
+from lmc.config import DataConfig
 from lmc.data.data_stats import TaskType
+from lmc.experiment_config import Experiment
 from lmc.models.base_model import BaseModel
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import sinkhorn_kl
 from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
 from lmc.utils.metrics import Metrics, compute_metrics
-from lmc.utils.training_element import TrainingElement
+from lmc.utils.training_element import CheckpointEvaluationElement, TrainingElement
 
 
 @torch.no_grad()
@@ -95,18 +97,13 @@ def interpolate_models(
     return model_interpolated
 
 
-def evaluate_model_vision(
-    model, loader, num_classes: int = 10, device=None, criterion=None
-) -> dict:
-    start_time = time.time()
+def evaluate_model_vision(model, loader, num_classes, device, criterion) -> dict:
     if device is None:
         device = model.device
     model.eval()
 
     acc = Accuracy("multiclass", num_classes=num_classes).to(device)
-    # , device=device).to
-    if criterion is None:
-        criterion = nn.CrossEntropyLoss().to(device)
+    criterion = criterion.to(device)
     ce = 0.0
     cnt = 0
     correct = 0
@@ -123,11 +120,8 @@ def evaluate_model_vision(
             ce += criterion(out, y).item() * x.size(0)
         acc.update(out, y)
     acc_ = acc.compute().item()
-    # acc_ = (correct/cnt)
     ce = ce / cnt
-    end_time = time.time()
-    # print(f"Time spent {end_time-start_time} seconds")
-    return {"ce": ce, "acc": acc_, "err": 100 - 100 * acc_}
+    return {"cross_entropy": ce, "accuracy": acc_, "err": 100 - 100 * acc_}
 
 
 def get_empty_df() -> pd.DataFrame:
@@ -135,9 +129,6 @@ def get_empty_df() -> pd.DataFrame:
         [
             ["train", "test"],
             [
-                "loss",
-                "ce",
-                "acc",
                 "err",
                 "ppl",
                 "em",
@@ -152,10 +143,12 @@ def get_empty_df() -> pd.DataFrame:
     )
     r = pd.DataFrame(columns=index)
     r["epoch"] = None
+    r["step"] = None
     r["alpha"] = None
     r.set_index(
         [
             "epoch",
+            "step",
             "alpha",
         ],
         inplace=True,
@@ -164,20 +157,19 @@ def get_empty_df() -> pd.DataFrame:
 
 
 def barrier_from_df(
-    results: pd.DataFrame, ep: int, split: str, metric: str, prefix: str
+    results: pd.DataFrame, split: str, metric: str, prefix: str
 ) -> dict[str, float]:
     results_ = results.dropna(axis=1, how="all")
 
     if (split, metric) not in results_.columns:
         return {}
-    alpha = results_.loc[ep, (split, metric)].idxmax()
-    minalpha = results_.loc[ep, (split, metric)].idxmin()
-
+    rows = results[(split, metric)]
+    alpha = rows.idxmax()
     scale = 1 / 100 if metric == "err" else 1
 
-    max_interpolated = results_.loc[ep, (split, metric)].max() * scale
-    endpoint_0 = results_.loc[(ep, 0)][(split, metric)] * scale
-    endpoint_1 = results_.loc[(ep, 1)][(split, metric)] * scale
+    max_interpolated = rows.max() * scale
+    endpoint_0 = rows[0] * scale
+    endpoint_1 = rows[1] * scale
 
     linear_path = (1.0 - alpha) * endpoint_0 + alpha * endpoint_1
     barrier = max_interpolated - linear_path
@@ -187,49 +179,49 @@ def barrier_from_df(
     }
 
 
-def extract_barrier_vision(results: pd.DataFrame, ep: int) -> Dict[str, float]:
+def extract_barrier_vision(results: pd.DataFrame) -> Dict[str, float]:
     """utility function to extract loss & error barriers corresponding to a vision task from a dataframe"""
 
     return {
-        **barrier_from_df(results, ep, "train", "err", "lmc/"),
-        **barrier_from_df(results, ep, "test", "err", "lmc/"),
-        **barrier_from_df(results, ep, "train", "ce", "lmc/loss/"),
-        **barrier_from_df(results, ep, "test", "ce", "lmc/loss/"),
+        **barrier_from_df(results, "train", "err", "lmc/"),
+        **barrier_from_df(results, "test", "err", "lmc/"),
+        **barrier_from_df(results, "train", "cross_entropy", "lmc/loss/"),
+        **barrier_from_df(results, "test", "cross_entropy", "lmc/loss/"),
     }
 
 
-def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]:
+def extract_barrier_language(results: pd.DataFrame) -> Dict[str, float]:
     """utility function to extract loss & error barriers corresponding to a language task from a dataframe"""
     # todo: better way to handle these
     d = {
-        **barrier_from_df(results, ep, "train", "cross_entropy", "lmc/loss/"),
-        **barrier_from_df(results, ep, "test", "cross_entropy", "lmc/loss/"),
+        **barrier_from_df(results, "train", "cross_entropy", "lmc/loss/"),
+        **barrier_from_df(results, "test", "cross_entropy", "lmc/loss/"),
     }
     cols = results.columns.get_level_values(1)
     if "accuracy" in cols:
         d.update(
             {
-                **barrier_from_df(results, ep, "train", "accuracy", "lmc/"),
-                **barrier_from_df(results, ep, "test", "accuracy", "lmc/"),
+                **barrier_from_df(results, "train", "accuracy", "lmc/"),
+                **barrier_from_df(results, "test", "accuracy", "lmc/"),
             }
         )
     if "perplexity" in cols:
         d.update(
             {
                 **barrier_from_df(
-                    results, ep, "train", "perplexity", "lmc/perplexity/"
+                    results, "train", "perplexity", "lmc/perplexity/"
                 ),
-                **barrier_from_df(results, ep, "test", "perplexity", "lmc/perplexity/"),
+                **barrier_from_df(results, "test", "perplexity", "lmc/perplexity/"),
             }
         )
     if "matthews_correlation" in cols:
         d.update(
             {
                 **barrier_from_df(
-                    results, ep, "train", "matthews_correlation", "lmc/loss/"
+                    results, "train", "matthews_correlation", "lmc/loss/"
                 ),
                 **barrier_from_df(
-                    results, ep, "test", "matthews_correlation", "lmc/loss/"
+                    results, "test", "matthews_correlation", "lmc/loss/"
                 ),
             }
         )
@@ -237,10 +229,10 @@ def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]
         d.update(
             {
                 **barrier_from_df(
-                    results, ep, "train", "pearson_correlation", "lmc/loss/"
+                    results, "train", "pearson_correlation", "lmc/loss/"
                 ),
                 **barrier_from_df(
-                    results, ep, "test", "pearson_correlation", "lmc/loss/"
+                    results, "test", "pearson_correlation", "lmc/loss/"
                 ),
             }
         )
@@ -248,18 +240,18 @@ def extract_barrier_language(results: pd.DataFrame, ep: int) -> Dict[str, float]
 
 
 def extract_barrier(
-    results: pd.DataFrame, ep: int, is_language_task: bool = False
+    results: pd.DataFrame, is_language_task: bool = False
 ) -> Dict[str, float]:
     """utility function to extract loss & error barriers from a dataframe"""
     if is_language_task:
-        return extract_barrier_language(results, ep)
-    return extract_barrier_vision(results, ep)
+        return extract_barrier_language(results)
+    return extract_barrier_vision(results)
 
 
 @torch.no_grad()
 def evaluate_merge(
     training_elements,
-    config: Config,
+    config: Experiment,
     log_dct,
 ) -> None:
     """
@@ -302,7 +294,7 @@ def evaluate_merge(
         perm = weight_matching(
             ps,
             model.model.state_dict(),
-            reference_model.model.state_dict(),
+            reference_model.state_dict(),
             init_perm=None,
             verbose=False,
         )
@@ -326,26 +318,26 @@ def evaluate_merge(
                 reference_el.train_eval_loader,
                 config.data,
                 device=reference_model.device,
-                criterion=reference_el.loss_fn,
             )
             perm_results = evaluate_model_language(
                 permuted_,
                 reference_el.train_eval_loader,
                 config.data,
                 device=reference_model.device,
-                criterion=reference_el.loss_fn,
             )
         else:
             vanilla_results = evaluate_model_vision(
                 merged_model,
                 reference_el.train_eval_loader,
                 num_classes=config.data.get_num_labels(),
+                device=reference_model.device,
                 criterion=reference_el.loss_fn,
             )
             perm_results = evaluate_model_vision(
                 permuted_,
                 reference_el.train_eval_loader,
                 num_classes=config.data.get_num_labels(),
+                device=reference_model.device,
                 criterion=reference_el.loss_fn,
             )
 
@@ -357,16 +349,26 @@ def evaluate_merge(
         )
 
 
+def get_lmc_pairs(config):
+    lmc_pairs = config.lmc.lmc_pairs
+    # include all pairs if not set
+    if not lmc_pairs:
+        n_models = config.n_models
+        return [(i, j) for i in range(0, n_models) for j in range(i+1, n_models)]
+    # parse string into comma separated pairs of form {i}-{j}
+    pair_str = lmc_pairs.split(",")
+    pairs = []
+    for pair in pair_str:
+        i, j = pair.split("-")
+        pairs.append((int(i), int(j)))
+    return pairs
+
+
 @torch.no_grad()
 def check_lmc(
     training_elements,
-    config: Config,
-    ep,
+    config: Experiment,
     log_dct,
-    results: Union[pd.DataFrame, None] = None,
-    results_perm_wm: Union[pd.DataFrame, None] = None,
-    results_perm_act_aligned: Union[pd.DataFrame, None] = None,
-    check_perms: bool = False,
 ) -> Tuple[pd.DataFrame, Union[pd.DataFrame, None]]:
     """
     checks lmc between the models, also accounts for the initial perm if any
@@ -374,133 +376,92 @@ def check_lmc(
      Args:
         training_elements: List of elements representing training states or models.
         config: Configuration object with relevant settings.
-        ep: Current epoch.
         log_dct: Dictionary to log intermediate results.
-        results: DataFrame to store results; created if None.
-        results_perm_wm: DataFrame for matched permutation results; created if None.
-        results_perm_act_aligned: DataFrame for activation-aligned results; created if None.
         check_perms: Boolean flag to indicate if permutations should be checked.
 
     Returns:
         Tuple containing updated results, results_perm_wm,
         and results_perm_act_aligned.
-
-
-        TODO: missing stats
     """
-    n_models = len(training_elements)
-
     # Initialize results DataFrames if not provided
-    if results is None:
-        results = get_empty_df()
-    if check_perms and results_perm_wm is None:
-        results_perm_wm = get_empty_df()
-        results_perm_act_aligned = get_empty_df()
+    results = get_empty_df()
+    results_perm_wm = get_empty_df()
+    results_perm_act_aligned = get_empty_df()
 
     is_language_model = config.data.is_language_dataset()
 
     # Iterate over previous models to evaluate LMC
-    for model_ind, el in enumerate(training_elements):
-        model = el.model
-        for other_ind in range(max(0, model_ind - n_models), model_ind):
-            prev_model = training_elements[other_ind].model
-            if prev_model is None:
-                continue
+    for model_ind, other_ind in get_lmc_pairs(config):
+        el = training_elements[model_ind]
+        prev_el = training_elements[other_ind]
 
-            # Evaluate LMC
-            # todo: maybe add this to basemodel or trainingelement
-            num_classes = (
-                config.data.get_num_labels()
-            )  # This will already raise an appropriate error if dataset not found
-            results_ = interpolate_evaluate(
-                ep,
-                model,
-                prev_model,
-                None,
-                model.device,
-                el.train_eval_loader,
-                el.test_loader,
-                n_points=config.lmc.n_points,
-                inner_tqdm=el.extra_iterator,
-                num_classes=num_classes,
-                is_language_model=is_language_model,
-                data_config=config.data,
-            )
-            results_["model1_ind"] = model_ind
-            results_["model2_ind"] = other_ind
-            lmc_res = extract_barrier(results_, ep, is_language_task=is_language_model)
-            log_dct.update(
-                {f"lmc-{other_ind}-{model_ind}/{k}": v for k, v in lmc_res.items()}
-            )
-            results = results_ if results is None else pd.concat([results, results_])
+        # Evaluate LMC
+        # todo: maybe add this to basemodel or trainingelement
+        results_ = interpolate_evaluate(el, el, prev_el)
+        lmc_res = extract_barrier(results_, is_language_task=is_language_model)
+        log_dct.update(
+            {f"lmc-{model_ind}-{other_ind}/{k}": v for k, v in lmc_res.items()}
+        )
+        results = results_ if results is None else pd.concat([results, results_])
 
-            # Check permutations if required
-            if check_perms:
-                ps = model.permutation_spec()
-                for perm_method in ["wm", "am"]:
-                    # weight_matching
-                    if perm_method == "wm":
-                        perm = weight_matching(
-                            ps,
-                            model.model.state_dict(),
-                            prev_model.model.state_dict(),
-                            init_perm=None,
-                            verbose=False,
-                        )
-                        results_perm = results_perm_wm
-
-                    # Activation matching
-                    else:
-                        if ps.acts_to_perms is None:
-                            continue
-                        # todo: rename this activation_matching_samples
-                        perm = activation_matching(
-                            ps,
-                            model,
-                            prev_model,
-                            dataloader=el.train_eval_loader,
-                            verbose=False,
-                            num_samples=config.lmc.activation_matching_samples,
-                        )
-                        results_perm = results_perm_act_aligned
-
-                    if config.logger.report_permutation_stats:
-                        ## TODO: log costs
-                        d = {
-                            "fixed_points_ratio": get_fixed_points_ratio(perm),
-                            "fixed_points_count": get_fixed_points_count(perm),
-                            "sinkhorn_kl": sum(list(sinkhorn_kl(perm).values())),
-                        }
-                        log_dct.update(
-                            {
-                                f"perm/{perm_method}-{other_ind}-{model_ind}/{key}": val
-                                for key, val in d.items()
-                            }
-                        )
-                    permuted_ = prev_model._permute(perm, inplace=False)
-                    results_perm_ = interpolate_evaluate(
-                        ep,
-                        permuted_,
-                        model,
-                        None,
-                        model.device,
-                        el.train_eval_loader,
-                        el.test_loader,
-                        n_points=config.lmc.n_points,
-                        inner_tqdm=el.extra_iterator,
-                        num_classes=num_classes,
-                        is_language_model=is_language_model,
-                        data_config=config.data,
+        # Check permutations if required
+        if config.lmc.lmc_check_perms:
+            ps = el.model.permutation_spec()
+            for perm_method in ["wm", "am"]:
+                # weight_matching
+                if perm_method == "wm":
+                    perm = weight_matching(
+                        ps,
+                        el.model.model.state_dict(),
+                        prev_el.model.model.state_dict(),
+                        init_perm=None,
+                        verbose=False,
                     )
-                    results_perm_["model1_ind"] = model_ind
-                    results_perm_["model2_ind"] = other_ind
-                    perm_res = extract_barrier(
-                                results_perm_, ep, is_language_task=is_language_model
-                            )
+                    results_perm = results_perm_wm
+
+                # Activation matching
+                else:
+                    if ps.acts_to_perms is None:
+                        continue
+                    # todo: rename this activation_matching_samples
+                    perm = activation_matching(
+                        ps,
+                        el.model,
+                        prev_el.model,
+                        dataloader=el.train_eval_loader,
+                        verbose=False,
+                        num_samples=config.lmc.activation_matching_samples,
+                    )
+                    results_perm = results_perm_act_aligned
+
+                if config.logger.report_permutation_stats:
+                    ## TODO: log costs
+                    d = {
+                        "fixed_points_ratio": get_fixed_points_ratio(perm),
+                        "fixed_points_count": get_fixed_points_count(perm),
+                        "sinkhorn_kl": sum(list(sinkhorn_kl(perm).values())),
+                    }
                     log_dct.update(
-                        {f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v for k, v in perm_res.items()}
+                        {
+                            f"perm/{perm_method}-{other_ind}-{model_ind}/{key}": val
+                            for key, val in d.items()
+                        }
                     )
-                    results_perm = results_perm_ if results_perm is None else pd.concat([results_perm, results_perm_])
+                results_perm_ = interpolate_evaluate(el, el, prev_el, perm)
+                perm_res = extract_barrier(
+                    results_perm_, is_language_task=is_language_model
+                )
+                log_dct.update(
+                    {
+                        f"perm/{perm_method}-{other_ind}-{model_ind}/{k}": v
+                        for k, v in perm_res.items()
+                    }
+                )
+                results_perm = (
+                    results_perm_
+                    if results_perm is None
+                    else pd.concat([results_perm, results_perm_])
+                )
     print("=" * 25, " LMC Results ", "=" * 25)
     print(results)
     print("=" * 22, " LMC Results (WM) ", "=" * 23)
@@ -511,7 +472,7 @@ def check_lmc(
 
 
 def evaluate_model_language(
-    model, loader, data_config: DataConfig, device=None, criterion=None
+    model, loader, data_config: DataConfig, device=None
 ) -> dict:
     """
     Evaluate language model using HuggingFace model's native functionality.
@@ -554,47 +515,67 @@ def evaluate_model_language(
     return res
 
 
+def get_saved_evaluations(el: TrainingElement):
+    if not isinstance(el, CheckpointEvaluationElement):
+        return None
+
+    # ckpt_dir is always model{element_ind}/checkpoints
+    summary_file = el.ckpt_dir.parent.parent / "wandb_summary.json"
+    if not summary_file.exists():
+        return None
+
+    with open(summary_file, "r") as f:
+        summary = json.load(f)
+    #NOTE: to preserve backwards compatibility, subtract index by 1 as wandb indexes from 0
+    model_idx = el.element_ind - 1
+    step = summary[f"step/model{model_idx}"]
+    if el.curr_step != step:
+        return None
+
+    results = {"step": step}
+    for split in ["train", "test"]:
+        for key in ["cross_entropy", "accuracy", "perplexity", "matthews_correlation", "pearson_correlation"]:
+            summary_key = f"model{model_idx}/{split}/{key}"
+            if summary_key in summary:
+                results[(split, key)] = summary[summary_key]
+        if (split, "accuracy") in results:
+            results[(split, "err")] = 100 - 100 * results[(split, "accuracy")]
+    return results
+
+
 def interpolate_evaluate(
-    ai,
-    model1,
-    model2,
-    results,
-    device,
-    train_loader,
-    test_loader,
-    suffix="",
-    n_points=20,
-    inner_tqdm=None,
-    num_classes=None,
-    criterion=None,
-    interpolation_func=None,
-    is_language_model=False,
-    data_config: DataConfig = None,
+    reference_el,
+    el1,
+    el2,
+    perm=None,
 ) -> pd.DataFrame:
-    """_summary_
+    device = reference_el.device
+    train_loader = reference_el.train_eval_loader
+    test_loader = reference_el.test_loader
+    inner_tqdm = reference_el.extra_iterator
+    config = reference_el.config
+    model1 = el1.model
+    model2 = el2.model
+    if perm is not None:
+        model2 = model2._permute(perm, inplace=False)
 
-    Args:
-        ai (_type_): _description_
-        model1 (_type_): _description_
-        model2 (_type_): _description_
-        results (_type_): _description_
-        device (_type_): _description_
-        train_loader (_type_): _description_
-        test_loader (_type_): _description_
-        interpolation_func (callable): If not None must be a valid function with the signature (modela, modelb, alpha) -> nn.Module
-        suffix (str, optional): _description_. Defaults to "".
-        n_points (int, optional): _description_. Defaults to 20.
-        inner_tqdm (tqdm, optional): _description_. Defaults to None.
-        num_classes (int, optional): _description_. Defaults to 10.
-        criterion (_type_, optional): _description_. Defaults to None.
+    results = get_empty_df()
 
-    Returns:
-        pd.DataFrame: _description_
-    """
-    if interpolation_func is None:
-        interpolation_func = interpolate_models
+    ts = torch.linspace(0.0, 1.0, config.lmc.n_points)
+    if config.lmc.lmc_use_saved_endpoint_evaluations:
+        saved_results_1 = get_saved_evaluations(el1)
+        if saved_results_1:
+            print(f"Using saved evaluations for model {el1.element_ind}")
+            saved_results_1["alpha"] = ts[0]
+            ts = ts[1:]
+            results = pd.concat([results, pd.DataFrame(saved_results_1, index=[0])])
+        saved_results_2 = get_saved_evaluations(el2)
+        if saved_results_2:
+            print(f"Using saved evaluations for model {el2.element_ind}")
+            saved_results_2["alpha"] = ts[-1]
+            ts = ts[:-1]
+            results = pd.concat([results, pd.DataFrame(saved_results_2, index=[1])])
 
-    ts = torch.linspace(0.0, 1.0, n_points)
     if inner_tqdm is None:
         inner_tqdm = tqdm(enumerate(ts), leave=True, desc="Interpolation")
     else:
@@ -603,59 +584,41 @@ def interpolate_evaluate(
         inner_tqdm.set_description_str("Interpolation")
 
     inner_tqdm.reset()
-    res_dict = dict()
-
-    if results is None:
-        results = get_empty_df()
 
     for i, t in inner_tqdm.iterable:
         gc.collect()
         inner_tqdm.set_description_str(f"Interpolation: {i}")
-        model = interpolation_func(model1, model2, t)
+        model = interpolate_models(model1, model2, t)
         res = dict()
         repair(model, train_loader)
 
         for name, loader in [("train", train_loader), ("test", test_loader)]:
             if loader is None:
                 continue
-            if is_language_model:
-                res[name] = evaluate_model_language(
-                    model, loader, data_config, device=device
-                )
-            else:
-                res[name] = evaluate_model_vision(
+            if config.data.is_language_dataset():
+                row = evaluate_model_language(
                     model,
                     loader,
-                    num_classes=num_classes,
+                    config.data,
                     device=device,
-                    criterion=criterion,
                 )
+            else:
+                row = evaluate_model_vision(
+                    model,
+                    loader,
+                    num_classes=config.data.get_num_labels(),
+                    device=device,
+                    criterion=reference_el.loss_fn,
+                )
+            res.update({(name, k): v for k, v in row.items()})
 
-        res = {
-            (outerKey, innerKey): values
-            for outerKey, innerDict in res.items()
-            for innerKey, values in innerDict.items()
-        }
+        res["alpha"] = t.item()
+        results = pd.concat([results, pd.DataFrame(res, index=[t.item()])])
 
-        res_dict[i] = {
-            f"{outer}/{inner}/{suffix}": it for (outer, inner), it in res.items()
-        }
-        names = results.index.names
-        columns = results.columns
-
-        if len(results) == 0:
-            res["epoch"] = ai
-            res["alpha"] = t.item()
-            index = pd.MultiIndex.from_tuples(
-                [(ai, t.item())], names=["epoch", "alpha"]
-            )
-            results = pd.DataFrame(res, index=index, columns=columns)
-        else:
-            results = pd.concat([results, pd.DataFrame(res, index=[(ai, t.item())])])
-
-        results.index.names = names
         inner_tqdm.set_postfix({f"{k[0]}/{k[1]}": v for k, v in res.items()})
         inner_tqdm.update()
 
     inner_tqdm.reset()
+    results["model1_ind"] = el1.element_ind
+    results["model2_ind"] = el2.element_ind
     return results

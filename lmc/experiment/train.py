@@ -149,11 +149,9 @@ class TrainingRunner(ExperimentManager):
             check_lmc(
                 self.training_elements,
                 self.config,
-                self.ep,
                 log_dct,
-                check_perms=self.config.lmc.lmc_check_perms,
             )
-        if self.config.n_models > 2:
+        if self.config.n_models > 2 and self.config.lmc.lmc_evaluate_merged:
             evaluate_merge(
                 self.training_elements,
                 self.config,

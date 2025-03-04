@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import torch
@@ -349,11 +350,27 @@ class TestTraining(BaseTest):
             ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "lmc-0-1/lmc/loss/weighted/barrier_train")
             self.assertEqual(barrier, ref_barrier)
 
-    def test_three_models(self):
-        # check that lmc-0-1, lmc-0-2, and lmc-1-2 keys exist
-        self.run_command_and_return_result("test-three", "lmc-0-1/lmc/loss/weighted/barrier_test",  model_name="resnet8-4", dataset="cifar10", n_models=3, lmc_on_train_end=True)
-        self.get_summary_value(self.log_dir / "test-three", "lmc-0-2/lmc/loss/weighted/barrier_test")
-        self.get_summary_value(self.log_dir / "test-three", "lmc-1-2/lmc/loss/weighted/barrier_test")
+        with self.subTest("three models"):
+            summary_file = self.log_dir / "test-ckpt-ref" / "wandb_summary.json"
+            with open(summary_file, "r") as f:
+                summary = json.load(f)
+            summary["model2/train/cross_entropy"] = -100
+            summary["model2/test/cross_entropy"] = 100
+            with open(summary_file, "w") as f:
+                json.dump(summary, f)
+            # these should be 0 due to very low cross entropy at model2
+            barrier_02_train = self.run_command_and_return_result("test-three", "lmc-0-2/lmc/loss/weighted/barrier_train",  n_models=3, lmc_on_train_end="True", args=['--eval_freq', 'none', '--lmc_evaluate_merged', 'false', '--lmc_pairs', '2-1,0-2', '--lmc_use_saved_endpoint_evaluations', 'true', '--evaluate_ckpt3', str(self.log_dir / 'test-ckpt-ref' / 'model2')])
+            barrier_12_train = self.get_summary_value(self.log_dir / "test-three", "lmc-2-1/lmc/loss/weighted/barrier_train")
+            self.assertGreater(barrier_02_train, 50)
+            self.assertGreater(barrier_12_train, 50)
+            # these should be 100 due to very high cross entropy at model2
+            barrier_02_test = self.get_summary_value(self.log_dir / "test-three", "lmc-0-2/lmc/loss/weighted/barrier_test")
+            barrier_12_test = self.get_summary_value(self.log_dir / "test-three", "lmc-2-1/lmc/loss/weighted/barrier_test")
+            self.assertEqual(barrier_02_test, 0)
+            self.assertEqual(barrier_12_test, 0)
+            # these were not included in lmc_pairs, so shouldn't exist
+            self.assertIsNone(self.get_summary_value(self.log_dir / "test-three", "lmc-1-2/lmc/loss/weighted/barrier_test"))
+            self.assertIsNone(self.get_summary_value(self.log_dir / "test-three", "lmc-0-1/lmc/loss/weighted/barrier_test"))
 
 
 if __name__ == "__main__":

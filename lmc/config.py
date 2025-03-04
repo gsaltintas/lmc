@@ -805,7 +805,13 @@ class LMCConfig(Config):
     lmc_on_train_end: bool = True
     lmc_freq: str = ""
     lmc_specific_steps: str = ""
+    lmc_use_saved_endpoint_evaluations: bool = False
+    lmc_pairs: str = ""
+    lmc_evaluate_merged: bool = False
 
     _n_points: str = "Number of points to interpolate models."
     _activation_matching_samples: str = "Number of samples to match activations."
     _lmc_on_epoch_end: str = "Deprecated, same as setting lmc_freq=1ep"
+    _lmc_use_saved_endpoint_evaluations: str = "If False, do not evaluate at alpha=0,1"
+    _lmc_pairs: str = "If not None or not empty, then only compute lmc between pairs written as {a}-{b},{c}-{d},{...}. Defaults to empty (evaluate all pairs)."
+    _lmc_evaluate_merged: str = "If True and there are 3 or more models, evaluate performance of all models averaged together."
