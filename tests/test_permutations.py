@@ -4,9 +4,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from lmc.config import ModelConfig
 from lmc.permutations import (PermSpec, get_permutation_sizes,
                               get_random_permutation_with_fixed_points,
                               permute_param)
+from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import (normalized_entropy,
                                              normalized_kl_stability,
                                              sinkhorn_kl)
@@ -16,6 +18,8 @@ from lmc.permutations.utils import (PermSpec, apply_head_permutation,
 from lmc.permutations.weight_alignment import (handle_head_param,
                                                weight_matching,
                                                weight_matching_cost)
+from lmc.utils.setup_training import configure_model, setup_loader
+from tests.base import BaseTest
 
 
 class TestHeadPermutations(unittest.TestCase):
@@ -146,33 +150,6 @@ class TestWeightMatching(unittest.TestCase):
         for p_name, perm in perms.items():
             self.assertTrue(np.all(np.sort(perm) == np.arange(len(perm))))
 
-## TODO: perm stability metrics
-# class TestPermStability(unittest.TestCase):
-#     def setUp(self):
-#         self.num_heads = 4
-#         self.perms = {
-#             "P_head_0": np.random.permutation(self.num_heads),
-#             "P_dhead_0": np.random.permutation(8),
-#             "P_v_0": np.random.permutation(self.num_heads),
-#         }
-
-#     def test_normalized_entropy(self):
-#         """Test entropy calculation for permutations"""
-#         entropies = normalized_entropy(self.perms)
-        
-#         for p_name in self.perms:
-#             self.assertIn(p_name, entropies)
-#             self.assertGreaterEqual(entropies[p_name], 0)
-#             self.assertLessEqual(entropies[p_name], 1)
-
-#     def test_sinkhorn_kl(self):
-#         """Test KL divergence calculation"""
-#         kls = sinkhorn_kl(self.perms)
-        
-#         for p_name in self.perms:
-#             self.assertIn(p_name, kls)
-#             self.assertGreaterEqual(kls[p_name], 0)  # KL divergence is non-negative
-
 
 class TestPermuteParam(unittest.TestCase):
     def test_perm_size(self):
@@ -291,6 +268,40 @@ class TestPermuteParam(unittest.TestCase):
         perm = get_random_permutation_with_fixed_points(n, fixed_points_fraction)
         fixeds = np.round(n * fixed_points_fraction)
         self.assertGreaterEqual((perm == np.arange(n)).sum(), fixeds)
+
+
+class TestRealWorldPermutation(BaseTest):
+
+    def test_resnet_weight_matching(self):
+        config = self.get_test_config(model_name="resnet20-32", dataset="cifar10")
+        model, _ = configure_model(config, "cpu", seed=42, verbose=False)
+        ref_perm = model.get_random_permutation()
+        permuted = model._permute(ref_perm, inplace=False)
+        perms = weight_matching(
+            model.permutation_spec(),
+            permuted.model.state_dict(),
+            model.model.state_dict(),
+            max_iter=10,
+            verbose=False
+        )
+        for k, v in ref_perm.items():
+            self.assertListEqual(list(perms[k]), list(v))
+
+    def test_resnet_activation_matching(self):
+        config = self.get_test_config(model_name="resnet8-8", dataset="cifar10")
+        model, _ = configure_model(config, "cpu", seed=42, verbose=False)
+        ref_perm = model.get_random_permutation()
+        permuted = model._permute(ref_perm, inplace=False)
+        dataloader = setup_loader(config.data, train=True, evaluate=True)
+        perms = activation_matching(
+            model.permutation_spec(),
+            permuted,
+            model,
+            dataloader=dataloader,
+            verbose=False
+        )
+        for k, v in ref_perm.items():
+            self.assertListEqual(list(perms[k]), list(v))
 
 
 if __name__ == "__main__":
