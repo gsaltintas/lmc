@@ -259,6 +259,13 @@ class TrainingElement(ABC):
             current_vector, other_vector, dim=0
         )
         return dist.item(), cosine.item()
+    
+    def dist_from_origin(self):
+        zeros = torch.zeros_like(params_to_vector(self.model.parameters()))
+        l2, _ = self._dist_statistics(zeros)
+        i = self.element_ind
+        log_dct = {self.wandb_registry.get_metric(f"l2_at_init_{i}").log_name: l2}
+        return log_dct
 
     def dist_from_init(self) -> Dict[str, Any]:
         init_l2, init_cos = self._dist_statistics(self.init_model_vector)

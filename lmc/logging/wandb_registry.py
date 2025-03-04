@@ -357,15 +357,6 @@ class WandbMetricsRegistry(MetricsRegistry):
                     )
 
             # L2 and noise metrics
-            self.add_metric(
-                f"l2_at_init_{model_idx}",
-                WandbMetric(
-                    f"static/l2_at_init/{model_idx}",
-                    f"L2 at Init Model {model_idx}",
-                    f"l2-{model_idx}",
-                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
-                ),
-            )
 
             self.add_metric(
                 f"noise_l2_{model_idx}",
@@ -433,7 +424,15 @@ class WandbMetricsRegistry(MetricsRegistry):
                     category=MetricCategory.L2_DISTANCE,
                 ),
             )
-
+            self.add_metric(
+                f"l2_at_init_{model_idx}",
+                WandbMetric(
+                    f"static/l2_at_init/{model_idx}",
+                    f"L2 at Init Model {model_idx}",
+                    f"l2-{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
             for next_el_ind in range(model_idx + 1, self.n_models + 1):
                 # if model_idx < self.n_models:
                 self.add_metric(

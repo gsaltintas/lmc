@@ -401,11 +401,14 @@ class Experiment:
 
 @dataclass(init=False)
 class Trainer(Experiment):
+    log_per_layer_l2: bool = False
+
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.log_per_layer_l2 = kwargs.get("log_per_layer_l2", False)
 
 
 @dataclass(init=False)
@@ -465,7 +468,6 @@ class PerturbedTrainer(Trainer):
     dont_perturb_module_patterns: List[str] = field(
         init=True, default_factory=lambda: []
     )
-    log_per_layer_l2: bool = False
     perturb_fraction: float = 1
     perturb_debug_dummy_run: bool = False
 
@@ -495,7 +497,6 @@ class PerturbedTrainer(Trainer):
             "scale_to_init_if_normalized", True
         )
         self.same_steps_pperturb = kwargs.get("same_steps_pperturb", True)
-        self.log_per_layer_l2 = kwargs.get("log_per_layer_l2", False)
         self.rewind_lr = kwargs.get("rewind_lr", False)
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
         self.perturb_fraction = kwargs.get("perturb_fraction", 1)

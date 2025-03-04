@@ -175,7 +175,7 @@ def configure_model(
     config: Trainer,
     device: torch.device,
     seed: int = None,
-    print_output=True,
+    verbose=True,
     state_dict=None,
 ) -> Tuple["BaseModel", Optional[AutoTokenizer]]:
     seed_everything(seed)
@@ -191,7 +191,7 @@ def configure_model(
     if state_dict:
         load_model_from_state_dict(model, state_dict)
         logger.info("Model state dict updated")
-    if print_output:
+    if verbose:
         print(model)
     return model, tokenizer
 

@@ -102,8 +102,6 @@ class TrainingRunner(ExperimentManager):
     def on_train_start(self):
         print(self.config.display)
         self.training_elements.on_epoch_start()
-        if self.training_elements.is_same_model():
-            self.logger.info("Models are the same at initialization.")
         # don't eval/save if advancing to start_step
         if self.start_step == 0:
             self.eval_and_save()
@@ -133,6 +131,7 @@ class TrainingRunner(ExperimentManager):
 
     def evaluate_element(self, element: TrainingElement, i):
         log_dct = {f"step/model{i}": element.curr_step}
+        log_dct.update(element.dist_from_origin())
         log_dct.update(element.dist_from_init())
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]

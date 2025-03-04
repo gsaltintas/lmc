@@ -29,29 +29,6 @@ class PerturbedTrainingRunner(TrainingRunner):
         if self.config.same_steps_pperturb:
             self.max_steps += self.config.perturb_step.get_step(self.steps_per_epoch)
 
-    def on_train_start(self):
-        super().on_train_start()
-        print("Running perturbed training.")
-        log_dct = dict()
-        for el in self.training_elements:
-            log_dct[f"static/init_l2/{el.element_ind}/total"] = params_l2(
-                el.model.parameters()
-            )
-            # save per-layer L2s
-            if self.config.log_per_layer_l2:
-                log_dct.update(
-                    {
-                        f"static/init_l2/{el.element_ind}/layer/{k}": torch.norm(
-                            v.flatten()
-                        ).item()
-                        for k, v in el.model.named_parameters()
-                        if v.requires_grad
-                    }
-                )
-        # note: l2_dist_at_init is deprecated because it l2 between models is now logged in train.py in evaluate_element
-        if self.config.logger.use_wandb:
-            wandb.log(log_dct)
-
     def reset_lr_schedule(
         self, element: TrainingElement, prev_max_steps: int = None
     ) -> None:

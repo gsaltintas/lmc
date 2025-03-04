@@ -125,7 +125,7 @@ class TestNoise(BaseTest):
             initialization_strategy=init_strategy,
         )
         for i in range(200):
-            model, _ = configure_model(config, device="cpu", seed=i, print_output=False)
+            model, _ = configure_model(config, device="cpu", seed=i, verbose=False)
             yield model
 
     def _yield_multibert_models(self):
