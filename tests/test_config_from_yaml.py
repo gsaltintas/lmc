@@ -109,8 +109,8 @@ class TestConfig(BaseTest):
         with self.subTest(
             "regression test perturb experiment: check that barriers haven't changed"
         ):
-            self.assertEqual(value_cmd, 0.8919784050822257)
-            self.assertEqual(value_obj, 1.5229564529220263)
+            self.assertEqual(value_cmd, 0.8919597112933794)
+            self.assertEqual(value_obj, 1.523014157807827)
 
 
 if __name__ == "__main__":

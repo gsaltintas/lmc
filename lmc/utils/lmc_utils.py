@@ -1,6 +1,4 @@
 import gc
-import json
-import time
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Dict, Tuple, Union
@@ -9,19 +7,15 @@ import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from torchmetrics import Accuracy
 from tqdm import tqdm
 
-from lmc.config import DataConfig
-from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Experiment
 from lmc.models.base_model import BaseModel
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import sinkhorn_kl
 from lmc.permutations.perm_stats import get_fixed_points_count, get_fixed_points_ratio
 from lmc.permutations.weight_alignment import weight_matching
-from lmc.utils.metrics import Metrics, compute_metrics
-from lmc.utils.training_element import CheckpointEvaluationElement, TrainingElement
+from lmc.utils.training_element import VisionTrainingElement, NLPTrainingElement
 
 
 @torch.no_grad()
@@ -95,33 +89,6 @@ def interpolate_models(
 
     model_interpolated.load_state_dict(d, strict=False)
     return model_interpolated
-
-
-def evaluate_model_vision(model, loader, num_classes, device, criterion) -> dict:
-    if device is None:
-        device = model.device
-    model.eval()
-
-    acc = Accuracy("multiclass", num_classes=num_classes).to(device)
-    criterion = criterion.to(device)
-    ce = 0.0
-    cnt = 0
-    correct = 0
-    for i, (x, y) in enumerate(loader):
-        cnt += x.size(0)
-        # doesn't work for some reason
-        with torch.no_grad() and torch.autocast(
-            device_type=model.device.type
-        ):  # , dtype=model.dtype):
-            if x.device != model.device:
-                x = x.to(model.device)
-                y = y.to(model.device)
-            out = model(x)
-            ce += criterion(out, y).item() * x.size(0)
-        acc.update(out, y)
-    acc_ = acc.compute().item()
-    ce = ce / cnt
-    return {"cross_entropy": ce, "accuracy": acc_, "err": 100 - 100 * acc_}
 
 
 def get_empty_df() -> pd.DataFrame:
@@ -208,9 +175,7 @@ def extract_barrier_language(results: pd.DataFrame) -> Dict[str, float]:
     if "perplexity" in cols:
         d.update(
             {
-                **barrier_from_df(
-                    results, "train", "perplexity", "lmc/perplexity/"
-                ),
+                **barrier_from_df(results, "train", "perplexity", "lmc/perplexity/"),
                 **barrier_from_df(results, "test", "perplexity", "lmc/perplexity/"),
             }
         )
@@ -220,20 +185,14 @@ def extract_barrier_language(results: pd.DataFrame) -> Dict[str, float]:
                 **barrier_from_df(
                     results, "train", "matthews_correlation", "lmc/loss/"
                 ),
-                **barrier_from_df(
-                    results, "test", "matthews_correlation", "lmc/loss/"
-                ),
+                **barrier_from_df(results, "test", "matthews_correlation", "lmc/loss/"),
             }
         )
     if "pearson_correlation" in cols:
         d.update(
             {
-                **barrier_from_df(
-                    results, "train", "pearson_correlation", "lmc/loss/"
-                ),
-                **barrier_from_df(
-                    results, "test", "pearson_correlation", "lmc/loss/"
-                ),
+                **barrier_from_df(results, "train", "pearson_correlation", "lmc/loss/"),
+                **barrier_from_df(results, "test", "pearson_correlation", "lmc/loss/"),
             }
         )
     return d
@@ -267,8 +226,7 @@ def evaluate_merge(
 
     """
 
-    is_language_model = config.data.is_language_dataset()
-    reference_el: TrainingElement = training_elements[0]
+    reference_el = copy_training_element(training_elements[0])
     reference_model = reference_el.model
     model_dct = {
         key: val / config.n_models
@@ -298,54 +256,23 @@ def evaluate_merge(
             init_perm=None,
             verbose=False,
         )
-        permuted_ = model._permute(perm, inplace=False)
-        for n, p in permuted_.state_dict().items():
+        permuted_model = model._permute(perm, inplace=False)
+        for n, p in permuted_model.state_dict().items():
             after_perms_model_dct[n] += 1.0 / config.n_models * p.clone().detach()
     merged_model = deepcopy(model)
     merged_model.load_state_dict(model_dct)
-    permuted_.load_state_dict(after_perms_model_dct)
-    vanilla_results = {}
-    perm_results = {}
-    for name, loader in [
-        ("train", reference_el.train_eval_loader),
-        ("test", reference_el.test_loader),
-    ]:
-        if loader is None:
-            continue
-        if is_language_model:
-            vanilla_results = evaluate_model_language(
-                merged_model,
-                reference_el.train_eval_loader,
-                config.data,
-                device=reference_model.device,
-            )
-            perm_results = evaluate_model_language(
-                permuted_,
-                reference_el.train_eval_loader,
-                config.data,
-                device=reference_model.device,
-            )
-        else:
-            vanilla_results = evaluate_model_vision(
-                merged_model,
-                reference_el.train_eval_loader,
-                num_classes=config.data.get_num_labels(),
-                device=reference_model.device,
-                criterion=reference_el.loss_fn,
-            )
-            perm_results = evaluate_model_vision(
-                permuted_,
-                reference_el.train_eval_loader,
-                num_classes=config.data.get_num_labels(),
-                device=reference_model.device,
-                criterion=reference_el.loss_fn,
-            )
+    permuted_model.load_state_dict(after_perms_model_dct)
+    for split in ["train", "test"]:
+        reference_el.model = merged_model
+        vanilla_results = reference_el.evaluate(split=split)
+        reference_el.model = permuted_model
+        perm_results = reference_el.evaluate(split=split)
 
         log_dct.update(
-            {f"merge/{name}/{key}": val for key, val in vanilla_results.items()}
+            {f"merge/{split}/{key}": val for key, val in vanilla_results.items()}
         )
         log_dct.update(
-            {f"merge/wm/{name}/{key}": val for key, val in perm_results.items()}
+            {f"merge/wm/{split}/{key}": val for key, val in perm_results.items()}
         )
 
 
@@ -354,7 +281,7 @@ def get_lmc_pairs(config):
     # include all pairs if not set
     if not lmc_pairs:
         n_models = config.n_models
-        return [(i, j) for i in range(0, n_models) for j in range(i+1, n_models)]
+        return [(i, j) for i in range(0, n_models) for j in range(i + 1, n_models)]
     # parse string into comma separated pairs of form {i}-{j}
     pair_str = lmc_pairs.split(",")
     pairs = []
@@ -397,7 +324,7 @@ def check_lmc(
 
         # Evaluate LMC
         # todo: maybe add this to basemodel or trainingelement
-        results_ = interpolate_evaluate(el, el, prev_el)
+        results_ = interpolate_evaluate(el, prev_el)
         lmc_res = extract_barrier(results_, is_language_task=is_language_model)
         log_dct.update(
             {f"lmc-{model_ind}-{other_ind}/{k}": v for k, v in lmc_res.items()}
@@ -447,7 +374,7 @@ def check_lmc(
                             for key, val in d.items()
                         }
                     )
-                results_perm_ = interpolate_evaluate(el, el, prev_el, perm)
+                results_perm_ = interpolate_evaluate(el, prev_el, perm)
                 perm_res = extract_barrier(
                     results_perm_, is_language_task=is_language_model
                 )
@@ -471,146 +398,70 @@ def check_lmc(
     return results, results_perm_wm, results_perm_act_aligned
 
 
-def evaluate_model_language(
-    model, loader, data_config: DataConfig, device=None
-) -> dict:
-    """
-    Evaluate language model using HuggingFace model's native functionality.
-    The model is expected to have a self.model attribute containing a HuggingFace transformer model.
-    """
-    if device is None:
-        device = model.device
-    model.eval()
-    dataset = data_config.dataset_info
-
-    metrics = Metrics()
-    metrics_kwargs = {}
-    for batch in loader:
-        batch = {
-            k: v.to(model.device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
-        }
-
-        outputs = model(**batch)
-        n = batch["input_ids"].shape[0]
-        metrics_kwargs = {"n": n}
-        # Always track loss
-        metrics_kwargs["cross_entropy"] = outputs.loss.item()
-
-        # Update dataset-specific metrics
-        if dataset.metrics:
-            if data_config.task_type == TaskType.REGRESSION:
-                predictions = outputs.logits
-            else:
-                predictions = outputs.logits.argmax(1)
-
-            metric_results = compute_metrics(
-                dataset.metrics,
-                predictions.detach(),
-                batch["labels"].detach(),
-            )
-            metrics_kwargs.update(metric_results)
-        metrics.update(**metrics_kwargs)
-    res = metrics.get_metrics(percentage=False)
-    return res
-
-
-def get_saved_evaluations(el: TrainingElement):
-    if not isinstance(el, CheckpointEvaluationElement):
-        return None
-
-    # ckpt_dir is always model{element_ind}/checkpoints
-    summary_file = el.ckpt_dir.parent.parent / "wandb_summary.json"
-    if not summary_file.exists():
-        return None
-
-    with open(summary_file, "r") as f:
-        summary = json.load(f)
-    #NOTE: to preserve backwards compatibility, subtract index by 1 as wandb indexes from 0
-    model_idx = el.element_ind - 1
-    step = summary[f"step/model{model_idx}"]
-    if el.curr_step != step:
-        return None
-
-    results = {"step": step}
-    for split in ["train", "test"]:
-        for key in ["cross_entropy", "accuracy", "perplexity", "matthews_correlation", "pearson_correlation"]:
-            summary_key = f"model{model_idx}/{split}/{key}"
-            if summary_key in summary:
-                results[(split, key)] = summary[summary_key]
-        if (split, "accuracy") in results:
-            results[(split, "err")] = 100 - 100 * results[(split, "accuracy")]
-    return results
+def copy_training_element(element):
+    # create a copy of TrainingElement so model can be replaced by interpolated models
+    training_element_class = (
+        NLPTrainingElement if element.model.is_language_model else VisionTrainingElement
+    )
+    new_element = training_element_class(
+        config=element.config,
+        element_ind=0,
+        device=element.device,
+        max_steps=element.max_steps,
+        train_loader=element.train_loader,
+        train_eval_loader=element.train_eval_loader,
+        test_loader=element.test_loader,
+        model=element.model,
+        opt=None,
+        scheduler=None,
+        tokenizer=element.tokenizer,
+        perturb_seed=None,
+    )
+    return new_element
 
 
 def interpolate_evaluate(
-    reference_el,
     el1,
     el2,
     perm=None,
 ) -> pd.DataFrame:
-    device = reference_el.device
-    train_loader = reference_el.train_eval_loader
-    test_loader = reference_el.test_loader
-    inner_tqdm = reference_el.extra_iterator
-    config = reference_el.config
     model1 = el1.model
     model2 = el2.model
     if perm is not None:
         model2 = model2._permute(perm, inplace=False)
-
     results = get_empty_df()
 
-    ts = torch.linspace(0.0, 1.0, config.lmc.n_points)
-    if config.lmc.lmc_use_saved_endpoint_evaluations:
-        saved_results_1 = get_saved_evaluations(el1)
-        if saved_results_1:
-            print(f"Using saved evaluations for model {el1.element_ind}")
-            saved_results_1["alpha"] = ts[0]
-            ts = ts[1:]
-            results = pd.concat([results, pd.DataFrame(saved_results_1, index=[0])])
-        saved_results_2 = get_saved_evaluations(el2)
-        if saved_results_2:
-            print(f"Using saved evaluations for model {el2.element_ind}")
-            saved_results_2["alpha"] = ts[-1]
-            ts = ts[:-1]
-            results = pd.concat([results, pd.DataFrame(saved_results_2, index=[1])])
+    interpolate_el = copy_training_element(el1)
+    config = interpolate_el.config
+    inner_tqdm = interpolate_el.extra_iterator
 
+    ts = torch.linspace(0.0, 1.0, config.lmc.n_points)
     if inner_tqdm is None:
         inner_tqdm = tqdm(enumerate(ts), leave=True, desc="Interpolation")
     else:
         inner_tqdm.iterable = enumerate(ts)
         inner_tqdm.total = len(ts)
         inner_tqdm.set_description_str("Interpolation")
-
     inner_tqdm.reset()
 
     for i, t in inner_tqdm.iterable:
-        gc.collect()
         inner_tqdm.set_description_str(f"Interpolation: {i}")
-        model = interpolate_models(model1, model2, t)
-        res = dict()
-        repair(model, train_loader)
+        if config.lmc.lmc_use_saved_endpoint_evaluations and t == 0:
+            element = el1
+        elif config.lmc.lmc_use_saved_endpoint_evaluations and t == 1 and perm is None:
+            element = el2
+        else:
+            gc.collect()
+            model = interpolate_models(model1, model2, t)
+            repair(model, el1.train_eval_loader)
+            interpolate_el.model = model
+            element = interpolate_el
 
-        for name, loader in [("train", train_loader), ("test", test_loader)]:
-            if loader is None:
-                continue
-            if config.data.is_language_dataset():
-                row = evaluate_model_language(
-                    model,
-                    loader,
-                    config.data,
-                    device=device,
-                )
-            else:
-                row = evaluate_model_vision(
-                    model,
-                    loader,
-                    num_classes=config.data.get_num_labels(),
-                    device=device,
-                    criterion=reference_el.loss_fn,
-                )
-            res.update({(name, k): v for k, v in row.items()})
+        res = {}
+        for split in ["train", "test"]:
+            row = element.evaluate(split=split)
+            row["err"] = 100 - 100 * row["accuracy"]
+            res.update({(split, k): v for k, v in row.items()})
 
         res["alpha"] = t.item()
         results = pd.concat([results, pd.DataFrame(res, index=[t.item()])])

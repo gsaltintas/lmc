@@ -97,58 +97,19 @@ class TestTrainingRunner(BaseTest):
         # check if last ckpts are exactly identical
         return "same" if self.ckpts_match(ckpt_1, ckpt_2) else "different"
 
-    PerturbedTrainingKwargs = dict(
-        training_steps="2ep",
-        norm="layernorm",
-        hflip=True,
-        random_rotation=10,
-        lr_scheduler="triangle",
-        lr=0.1,
-        warmup_ratio=0.02,
-        optimizer="sgd",
-        momentum=0.9,
-        save_early_iters=True,
-        cleanup_after=False,
-        use_wandb=False,
-        run_name="test_butterfly_deterministic",
-        project="tests",
-        n_models=2,
-        perturb_inds=[1],
-        perturb_mode="gaussian",
-        n_points=3,
-        lmc_check_perms=False,
-        batch_size=128,
-    )
-
-    def test_post_perturb_steps(
-        self,
-        seed1=42,
-        seed2=None,
-        perturb_step: int = 5,
-        perturb_scale=0.1,
-        deterministic=True,
-        model_name="mlp/128x3",
-        dataset="mnist",
-    ):
-        if seed2 is None:
-            seed2 = seed1
+    def test_post_perturb_steps(self):
         perturb_ind = 1
         non_perturbed = 0
-        config = PerturbedTrainer.from_dict(
-            dict(
-                **self.PerturbedTrainingKwargs,
-                seed1=seed1,
-                seed2=seed2,
-                perturb_step=perturb_step,
-                perturb_scale=perturb_scale,
-                deterministic=deterministic,
-                log_dir=self.log_dir,
-                path=self.data_dir / dataset,
-                model_name=model_name,
-                dataset=dataset,
+        config = self.get_test_config(
+            n_models=2,
+            perturb_step=5,
+            perturb_scale=0.1,
+            perturb_mode="gaussian",
+            perturb_seed2=99,
+            perturb_inds=[perturb_ind + 1],
+            lmc_on_epoch_end=True,
+            n_points=3,
             )
-            | {"perturb_inds": [perturb_ind + 1]}
-        )
         exp_manager = PerturbedTrainingRunner(config)
         exp_manager.run_experiment()
         steps_per_epoch = exp_manager.steps_per_epoch

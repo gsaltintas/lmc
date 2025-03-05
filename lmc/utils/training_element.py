@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
+import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple, Iterable
+from typing import Any, Dict, List, Literal, Mapping, Tuple, Iterable
 
 import torch
 from torch import nn, optim
@@ -14,7 +15,7 @@ from transformers import AutoTokenizer
 from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
-from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
+from lmc.utils.metrics import AverageMeter, Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
 
 
@@ -211,7 +212,7 @@ class TrainingElement(ABC):
                 colour=color,
             )
             self.train_eval_iterator = tqdm(
-                total=len(self.train_loader),
+                total=len(self.train_eval_loader),
                 desc=f"Evaluating model {self.element_ind} on train - epoch: ",
                 position=2 + 2 * self.element_ind,
                 leave=True,
@@ -355,6 +356,14 @@ class TrainingElement(ABC):
         if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
             self.opt.zero_grad()
 
+    @abstractmethod
+    @torch.no_grad()
+    def evaluate(self, split: Literal["train", "test"]):
+        self.model.eval()
+        self.test_iterator.reset()
+        dataloader = self.train_eval_loader if split == "train" else self.test_loader
+        return dataloader
+
 
 class VisionTrainingElement(TrainingElement):
     def step(self, batch):
@@ -377,6 +386,36 @@ class VisionTrainingElement(TrainingElement):
             out.detach(), y.detach(), targs_perm, k=3, avg=True
         )
         self.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
+
+    @torch.no_grad()
+    def evaluate(self, split: Literal["train", "test"]):
+        dataloader = super().evaluate(split=split)
+        total_acc, total_topk, cross_entropy = (
+            AverageMeter(),
+            AverageMeter(),
+            AverageMeter(),
+        )
+
+        for ims, targs in dataloader:
+            ims = ims.to(self.device)
+            targs = targs.to(self.device)
+            self.test_iterator.update()
+            preds = self.model(ims)
+            loss = self.loss_fn(preds, targs)
+
+            cross_entropy.update(loss.item(), ims.shape[0])
+            acc, topk = mixup_topk_accuracy(preds, targs, k=3, avg=True)
+            total_acc.update(acc.item(), ims.shape[0])
+            total_topk.update(topk.item(), ims.shape[0])
+
+        res = {
+            "cross_entropy": cross_entropy.get_avg(percentage=False),
+            "accuracy": total_acc.get_avg(percentage=False),
+            "top_3_accuracy": total_topk.get_avg(percentage=False),
+        }
+        self.test_iterator.set_postfix(res)
+        self.test_iterator.refresh()
+        return res
 
 
 class NLPTrainingElement(TrainingElement):
@@ -473,6 +512,49 @@ class NLPTrainingElement(TrainingElement):
         self.metrics.update(**metrics_kwargs)
 
 
+    @torch.no_grad()
+    def evaluate(self, split: Literal["train", "test"]):
+        dataloader = super().evaluate(split=split)
+        dataset = self.config.data.dataset_info
+
+        # Initialize metrics dictionary with cross_entropy
+        metrics = Metrics()
+
+        for batch in dataloader:
+            batch = {
+                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                for k, v in batch.items()
+            }
+            self.test_iterator.update()
+
+            outputs = self.model(**batch)
+            n = batch["input_ids"].shape[0]
+            metrics_kwargs = {"n": n}
+            # Always track loss
+            metrics_kwargs["cross_entropy"] = outputs.loss.item()
+
+            # Update dataset-specific metrics
+            if dataset.metrics:
+                if self.config.data.task_type == TaskType.REGRESSION:
+                    predictions = outputs.logits
+                else:
+                    predictions = outputs.logits.argmax(1)
+
+                metric_results = compute_metrics(
+                    dataset.metrics,
+                    predictions.detach(),
+                    batch["labels"].detach(),
+                )
+                metrics_kwargs.update(metric_results)
+            metrics.update(**metrics_kwargs)
+        # Prepare results dict - only include metrics that were updated
+        res = metrics.get_metrics(percentage=False)
+
+        self.test_iterator.set_postfix(res)
+        self.test_iterator.refresh()
+        return res
+
+
 @dataclass(init=False)
 class CheckpointEvaluationElement(TrainingElement):
     class DummyMetrics(Metrics):
@@ -504,6 +586,7 @@ class CheckpointEvaluationElement(TrainingElement):
         self.train_eval_loader = train_eval_loader
         self.test_loader = test_loader
         self._model = model  # save this way to access through getter
+        self.opt = None
         self.scheduler = None
         self.tokenizer = tokenizer
         self.perturb_seed = None
@@ -532,20 +615,58 @@ class CheckpointEvaluationElement(TrainingElement):
         pass  # do nothing
 
     @property
+    def source_ind(self):
+        return int(self.ckpt_dir.parent.name.split("model")[1])
+
+    def evaluate(self, split: Literal["train", "test"]):
+        # ckpt_dir is always model{element_ind}/checkpoints
+        summary_file = self.ckpt_dir.parent.parent / "wandb_summary.json"
+        if not summary_file.exists():
+            raise RuntimeError(f"Cannot load evaluated values from summary {summary_file}: file doesn't exist.")
+
+        with open(summary_file, "r") as f:
+            summary = json.load(f)
+        #NOTE: to preserve backwards compatibility, subtract index by 1 as wandb indexes from 0
+        step = summary[f"step/model{self.source_ind}"]
+        if self.curr_step != step:
+            raise RuntimeError(f"Cannot load evaluated values for step {self.curr_step}: only step {step} available in {summary_file}")
+
+        results = {}
+        #TODO find a way to not hardcode this list?
+        metric_names = [
+            "cross_entropy",
+            "accuracy",
+            "top_3_accuracy",
+            "perplexity",
+            "exact_match",
+            "f1",
+            "matthews_correlation",
+            "pearson_correlation",
+            "spearman_correlation",
+        ]
+        for key in metric_names:
+            summary_key = f"model{self.source_ind}/{split}/{key}"
+            if summary_key in summary:
+                results[key] = summary[summary_key]
+        logger.info(
+            f"model{self.element_ind}: loading saved evaluations for step {step} from {summary_file}, model{self.source_ind}"
+        )
+        return results
+
+    @property
     def model(self):
         if self.loaded_model_step != self.curr_step:
-            if self.curr_step in self.ckpts:
-                ckpt_path = self.ckpts[self.curr_step]
-                ckpt = torch.load(ckpt_path, map_location=self.device)
-                logger.info(
-                    f"model{self.element_ind} loaded from checkpoint {ckpt_path}"
-                )
-                load_model_from_state_dict(self._model, ckpt["state_dict"])
-                self.loaded_model_step = self.curr_step
-            else:
+            if self.curr_step not in self.ckpts:
                 raise ValueError(
                     f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
                 )
+            ckpt_path = self.ckpts[self.curr_step]
+            ckpt = torch.load(ckpt_path, map_location=self.device)
+            logger.info(
+                f"model{self.element_ind} loaded from checkpoint {ckpt_path}"
+            )
+            load_model_from_state_dict(self._model, ckpt["state_dict"])
+            self.loaded_model_step = self.curr_step
         return self._model
 
     def log_train_metrics(self):
@@ -606,9 +727,3 @@ class TrainingElements(object):
 
     def __len__(self):
         return len(self._elements)
-
-    def is_same_model(self):
-        for element in self[1:]:
-            if not self[0].params_equal(element):
-                return False
-        return True

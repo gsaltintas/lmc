@@ -222,13 +222,9 @@ class TrainingRunner(ExperimentManager):
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:
         """Vision-specific evaluation logging"""
-        element.model.eval()
-
         # Run test evaluation
         with torch.no_grad():
-            test_res = self._test_vision(
-                element.model, element.test_loader, element.test_iterator
-            )
+            test_res = element.evaluate(split="test")
             log_dct = {
                 f"model{model_idx}/test/accuracy": test_res["accuracy"],
                 f"model{model_idx}/test/top_3_accuracy": test_res["top_3_accuracy"],
@@ -241,14 +237,11 @@ class TrainingRunner(ExperimentManager):
     def _eval_language(
         self, element: TrainingElement, model_idx: int
     ) -> Dict[str, float]:
-        element.model.eval()
         """Language-specific evaluation logging"""
         # Base metrics all tasks have
         # Run test evaluation
         with torch.no_grad():
-            test_res = self._test_language(
-                element.model, element.test_loader, element.test_iterator
-            )
+            test_res = element.evaluate(split="test")
             log_dct = {f"model{model_idx}/test/{k}": v for k, v in test_res.items()}
 
             # Use appropriate metric for best checkpoint
@@ -267,143 +260,3 @@ class TrainingRunner(ExperimentManager):
             if self.config.trainer.save_best:
                 self.logger.info("Saving best params at epoch %d", self.ep)
                 element.save(self.steps_per_epoch, save_name="best.ckpt")
-
-    @torch.no_grad()
-    def _test_vision(self, model, loader, iterator: tqdm):
-        """Vision-specific testing"""
-        total_acc, total_topk, cross_entropy = (
-            AverageMeter(),
-            AverageMeter(),
-            AverageMeter(),
-        )
-
-        iterator.reset()
-        for ims, targs in loader:
-            ims = ims.to(self.device)
-            targs = targs.to(self.device)
-            iterator.update()
-            preds = model(ims)
-            loss = self.test_loss_fn(preds, targs)
-
-            cross_entropy.update(loss.item(), ims.shape[0])
-            acc, topk = mixup_topk_accuracy(preds, targs, k=3, avg=True)
-            total_acc.update(acc.item(), ims.shape[0])
-            total_topk.update(topk.item(), ims.shape[0])
-
-        res = {
-            "cross_entropy": cross_entropy.get_avg(percentage=False),
-            "accuracy": total_acc.get_avg(percentage=False),
-            "top_3_accuracy": total_topk.get_avg(percentage=False),
-        }
-        iterator.set_postfix(res)
-        iterator.refresh()
-        return res
-
-    @torch.no_grad()
-    def _test_language(self, model, loader, iterator: tqdm):
-        """Language-specific testing"""
-        dataset = self.config.data.dataset_info
-
-        # Initialize metrics dictionary with cross_entropy
-        metrics = Metrics()
-
-        iterator.reset()
-        for batch in loader:
-            batch = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
-            }
-            iterator.update()
-
-            outputs = model(**batch)
-            n = batch["input_ids"].shape[0]
-            metrics_kwargs = {"n": n}
-            # Always track loss
-            metrics_kwargs["cross_entropy"] = outputs.loss.item()
-
-            # Update dataset-specific metrics
-            if dataset.metrics:
-                if self.config.data.task_type == TaskType.REGRESSION:
-                    predictions = outputs.logits
-                else:
-                    predictions = outputs.logits.argmax(1)
-
-                metric_results = compute_metrics(
-                    dataset.metrics,
-                    predictions.detach(),
-                    batch["labels"].detach(),
-                )
-                metrics_kwargs.update(metric_results)
-            metrics.update(**metrics_kwargs)
-        # Prepare results dict - only include metrics that were updated
-        res = metrics.get_metrics(percentage=False)
-
-        iterator.set_postfix(res)
-        iterator.refresh()
-        return res
-
-    @torch.no_grad()
-    def _test_language_old(self, model, loader, iterator: tqdm):
-        """Language-specific testing"""
-        model.eval()
-        task_type = self.config.data.task_type
-        metrics = {
-            "cross_entropy": AverageMeter(),
-            "accuracy": AverageMeter(),
-            "f1": AverageMeter(),
-            "em": AverageMeter(),
-            "perplexity": AverageMeter(),
-        }
-
-        iterator.reset()
-        for batch in loader:
-            batch = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
-            }
-            iterator.update()
-
-            outputs = model(**batch)
-            n = batch["input_ids"].shape[0]
-
-            # Update task-specific metrics
-            if task_type in [
-                TaskType.CLASSIFICATION,
-                TaskType.NATURAL_LANGUAGE_INFERENCE,
-            ]:
-                preds = torch.argmax(outputs.logits, dim=-1)
-                acc = (preds == batch["labels"]).float().mean()
-                metrics["accuracy"].update(acc.item(), n)
-
-            elif task_type == TaskType.QUESTION_ANSWERING:
-                # Calculate EM and F1
-                squad = SQuAD()
-                # squad_res = squad(outputs, batch[])
-                # metrics["em"].update(squad_res["exact_match"].item())
-                # metrics["f1"].update(squad_res["exact_match"].item())
-
-            elif task_type == TaskType.GENERATION:
-                loss = outputs.loss
-                perplexity = torch.exp(loss)
-                metrics["perplexity"].update(perplexity.item(), n)
-
-            # Always track loss
-            metrics["cross_entropy"].update(outputs.loss.item(), n)
-
-        # Prepare results dict
-        res = {
-            k: v.get_avg(percentage=False) for k, v in metrics.items() if v.count > 0
-        }  # Only include metrics that were updated
-
-        iterator.set_postfix(res)
-        iterator.refresh()
-        return res
-
-    @torch.no_grad()
-    def test(self, model, loader, iterator: tqdm):
-        model.eval()
-        # Choose evaluation function based on task
-        if self.config.data.is_language_dataset():
-            return self._test_language(model, loader, iterator)
-        else:
-            return self._test_vision(model, loader, iterator)

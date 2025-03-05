@@ -52,6 +52,8 @@ class BaseTest(unittest.TestCase):
                 --lmc_on_epoch_end false  \
                 --lmc_on_train_end {lmc_on_train_end}  \
                 --n_points 3  \
+            --eval_freq none  \
+                --eval_specific_steps {training_steps}  \
     {args}"""
     SEED_1 = 42
     SEED_2 = 41
@@ -94,6 +96,8 @@ class BaseTest(unittest.TestCase):
         lmc_on_epoch_end=False,
         lmc_on_train_end=False,
         n_models=1,
+        eval_freq="",
+        eval_specific_steps=None,
         **kwargs
         ):
         config_type = Trainer if experiment == "train" else PerturbedTrainer
@@ -118,6 +122,8 @@ class BaseTest(unittest.TestCase):
                 lmc_on_epoch_end=lmc_on_epoch_end,
                 lmc_on_train_end=lmc_on_train_end,
                 cleanup_after=False,
+                eval_freq=eval_freq,
+                eval_specific_steps=training_steps if eval_specific_steps is None else eval_specific_steps,
                 **kwargs
             )
         )
@@ -233,8 +239,10 @@ class BaseTest(unittest.TestCase):
         if key is None:
             return None
         with open(Path(model_dir) / "wandb_summary.json", "r") as f:
-            value = json.load(f)[key]
-        return value
+            summary = json.load(f)
+        if key not in summary:
+            return None
+        return summary[key]
 
     def run_command_and_return_result(self, model_dir, key_to_return, **kwargs):
         model_dir = self.log_dir / model_dir
