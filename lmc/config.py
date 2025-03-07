@@ -522,6 +522,7 @@ class DataConfig(Config):
     random_crop: bool = False  # TODO this does nothing, only kept here to preserve backwards compatibility
     random_translate: float = 0.0
     cutout: int = 0
+    use_ffcv: bool = False
 
     # Language-specific configurations
     tokenizer_name: Optional[str] = None

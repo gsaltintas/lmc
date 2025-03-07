@@ -20,6 +20,13 @@ Install dependencies with
 poetry install
 ```
 
+If using ffcv, do the following instead:
+```
+conda create -y -n ffcvlmc python=3.10 libjpeg-turbo opencv -c conda-forge
+conda activate ffcvlmc
+pip install -r requirements.txt
+```
+
 Make sure to define these variables in your `.bashrc` file or for every run:
 ```
 export WANDB_ENTITY="WANDB_ENTITY"

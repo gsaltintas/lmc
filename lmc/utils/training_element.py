@@ -370,7 +370,7 @@ class VisionTrainingElement(TrainingElement):
         super().step(batch)
         x, y = batch
         x = x.to(self.device)
-        y = y.to(self.device)
+        y = y.to(self.device).flatten()
         out = self.model(x)
         loss = self.loss_fn(out, y)
         targs_perm = None  # depreceated, when using mixup/cutmix
@@ -398,7 +398,7 @@ class VisionTrainingElement(TrainingElement):
 
         for ims, targs in dataloader:
             ims = ims.to(self.device)
-            targs = targs.to(self.device)
+            targs = targs.to(self.device).flatten()
             self.test_iterator.update()
             preds = self.model(ims)
             loss = self.loss_fn(preds, targs)

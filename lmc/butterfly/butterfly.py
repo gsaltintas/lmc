@@ -104,7 +104,7 @@ def get_batch_noise(
         inputs, targets = batch
 
         # Move inputs and targets to the device of the model
-        inputs, targets = inputs.to(model.device), targets.to(model.device)
+        inputs, targets = inputs.to(model.device), targets.to(model.device).flatten()
 
         # Perform a forward pass
         outputs = model(inputs)

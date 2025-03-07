@@ -665,6 +665,49 @@ def setup_vision_loader(
     return loader
 
 
+def setup_vision_loader_ffcv(
+    data_conf: DataConfig, train: bool, evaluate: bool, loader_seed: int = None
+) -> DataLoader:
+    from ffcv.loader import Loader, OrderOption
+    from ffcv.transforms import ToTensor, ToDevice, ToTorchImage, Cutout, NormalizeImage, RandomTranslate, RandomHorizontalFlip
+    from ffcv.fields.decoders import IntDecoder, RandomResizedCropRGBImageDecoder
+    dataset_conf = data_conf.dataset_info
+    w = dataset_conf.resolution
+    mean, std = dataset_conf.mean, dataset_conf.std
+
+    #TODO rotations and gaussian blur don't work with ffcv
+    augmentations = [RandomResizedCropRGBImageDecoder((w, w), scale=(1, 1), ratio=(1, 1))]
+    if not evaluate:
+        if data_conf.hflip:
+            augmentations.append(RandomHorizontalFlip())
+        # if rot := data_conf.random_rotation:
+        #     augmentations.append(transforms.RandomRotation(rot))
+        if data_conf.random_translate:
+            t = int(data_conf.random_translate / w)
+            augmentations.append(RandomTranslate(padding=t, fill=mean))
+        # if data_conf.gaussian_blur:
+        #     augmentations.append(transforms.GaussianBlur(kernel_size=3))
+        if data_conf.cutout:
+            augmentations.append(Cutout(crop_size=data_conf.cutout, fill=mean))
+
+    # Data decoding and augmentation
+    image_pipeline = augmentations + [NormalizeImage(mean, std, np.dtype('float32')), ToTensor(), ToTorchImage(), ToDevice(get_device())]
+    label_pipeline = [IntDecoder(), ToTensor(), ToDevice(get_device())]
+
+    # Pipeline for each data field
+    pipelines = {
+        'image': image_pipeline,
+        'label': label_pipeline
+    }
+    split = "train" if train else "test"
+    batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size
+    shuffle = OrderOption.RANDOM if train and not evaluate else OrderOption.SEQUENTIAL
+
+    loader = Loader(data_conf.path / f"{split}.beton", batch_size=batch_size, num_workers=data_conf.num_workers,
+                    order=shuffle, pipelines=pipelines, seed=loader_seed, drop_last=False)
+    return loader
+
+
 def setup_loader(
     data_conf: DataConfig,
     train: bool,
@@ -676,6 +719,8 @@ def setup_loader(
         return setup_nlp_loader(
             data_conf, train, evaluate, tokenizer=tokenizer, loader_seed=loader_seed
         )
+    if data_conf.use_ffcv:
+        return setup_vision_loader_ffcv(data_conf, train, evaluate, loader_seed=loader_seed)
     return setup_vision_loader(data_conf, train, evaluate, loader_seed=loader_seed)
 
 
