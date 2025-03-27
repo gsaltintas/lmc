@@ -13,7 +13,12 @@ from transformers import AutoTokenizer
 
 from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Trainer
-from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
+from lmc.utils.metrics import (
+    MathMetricsEvaluator,
+    Metrics,
+    compute_metrics,
+    mixup_topk_accuracy,
+)
 from lmc.utils.step import Step
 
 logger = logging.getLogger("setup")
@@ -159,9 +164,8 @@ class TrainingElement(ABC):
         self.optimal_acc: float = -1
         self.setup_iterators()
         # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
-        self.init_model_vector = (
-            nn.utils.parameters_to_vector(self.model.parameters()).detach().cpu()
-        )
+        params = [p.detach().cpu().contiguous() for p in self.model.parameters()]
+        self.init_model_vector = nn.utils.parameters_to_vector(params)
 
     def setup_iterators(self):
         if self.config.logger.use_tqdm:
@@ -279,14 +283,15 @@ class TrainingElement(ABC):
             lr = self.scheduler.get_last_lr()[-1]
         log_dct[f"lr/model{self.element_ind}"] = lr
 
-        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            self.opt.zero_grad()
+        # if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
+        #     self.opt.zero_grad()
         return log_dct
 
 
 class VisionTrainingElement(TrainingElement):
     def step(self, batch):
         log_dct = super().step(batch)
+        self.opt.zero_grad()
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
@@ -308,7 +313,113 @@ class VisionTrainingElement(TrainingElement):
         return log_dct
 
 
+class SegmentationTrainingElement(VisionTrainingElement):
+    def __init__(self, *args, ignore_index=255, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ignore_index = ignore_index
+
+    def step(self, batch):
+        log_dct = super(VisionTrainingElement, self).step(
+            batch
+        )  # Skip VisionTrainingElement's step
+        self.opt.zero_grad()
+
+        # Handle batch data for segmentation
+        x, y = batch
+        x = x.to(self.device)
+        y = y.to(self.device)
+
+        # Forward pass
+        outputs = self.model(x)
+
+        # Handle different output formats (some models return dict, others return logits directly)
+        if hasattr(outputs, "logits"):
+            logits = outputs.logits
+        else:
+            logits = outputs
+        import code
+
+        code.interact(local=locals() | globals())
+
+        # Resize logits to match mask size if needed
+        if logits.shape[-2:] != y.shape[-2:]:
+            logits = torch.nn.functional.interpolate(
+                logits, size=y.shape[-2:], mode="bilinear", align_corners=False
+            )
+
+        # Calculate loss
+        loss = self.loss_fn(logits, y)
+
+        # Backward and optimize
+        loss.backward()
+        # TODO: grad clipping
+
+        self.opt.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
+
+        # Calculate segmentation metrics (instead of classification metrics)
+        with torch.no_grad():
+            # Get predictions
+            preds = torch.argmax(logits, dim=1)
+
+            # Calculate IoU
+            intersection, union = self._calculate_iou(preds, y)
+            miou = intersection.sum() / (union.sum() + 1e-10)
+
+            # Calculate pixel accuracy
+            mask = y != self.ignore_index
+            correct = ((preds == y) & mask).sum()
+            total = mask.sum()
+            pixel_acc = correct / (total + 1e-10)
+
+        # Update metrics with segmentation-specific values
+        self.metrics.update(
+            pixel_acc.item(), miou.item(), None, loss.item(), n=x.shape[0]
+        )
+
+        return log_dct
+
+    def _calculate_iou(self, preds, targets):
+        """Calculate intersection and union for IoU metric"""
+        # Create mask to ignore certain pixels (typically 255)
+        mask = targets != self.ignore_index
+
+        # Get valid predictions and targets
+        preds = preds[mask]
+        targets = targets[mask]
+
+        # Count unique classes in this batch
+        num_classes = max(
+            self.model.num_classes if hasattr(self.model, "num_classes") else 150,
+            preds.max().item() + 1,
+            targets.max().item() + 1,
+        )
+
+        # Calculate IoU for each class
+        intersection = torch.zeros(1, device=preds.device)
+        union = torch.zeros(1, device=preds.device)
+
+        for cls in range(num_classes):
+            pred_inds = preds == cls
+            target_inds = targets == cls
+
+            intersection += (pred_inds & target_inds).sum()
+            union += (pred_inds | target_inds).sum()
+
+        return intersection, union
+
+
 class NLPTrainingElement(TrainingElement):
+    def __post_init__(self):
+        super().__post_init__()
+
+        if (
+            self.config.data.task_type == TaskType.GENERATION
+            and self.config.data.dataset in ["gsm8k", "math", "mathqa", "asdiv"]
+        ):
+            self.math_evaluator = MathMetricsEvaluator()
+
     def step(self, batch):
         log_dct = super().step(batch)
         # Pre-fetch next batch while computing current one
@@ -324,7 +435,6 @@ class NLPTrainingElement(TrainingElement):
             # Language modeling
             outputs = self.model(**batch)
             loss = outputs.loss
-
         elif self.config.data.task_type in [
             TaskType.CLASSIFICATION,
             TaskType.NATURAL_LANGUAGE_INFERENCE,
@@ -349,20 +459,38 @@ class NLPTrainingElement(TrainingElement):
             )  # Remove last dimension since it's regression
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
-
+        loss = loss / self.config.trainer.gradient_accumulation_steps
         loss.backward()
-        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
+
+        if (self.curr_step + 1) % self.config.trainer.gradient_accumulation_steps == 0:
+            # After accumulating gradients for config.trainer.gradient_accumulation_steps steps:
             if clip_val := self.config.trainer.opt.gradient_clip_val:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_val)
             self.opt.step()
+
             if self.scheduler is not None:
                 self.scheduler.step()
+            self.opt.zero_grad()  # Important: Clear gradients after optimizer step
 
         # Update metrics based on task
         with torch.no_grad():
-            metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
+            metrics_kwargs = {
+                "cross_entropy": loss.item(),
+                "n": len(batch),
+                "perplexity": torch.exp(loss).item(),
+            }
             dataset = self.config.data.dataset_info
-            if dataset.metrics:
+            if self.config.data.task_type == TaskType.GENERATION:
+                perplexity = torch.exp(loss)
+                metrics_kwargs["perplexity"] = perplexity.item()
+                #  Optionally track token-level accuracy if needed
+                shift_logits = outputs.logits[..., :-1, :].contiguous()
+                shift_labels = batch["labels"][..., 1:].contiguous()
+                token_acc = (shift_logits.argmax(-1) == shift_labels).float().mean()
+                metrics_kwargs["accuracy"] = token_acc.item()
+                # metrics_kwargs["token_accuracy"] = token_acc.item()
+
+            elif dataset.metrics:
                 if self.config.data.task_type == TaskType.REGRESSION:
                     predictions = outputs.logits
                 else:
@@ -372,11 +500,7 @@ class NLPTrainingElement(TrainingElement):
                 )
                 metrics_kwargs.update(d)
             else:
-                if self.config.data.task_type == TaskType.GENERATION:
-                    perplexity = torch.exp(loss)
-                    metrics_kwargs["perplexity"] = perplexity.item()
-
-                elif self.config.data.task_type in [
+                if self.config.data.task_type in [
                     TaskType.CLASSIFICATION,
                     TaskType.NATURAL_LANGUAGE_INFERENCE,
                 ]:
@@ -528,6 +652,12 @@ class TrainingElements(object):
 
     def __len__(self):
         return len(self._elements)
+
+    def is_same_model(self):
+        for element in self[1:]:
+            if not self[0].params_equal(element):
+                return False
+        return True
 
     def is_same_model(self):
         for element in self[1:]:

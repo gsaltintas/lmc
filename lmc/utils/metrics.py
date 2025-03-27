@@ -90,6 +90,28 @@ class AverageMeter(object):
         return self.sum / cnt if not percentage else self.sum * 100 / cnt
 
 
+def compute_exact_match(predictions, references):
+    metric = evaluate.load("exact_match")
+    results = metric.compute(
+        predictions=predictions,
+        references=references,
+        ignore_case=True,
+        ignore_punctuation=True,
+    )
+    return results["exact_match"]
+
+
+def compute_exact_match_gsm8k(predictions, references):
+    metric = evaluate.load("exact_match")
+    results = metric.compute(
+        predictions=predictions,
+        references=references,
+        ignore_case=True,
+        ignore_punctuation=True,
+    )
+    return results["exact_match"]
+
+
 ### Language metrics
 def compute_qa_metrics(predictions, references, tokenizer):
     """Compute QA metrics (Exact Match and F1)"""
@@ -159,6 +181,110 @@ def compute_pearson_spearman_corr_hf(predictions, references):
     }
 
 
+def evaluate_math_qa(predictions, targets):
+    """
+    Evaluates math QA predictions against targets.
+
+    Args:
+        predictions: Model output answers (normalized)
+        targets: Ground truth answers (normalized)
+
+    Returns:
+        Dict containing accuracy metrics
+    """
+
+    def normalize_answer(answer):
+        # Convert to string and strip whitespace
+        answer = str(answer).strip()
+        # Remove commas and whitespace
+        answer = "".join(answer.split()).replace(",", "")
+        # Convert fractions to decimals if possible
+        if "/" in answer:
+            try:
+                num, denom = map(float, answer.split("/"))
+                answer = str(num / denom)
+            except:
+                pass
+        # Handle percentage conversion
+        if "%" in answer:
+            answer = answer.replace("%", "")
+            try:
+                answer = str(float(answer) / 100)
+            except:
+                pass
+        try:
+            # Normalize to float with fixed precision
+            return "{:.6f}".format(float(answer))
+        except:
+            return answer
+
+    correct = 0
+    total = len(predictions)
+
+    for pred, target in zip(predictions, targets):
+        pred_norm = normalize_answer(pred)
+        target_norm = normalize_answer(target)
+
+        if pred_norm == target_norm:
+            correct += 1
+
+    metrics = {
+        "exact_match": correct / total,
+        "normalized_accuracy": correct / total,
+        "total_evaluated": total,
+    }
+
+    return metrics
+
+
+def compute_math_metrics(model_output, batch):
+    predictions = model_output.logits.argmax(dim=-1)
+
+    # Convert token IDs back to text if needed
+    predicted_answers = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+    true_answers = batch["answers"]
+
+    metrics = evaluate_math_qa(predicted_answers, true_answers)
+    return metrics
+
+
+import re
+from typing import Dict, List
+
+import evaluate
+
+
+class MathMetricsEvaluator:
+    def __init__(self):
+        self.exact_match = evaluate.load("exact_match")
+
+    def extract_answer(self, text: str) -> str:
+        """Extract numerical answer from model output."""
+        # Clean number format (remove commas in numbers)
+        text = re.sub(r"(\d),(\d)", r"\1\2", text)
+        # Find all numbers in the text
+        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
+        return numbers[-1] if numbers else ""
+
+    def compute_metrics(
+        self, predictions: List[str], references: List[str]
+    ) -> Dict[str, float]:
+        # Clean and extract answers from predictions
+        cleaned_preds = [self.extract_answer(pred) for pred in predictions]
+        # Clean reference answers
+        cleaned_refs = [re.sub(r"(\d),(\d)", r"\1\2", ref) for ref in references]
+
+        # Compute exact match score
+        metrics = self.exact_match.compute(
+            predictions=cleaned_preds,
+            references=cleaned_refs,
+            ignore_case=True,
+            ignore_punctuation=True,
+        )
+
+        return {"exact_match": metrics["exact_match"]}
+
+
 METRIC_TO_FUNCTION = {
     "matthews_correlation": compute_matthews_correlation,
     "pearson_correlation": compute_pearson_spearman_corr,
@@ -168,7 +294,11 @@ METRIC_TO_FUNCTION = {
     "qa": compute_qa_metrics,
     "accuracy": compute_classification_metrics,
     "acc": compute_classification_metrics,
+    "exact_match": compute_exact_match,
+    "exact_match_gsm8k": compute_exact_match_gsm8k,
 }
+
+METRIC_RENAMES = {"exact_match_gsm8k": "exact_match"}
 
 
 def compute_metrics(metrics: List[str], predictions, references):
@@ -181,6 +311,8 @@ def compute_metrics(metrics: List[str], predictions, references):
         if isinstance(res, dict):
             d.update(res)
         else:
+            if metric_name in METRIC_RENAMES:
+                metric_name = METRIC_RENAMES[metric_name]
             d[metric_name] = res
     return d
 
@@ -439,6 +571,8 @@ def print_to_rich(
         table.add_row(*row_content)
 
     console.print(table)
+    console.print("\n" * 2)
+    console.print("\n" * 2)
     console.print("\n" * 2)
     console.print("\n" * 2)
     console.print("\n" * 2)

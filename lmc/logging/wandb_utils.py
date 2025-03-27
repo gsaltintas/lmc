@@ -32,7 +32,7 @@ import pandas as pd
 import wandb
 from lmc.logging.wandb_registry import MetricCategory, Split, WandbMetricsRegistry
 from lmc.utils.step import Step
-from lmc.utils.utils import unflatten_dict
+from lmc.utils.utils import flatten_dict, unflatten_dict
 
 logger = logging.getLogger(__file__)
 
@@ -218,7 +218,7 @@ def get_timeseries_metrics_from_wandb(
     metrics: Collection[str],
     config_vars: Collection[str],
     max_steps: int = 1e6,
-    train_acc_threshold: float = 0,
+    train_acc_threshold: float = 1,
     report_epochs: bool = True,
 ) -> pd.DataFrame:
     """
@@ -239,21 +239,28 @@ def get_timeseries_metrics_from_wandb(
     api = wandb.Api()
 
     # Fetch the run by its ID
+    run: wandb.Run
     run = api.run(run_id)
 
     # Retrieve configuration variables
-    config_data = {var: run.config.get(var, None) for var in config_vars}
+    config_data = {
+        var: flatten_dict(run.config, preserve_prefix=True).get(var, None)
+        for var in config_vars
+    }
 
     # Initialize a dictionary to store metrics data
     data = {"step": []}
     for metric in metrics:
         data[metric] = []
 
+    metrics_ = set(metrics).union({"_step"})
     # Retrieve history (metrics) from the run
-    history = run.history(keys=list(metrics), pandas=False, max_step=max_steps)
+    # history = run.history(keys=list(metrics), pandas=False)  # , max_step=max_steps)
+    history = run.scan_history(keys=list(metrics_), max_step=max_steps)
 
     # Filter and process the history
     for record in history:
+        # print(record)
         step = record["_step"]
         if (
             "train/accuracy" in record
@@ -277,4 +284,38 @@ def get_timeseries_metrics_from_wandb(
         df["epoch"] = epochs
         df.drop(columns="step", inplace=True)
 
+    df["run.id"] = run_id
     return df
+
+
+COMMAND_REPLACE_DCT = {'"': '\\"', "[": "'[", "]": "]'", "{": "'{", "}": "}'"}
+
+
+def get_json_command_format(s: str):
+    for old, new in COMMAND_REPLACE_DCT.items():
+        s = s.replace(old, new)
+    return s
+
+
+def get_command_from_wandb(run=None, run_path: str = None, return_str: bool = True):
+    if run is None and run_path is None:
+        raise ValueError(f"Must provide either the run object or the run path.")
+    elif run is None:
+        api = wandb.Api()
+        run = api.run(run_path)
+    elif run_path is not None:
+        assert "/".join(run.path) == run_path, (
+            f"Run paths don't match: {'/'.join(run.path)} - {run_path}. "
+        )
+    meta = json.load(
+        run.file("wandb-metadata.json").download(exist_ok=True, replace=True)
+    )
+
+    args = meta["args"]
+    program = ["python"] + [meta["program"]] + args
+    if return_str:
+        # args = " ".join([json.dumps(arg) for arg in meta["args"]])
+        args = get_json_command_format(" ".join(args))
+        program = ["python"] + [meta["program"]] + [args]
+        return " ".join(program)
+    return program

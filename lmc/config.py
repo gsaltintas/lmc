@@ -395,9 +395,9 @@ class Optimizer(Config):
     warmup_ratio: float = 0.0
     gradient_clip_val: float = 0.0
     gradient_clip_algorithm: Literal["norm", "value", ""] = None
-    lr_scheduler: Literal["linear", "exponential", "onecycle", "cosine", "triangle", "constant"] = (
-        None
-    )
+    lr_scheduler: Literal[
+        "linear", "exponential", "onecycle", "cosine", "triangle", "constant"
+    ] = None
 
     _lr = "Learning rate"
     _warmup_ratio = r"\rho * training_steps will be used for learning rate warmup"
@@ -468,6 +468,8 @@ class DataConfig(Config):
         "cinic10",
         "cinic10_wo_cifar10",
         "imagenet1k",
+        "eurosat",
+        "ade20k",
         # Language datasets - Text Classification/Regression (CR)
         "snli",
         "scitail",
@@ -504,6 +506,10 @@ class DataConfig(Config):
         "c4",
         "pile",
         "bookcorpus",
+        "gsm8k",
+        "math",
+        "mathqa",
+        "asdiv",
     ]
 
     # General configurations
@@ -512,6 +518,7 @@ class DataConfig(Config):
     path: Path = Path("./data")
     download: bool = False
     num_workers: int = 4
+    chat_template: Optional[str] = None
 
     # Vision-specific augmentations
     hflip: bool = True
@@ -522,6 +529,8 @@ class DataConfig(Config):
     random_crop: bool = False  # TODO this does nothing, only kept here to preserve backwards compatibility
     random_translate: float = 0.0
     cutout: int = 0
+    resize: int = None
+    pin_memory: bool = True
 
     # Language-specific configurations
     tokenizer_name: Optional[str] = None
@@ -550,7 +559,8 @@ class DataConfig(Config):
     validation_split: float = 0.1
     test_split: float = 0.1
     shuffle_dataset: bool = True
-
+    random_labels: Optional[bool] = False
+    _random_labels: str = "If True, labels will be shuffled"
     # Documentation fields
     _hflip: str = "Pass true to perform random horizontal flip with probability 0.5."
     _name = "data"
@@ -585,6 +595,10 @@ class DataConfig(Config):
     def task_type(self) -> TaskType:
         """Get the task type for the dataset"""
         return DatasetRegistry.get_dataset_info(self.dataset).task_type
+
+    @property
+    def max_gen_seq_length(self) -> int:
+        return DatasetRegistry.get_dataset_info(self.dataset).max_gen_seq_length
 
     def is_sequence_labeling(self) -> bool:
         """Check if the current dataset is a sequence labeling task"""
@@ -659,6 +673,7 @@ class LoggerConfig(Config):
     use_tqdm: bool = True
     print_summary: bool = True
     print_optimizers: bool = True
+    push_to_hub: bool = False
 
     project: str = None
     entity: str = None
@@ -714,6 +729,7 @@ class ModelConfig_(Config):
     ckpt_path: Optional[Path] = None
     gradient_checkpointing: bool = True
     revision: Optional[str] = None
+    use_bfloat16: bool = False
 
     _model_name: str = "Name of the model e.g. mlp, resnet. Could also be model code resnet20-64, etc. Pass model name to see aditional arguments related to models"
     _initialization_strategy: str = "Initialization strategy for the model's layers"
@@ -721,6 +737,7 @@ class ModelConfig_(Config):
         "Only implemented for HuggingFace models, disable by passing false"
     )
     _revision: str = "Pass revision for using earlier checkpoints from huggingface, e.g. '--model_name=allenai/OLMo-2-1124-7B --revision=step1000-tokens5B'"
+    _use_bfloat_16: str = "If true, loads and trains the model with bfloat16 precision, only implemented for OLMo family"
 
     _name: str = "model"
     _description: str = ""

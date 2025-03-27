@@ -15,6 +15,7 @@ from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
+    MathMetricsEvaluator,
     Metrics,
     compute_metrics,
     mixup_topk_accuracy,
@@ -66,6 +67,11 @@ class TrainingRunner(ExperimentManager):
         )
         self.lmc_steps = self.get_steps(lmc_freq, self.config.lmc.lmc_specific_steps)
         self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
+        if (
+            self.config.data.task_type == TaskType.GENERATION
+            and self.config.data.dataset in ["gsm8k", "math", "mathqa", "asdiv"]
+        ):
+            self.math_evaluator = MathMetricsEvaluator()
 
     def get_steps(self, freq, step_list):
         steps = set()
@@ -251,6 +257,7 @@ class TrainingRunner(ExperimentManager):
         """Language-specific evaluation logging"""
         # Base metrics all tasks have
         # Run test evaluation
+        ##TODO:  math
         with torch.no_grad():
             test_res = self._test_language(
                 element.model, element.test_loader, element.test_iterator
@@ -275,6 +282,101 @@ class TrainingRunner(ExperimentManager):
                 element.save(self.steps_per_epoch, save_name="best.ckpt")
 
     @torch.no_grad()
+    def _test_segmentation(self, model, loader, iterator: tqdm):
+        """Segmentation-specific testing"""
+        # Metrics for segmentation: pixel accuracy, mean IoU, and cross-entropy loss
+        pixel_acc, mean_iou, cross_entropy = (
+            AverageMeter(),
+            AverageMeter(),
+            AverageMeter(),
+        )
+
+        # For per-class IoU calculation
+        num_classes = getattr(model, "num_classes", 150)
+        intersection_sum = torch.zeros(num_classes, device=self.device)
+        union_sum = torch.zeros(num_classes, device=self.device)
+        target_sum = torch.zeros(num_classes, device=self.device)
+
+        iterator.reset()
+        for images, masks in loader:
+            images = images.to(self.device)
+            masks = masks.to(self.device)
+            iterator.update()
+
+            # Forward pass
+            outputs = model(pixel_values=images)
+
+            # Handle different output formats
+            if hasattr(outputs, "logits"):
+                logits = outputs.logits
+            else:
+                logits = outputs
+            import code
+
+            code.interact(local=locals() | globals())
+            # Resize logits to match mask size if needed
+            if logits.shape[2:] != masks.shape[1:]:
+                logits = torch.nn.functional.interpolate(
+                    logits, size=masks.shape[1:], mode="bilinear", align_corners=False
+                )
+
+            # Compute loss
+            loss = self.test_loss_fn(logits, masks)
+            cross_entropy.update(loss.item(), images.shape[0])
+
+            # Get predictions
+            preds = torch.argmax(logits, dim=1)
+
+            # Calculate pixel accuracy
+            valid_mask = masks != 255  # Ignore index for unlabeled pixels
+            correct = ((preds == masks) & valid_mask).sum().item()
+            total = valid_mask.sum().item()
+            pixel_acc.update(correct / max(total, 1), images.shape[0])
+
+            # Calculate IoU metrics
+            for cls in range(num_classes):
+                pred_inds = preds == cls
+                target_inds = masks == cls
+
+                intersection = (pred_inds & target_inds).sum()
+                union = (pred_inds | target_inds).sum()
+                target_area = target_inds.sum()
+
+                intersection_sum[cls] += intersection
+                union_sum[cls] += union
+                target_sum[cls] += target_area
+
+        # Calculate mean IoU from accumulated values
+        valid_classes = target_sum > 0
+        if valid_classes.sum() > 0:
+            class_iou = intersection_sum[valid_classes] / (
+                union_sum[valid_classes] + 1e-10
+            )
+            mean_iou_value = class_iou.mean().item()
+        else:
+            mean_iou_value = 0.0
+
+        mean_iou.update(mean_iou_value, 1)
+
+        # Build results dictionary
+        res = {
+            "cross_entropy": cross_entropy.get_avg(percentage=False),
+            "pixel_accuracy": pixel_acc.get_avg(percentage=False),
+            "mean_iou": mean_iou.get_avg(percentage=False),
+        }
+
+        # Add per-class IoU if needed
+        if hasattr(self, "log_per_class_iou") and self.log_per_class_iou:
+            for cls in range(num_classes):
+                if target_sum[cls] > 0:
+                    iou = (intersection_sum[cls] / (union_sum[cls] + 1e-10)).item()
+                    res[f"iou_class_{cls}"] = iou
+
+        iterator.set_postfix(res)
+        iterator.refresh()
+        return res
+
+    @torch.no_grad()
     def _test_vision(self, model, loader, iterator: tqdm):
         """Vision-specific testing"""
         total_acc, total_topk, cross_entropy = (
@@ -282,7 +384,8 @@ class TrainingRunner(ExperimentManager):
             AverageMeter(),
             AverageMeter(),
         )
-
+        if self.config.data.task_type == TaskType.SEGMENTATION:
+            return self._test_segmentation(model, loader, iterator)
         iterator.reset()
         for ims, targs in loader:
             ims = ims.to(self.device)
@@ -314,7 +417,7 @@ class TrainingRunner(ExperimentManager):
         metrics = Metrics()
 
         iterator.reset()
-        for batch in loader:
+        for batch_idx, batch in enumerate(loader):
             batch = {
                 k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                 for k, v in batch.items()
@@ -326,9 +429,76 @@ class TrainingRunner(ExperimentManager):
             metrics_kwargs = {"n": n}
             # Always track loss
             metrics_kwargs["cross_entropy"] = outputs.loss.item()
+            metrics_kwargs["perplexity"] = torch.exp(outputs.loss).item()
+
+            if self.config.data.task_type == TaskType.GENERATION:
+                # Generate text for math reasoning tasks
+                generated_outputs = model.generate(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    # max_new_tokens=256,
+                    # max_new_tokens=512,
+                    # num_beams=5,  # Add beam search
+                    temperature=0.7,  # Add some temperature
+                    no_repeat_ngram_size=3,  # Prevent repetition
+                    max_new_tokens=self.config.data.max_gen_seq_length,
+                    pad_token_id=model.tokenizer.pad_token_id,
+                    # eos_token_id=model.tokenizer.eos_token_id,
+                    # do_sample=False,
+                    do_sample=True,
+                )
+
+                # # Decode generations
+                # predictions = model.generation_tokenizer.batch_decode(
+                #     generated_outputs, skip_special_tokens=True
+                # )
+                # references = model.generation_tokenizer.batch_decode(
+                #     batch["reference_ids"],
+                #     # batch["labels"],
+                #     skip_special_tokens=True,
+                # )
+
+                # Clean the outputs during decoding
+                predictions = [
+                    pred.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
+                    for pred in model.generation_tokenizer.batch_decode(
+                        generated_outputs,
+                        skip_special_tokens=False,  # We'll clean manually
+                    )
+                ]
+
+                # Clean the references
+                references = [
+                    ref.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
+                    for ref in model.generation_tokenizer.batch_decode(
+                        batch["reference_ids"],
+                        skip_special_tokens=True,
+                        # batch["labels"], skip_special_tokens=False
+                    )
+                ]
+                math_metrics = self.math_evaluator.compute_metrics(
+                    predictions, references
+                )
+
+                if batch_idx == 0:  # First batch
+                    print("\nSample Generation:")
+                    for i in range(min(2, len(predictions))):
+                        print(f"\nInput {i}:")
+                        print(model.generation_tokenizer.decode(batch["input_ids"][i]))
+                        print("===" * 50)
+                        print(f"\nGenerated {i}:")
+                        print(predictions[i])
+                        print("===" * 50)
+                        print(f"\nReference {i}:")
+                        print(references[i])
+                        print("===" * 100)
+                        print("===" * 100)
+                predictions = outputs.logits
+
+                metrics_kwargs.update(math_metrics)
 
             # Update dataset-specific metrics
-            if dataset.metrics:
+            elif dataset.metrics:
                 if self.config.data.task_type == TaskType.REGRESSION:
                     predictions = outputs.logits
                 else:
@@ -337,7 +507,7 @@ class TrainingRunner(ExperimentManager):
                 metric_results = compute_metrics(
                     dataset.metrics,
                     predictions.detach(),
-                    batch["labels"].detach(),
+                    batch.get("labels").detach(),
                 )
                 metrics_kwargs.update(metric_results)
             metrics.update(**metrics_kwargs)

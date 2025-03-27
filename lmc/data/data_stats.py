@@ -19,6 +19,7 @@ class TaskType(Enum):
     NATURAL_LANGUAGE_INFERENCE = "natural_language_inference"
     SEQUENCE_LABELING = "sequence_labeling"
     REGRESSION = "regression"
+    SEGMENTATION = "segmentation"
 
 
 # Vision Registry
@@ -45,13 +46,19 @@ class LanguageConfig:
     task_type: TaskType
     max_seq_length: int
     hf_path: str
+    max_gen_seq_length: int = None
     hf_config: Optional[str] = None
     splits: Dict[str, str] = None
     vocab_size: Optional[int] = None
     metrics: List[str] = field(default_factory=list)  # Add this field
+    trust_remote_code: bool = False
 
     def is_generation(self):
         return self.task_type == TaskType.GENERATION
+
+    def __post_init__(self):
+        if self.max_gen_seq_length is None:
+            self.max_gen_seq_length = self.max_seq_length
 
 
 @dataclass
@@ -171,6 +178,17 @@ class VisionRegistry(BaseRegistry):
             torch_dataset=D.CIFAR10,
             task_type=TaskType.CLASSIFICATION,
         ),
+        "cifar10_random_labels": VisionConfig(
+            samples=50000,
+            classes=10,
+            channels=3,
+            resolution=32,
+            mean=np.array([0.49139968, 0.48215827, 0.44653124]),
+            std=np.array([0.24703233, 0.24348505, 0.26158768]),
+            can_cache=True,
+            torch_dataset=D.CIFAR10,
+            task_type=TaskType.CLASSIFICATION,
+        ),
         "cifar100": VisionConfig(
             samples=50000,
             classes=100,
@@ -180,6 +198,17 @@ class VisionRegistry(BaseRegistry):
             std=np.array([0.24703233, 0.24348505, 0.26158768]),
             can_cache=False,
             torch_dataset=D.CIFAR100,
+            task_type=TaskType.CLASSIFICATION,
+        ),
+        "eurosat": VisionConfig(
+            samples=27000,  # EuroSAT has ~27k images
+            classes=10,  # 10 land use classes
+            channels=3,  # RGB images
+            resolution=64,  # Original is 64x64
+            mean=np.array([0.34677, 0.35926, 0.36816]),  # EuroSAT RGB means
+            std=np.array([0.13331, 0.12630, 0.13832]),  # EuroSAT RGB stds
+            can_cache=True,
+            torch_dataset=D.EuroSAT,  # Will define a custom dataset class
             task_type=TaskType.CLASSIFICATION,
         ),
         "mnist": VisionConfig(
@@ -227,6 +256,17 @@ class VisionRegistry(BaseRegistry):
             torch_dataset="lmc.data.cinic10.CINIC10_WO_CIFAR10",
             task_type=TaskType.CLASSIFICATION,
         ),
+        "ade20k": VisionConfig(
+            samples=20210,  # ADE20K has ~20k training images
+            classes=150,  # 150 semantic categories
+            channels=3,  # RGB images
+            resolution=384,  # Common input resolution for ADE20K
+            mean=np.array([0.485, 0.456, 0.406]),  # ImageNet mean as default
+            std=np.array([0.229, 0.224, 0.225]),  # ImageNet std as default
+            can_cache=False,
+            torch_dataset="lmc.data.ade20k.ADE20KDataset",  # Will define a custom dataset class
+            task_type=TaskType.SEGMENTATION,
+        ),
     }
 
     imagenet21: ClassVar[VisionConfig] = _registry["imagenet21"]
@@ -235,10 +275,73 @@ class VisionRegistry(BaseRegistry):
     tinyimagenet: ClassVar[VisionConfig] = _registry["tinyimagenet"]
     cifar10: ClassVar[VisionConfig] = _registry["cifar10"]
     cifar100: ClassVar[VisionConfig] = _registry["cifar100"]
+    cifar10_random_labels: ClassVar[VisionConfig] = _registry["cifar10_random_labels"]
     mnist: ClassVar[VisionConfig] = _registry["mnist"]
     stl10: ClassVar[VisionConfig] = _registry["stl10"]
     cinic10: ClassVar[VisionConfig] = _registry["cinic10"]
+    eurosat: ClassVar[VisionConfig] = _registry["eurosat"]
+    ade20k: ClassVar[VisionConfig] = _registry["ade20k"]
     cinic10_wo_cifar10: ClassVar[VisionConfig] = _registry["cinic10_wo_cifar10"]
+
+
+@dataclass
+class MathDatasetRegistry(BaseRegistry):
+    """Registry for mathematical reasoning datasets."""
+
+    _registry: ClassVar[Dict[str, LanguageConfig]] = {
+        "gsm8k": LanguageConfig(
+            samples=7473,  # Exact train count
+            classes=None,  # Generation task
+            task_type=TaskType.GENERATION,
+            max_seq_length=512,
+            hf_path="openai/gsm8k",
+            hf_config="main",
+            splits={"train": "train", "validation": "test"},
+            metrics=["exact_match"],
+            max_gen_seq_length=128,
+        ),
+        "math": LanguageConfig(
+            samples=1744,  # {"train": 7500, "test": 5000},
+            classes=None,
+            task_type=TaskType.GENERATION,
+            max_seq_length=2048,  # Longer sequences for theorem proofs
+            hf_path="EleutherAI/hendrycks_math",
+            hf_config="algebra",
+            splits={"train": "train", "validation": "test"},
+            metrics=["exact_match"],
+        ),
+        "mathqa": LanguageConfig(
+            samples=29838,  # 37200,  # Total dataset size
+            classes=5,  # Multiple choice answers
+            task_type=TaskType.GENERATION,
+            # task_type=TaskType.QUESTION_ANSWERING,
+            max_seq_length=512,
+            hf_path="allenai/math_qa",
+            splits={"train": "train", "validation": "validation", "test": "test"},
+            metrics=["accuracy", "f1"],
+            trust_remote_code=True,
+        ),
+        "asdiv": LanguageConfig(
+            samples=1839,  # {
+            #     "train": 1839,
+            #     "validation": 230,
+            #     "test": 230,
+            # },  # Total ~2.3K samples
+            classes=None,  # Generation task
+            task_type=TaskType.GENERATION,
+            max_seq_length=256,  # Problems are relatively short
+            hf_path="EleutherAI/asdiv",
+            splits={
+                "validation": "validation",
+            },
+            metrics=["exact_match"],  # Using exact match for evaluation
+            trust_remote_code=True,
+        ),
+    }
+    gsm8k: ClassVar[LanguageConfig] = _registry["gsm8k"]
+    math: ClassVar[LanguageConfig] = _registry["math"]
+    mathqa: ClassVar[LanguageConfig] = _registry["mathqa"]
+    asdiv: ClassVar[LanguageConfig] = _registry["asdiv"]
 
 
 class QARegistry(BaseRegistry):
@@ -349,6 +452,20 @@ class QARegistry(BaseRegistry):
             hf_path="allenai/quartz",
             splits={"train": "train", "validation": "validation", "test": "test"},
         ),
+        # todo
+        "mmlu": LanguageConfig(
+            samples=15908,  # {"dev": 15908, "test": 14042},
+            classes=4,  # Multiple choice (A, B, C, D)
+            task_type=TaskType.GENERATION,
+            max_seq_length=512,
+            hf_path="cais/mmlu",
+            splits={
+                "train": "auxiliary_train",  # Note: MMLU uses few-shot evaluation
+                "validation": "dev",
+                "test": "test",
+            },
+            metrics=["accuracy"],
+        ),
     }
 
     squad: ClassVar[LanguageConfig] = _registry["squad"]
@@ -364,6 +481,7 @@ class QARegistry(BaseRegistry):
     qasc: ClassVar[LanguageConfig] = _registry["qasc"]
     wikiqa: ClassVar[LanguageConfig] = _registry["wikiqa"]
     quartz: ClassVar[LanguageConfig] = _registry["quartz"]
+    mmlu: ClassVar[LanguageConfig] = _registry["mmlu"]
 
 
 class NLIRegistry(BaseRegistry):
@@ -590,6 +708,7 @@ class DatasetRegistry:
     qa: ClassVar[QARegistry] = QARegistry()
     nli: ClassVar[NLIRegistry] = NLIRegistry()
     glue: ClassVar[GLUERegistry] = GLUERegistry()
+    math: ClassVar[MathDatasetRegistry] = MathDatasetRegistry()
     generation: ClassVar[GenerationRegistry] = GenerationRegistry()
 
     @classmethod
@@ -598,7 +717,14 @@ class DatasetRegistry:
     ) -> Dict[str, Union[VisionConfig, LanguageConfig]]:
         """Get all datasets of a specific task type across all registries."""
         result = {}
-        for registry in [cls.vision, cls.qa, cls.nli, cls.generation, cls.glue]:
+        for registry in [
+            cls.vision,
+            cls.qa,
+            cls.nli,
+            cls.generation,
+            cls.glue,
+            cls.math,
+        ]:
             result.update(registry.get_datasets_by_task(task_type))
         return result
 
@@ -607,7 +733,14 @@ class DatasetRegistry:
         """Get combined information for a mixture of datasets across all registries."""
         configs = []
         for name in dataset_names:
-            for registry in [cls.vision, cls.qa, cls.nli, cls.generation, cls.glue]:
+            for registry in [
+                cls.vision,
+                cls.qa,
+                cls.nli,
+                cls.generation,
+                cls.glue,
+                cls.math,
+            ]:
                 try:
                     configs.append(registry.get(name))
                     break
@@ -629,7 +762,7 @@ class DatasetRegistry:
 
     @classmethod
     def get_all_registries(cls) -> List[BaseRegistry]:
-        return [cls.vision, cls.qa, cls.generation, cls.nli, cls.glue]
+        return [cls.vision, cls.qa, cls.generation, cls.nli, cls.glue, cls.math]
 
     @classmethod
     def get_dataset_info(cls, dataset_name: str) -> Union[VisionConfig, LanguageConfig]:
@@ -648,6 +781,7 @@ class DatasetRegistry:
             *cls.qa.get_available_datasets(),
             *cls.glue.get_available_datasets(),
             *cls.generation.get_available_datasets(),
+            *cls.math.get_available_datasets(),
         ]
 
     @classmethod
@@ -658,6 +792,7 @@ class DatasetRegistry:
             | cls.qa._registry
             | cls.glue._registry
             | cls.generation._registry
+            | cls.math._registry
         )
 
     @classmethod
@@ -667,8 +802,75 @@ class DatasetRegistry:
             | cls.qa._registry
             | cls.glue._registry
             | cls.generation._registry
+            | cls.math._registry
         )
 
+
+# https://github.com/allenai/open-instruct/blob/main/open_instruct/dataset_transformation.py#L105
+CHAT_TEMPLATES = {
+    "simple_concat_with_space": (
+        "{% for message in messages %}"
+        "{{ ' ' if not loop.first else '' }}"
+        "{{ message['content'] }}"
+        "{% if loop.last and not add_generation_prompt %}{{ eos_token }}{% endif %}"
+        "{% endfor %}"
+    ),
+    "simple_concat_with_new_line": (
+        "{% for message in messages %}"
+        "{{ '\n' if not loop.first else '' }}"
+        "{{ message['content'] }}"
+        "{% if loop.last and not add_generation_prompt %}{{ eos_token }}{% endif %}"
+        "{% endfor %}"
+    ),
+    "simple_chat": (
+        "{% for message in messages %}"
+        "{{ '\n\n' if not loop.first else '' }}"
+        "{{ message['role'].capitalize() + ': ' + message['content'] }}"
+        "{% if loop.last and not add_generation_prompt %}{{ eos_token }}{% endif %}"
+        "{% endfor %}"
+    ),
+    "assistant_message_only": (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'assistant' %}"
+        "{{ message['content'] }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
+    "zephyr": (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'user' %}"
+        "{{ '<|user|>\n' + message['content'] + eos_token + '\n' }}"
+        "{% elif message['role'] == 'system' %}"
+        "{{ '<|system|>\n' + message['content'] + eos_token + '\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}"
+        "{% endif %}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '<|assistant|>\n' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
+    "tulu": (
+        "{% for message in messages %}"
+        "{% if message['role'] == 'system' %}"
+        "{{ '<|system|>\n' + message['content'] + '\n' }}"
+        "{% elif message['role'] == 'user' %}"
+        "{{ '<|user|>\n' + message['content'] + '\n' }}"
+        "{% elif message['role'] == 'assistant' %}"
+        "{% if not loop.last %}"
+        "{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}"
+        "{% else %}"
+        "{{ '<|assistant|>\n'  + message['content'] + eos_token }}"
+        "{% endif %}"
+        "{% endif %}"
+        "{% if loop.last and add_generation_prompt %}"
+        "{{ '<|assistant|>\n' }}"
+        "{% endif %}"
+        "{% endfor %}"
+    ),
+    "olmo": "{{ eos_token }}{% for message in messages %}\n{% if message['role'] == 'user' %}\n{{ '<|user|>\n' + message['content'] }}\n{% elif message['role'] == 'assistant' %}\n{{ '<|assistant|>\n'  + message['content'] + eos_token }}\n{% endif %}\n{% if loop.last and add_generation_prompt %}\n{{ '<|assistant|>' }}\n{% endif %}\n{% endfor %}",
+    "custom": "{{ bos_token }}{% for message in messages %}{% if message['role'] == 'system' %}{{ '<|system|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'user' %}{{ '<|user|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'assistant' %}{% if not loop.last %}{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}{% else %}{{ '<|assistant|>\n'  + message['content'] + eos_token }}{% endif %}{% endif %}{% if loop.last and add_generation_prompt %}{{ '<|assistant|>\n' }}{% endif %}{% endfor %}",
+}
 
 ### Backward Compatibility
 
@@ -754,3 +956,7 @@ if __name__ == "__main__":
     mixture = DatasetRegistry.get_mixture_info(["cifar10", "squad"])
     print(mixture)
     print(mixture)
+    print()
+
+    nlps = DatasetRegistry.get_language_registry()
+    print(nlps.keys())

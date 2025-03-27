@@ -14,6 +14,7 @@ from transformers import (
     OlmoForCausalLM,
 )
 
+from lmc.data.data_stats import CHAT_TEMPLATES
 from lmc.permutations import PermSpec, PermType, permute_state_dct
 
 from .base_model import BaseModel
@@ -33,6 +34,9 @@ class OLMo(BaseModel):
         norm: str = "layernorm",
         gradient_checkpointing: bool = True,
         task_type: str = "generation",
+        revision: Optional[str] = None,
+        use_bfloat16: bool = True,
+        chat_template: str = None,
     ):
         """
         Initialize OLMo model for either generation or classification tasks.
@@ -52,15 +56,27 @@ class OLMo(BaseModel):
         super().__init__(output_dim, initialization_strategy, act="act", norm=norm)
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, trust_remote_code=True
+            model_name,
+            trust_remote_code=True,
+            revision=revision,
+            chat_template=CHAT_TEMPLATES.get(chat_template, None),
+            padding_side="right",  # Default, but being explicit
+        )
+        self.generation_tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            chat_template=chat_template,
+            revision=revision,
+            padding_side="left",  # Default, but being explicit
         )
         # Set padding token if not defined
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.generation_tokenizer.pad_token = self.tokenizer.eos_token
 
         if initialization_strategy == "pretrained":
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, trust_remote_code=True
+                model_name, trust_remote_code=True, revision=revision
             )
             if task_type == "classification":
                 if output_dim is None:
@@ -82,7 +98,9 @@ class OLMo(BaseModel):
                     config, trust_remote_code=True
                 )
             else:  # generation
-                self.model = AutoModelForCausalLM(config, trust_remote_code=True)
+                self.model = AutoModelForCausalLM(
+                    config, trust_remote_code=True, revision=revision
+                )
 
             self.logger.info(
                 f"OLMo model initialized from scratch, if that's not the desired behavior pass --initialization_strategy=pretrained."
@@ -104,6 +122,7 @@ class OLMo(BaseModel):
             self.model.config.hidden_size,
             self.model.config.num_attention_heads,
         )
+        self.use_bfloat16 = use_bfloat16
         # exit(0)
 
     @classmethod
@@ -133,18 +152,28 @@ class OLMo(BaseModel):
         For generation, labels are the shifted input_ids for causal LM.
         For classification, labels are the class indices.
         """
+        if self.use_bfloat16:
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                # Your existing forward logic here
+                return self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    # **kwargs,
+                )
         return self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
-            **kwargs,
+            # **kwargs,
         )
 
     def generate(
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        max_length: int = 100,
+        # max_length: int = None,
         **kwargs: Any,
     ) -> torch.Tensor:
         """
@@ -154,10 +183,23 @@ class OLMo(BaseModel):
         if self.task_type != "generation":
             raise ValueError("Generation is only available for generation task type")
 
+        if self.use_bfloat16:
+            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                return self.model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    # # max_length=max_length,
+                    repetition_penalty=1.1,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    **kwargs,
+                )
         return self.model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            max_length=max_length,
+            # max_length=max_length,
+            repetition_penalty=1.1,
+            eos_token_id=self.tokenizer.eos_token_id,
             **kwargs,
         )
 
