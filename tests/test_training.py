@@ -355,6 +355,11 @@ class TestTraining(BaseTest):
         self.get_summary_value(self.log_dir / "test-three", "lmc-0-2/lmc/loss/weighted/barrier_test")
         self.get_summary_value(self.log_dir / "test-three", "lmc-1-2/lmc/loss/weighted/barrier_test")
 
+    def test_cifar10_split(self):
+        eval_loss_easy = self.run_command_and_return_result("test-cifar10-easy", "model1/train/cross_entropy", seed1=99, perturb_scale=0, n_models=1, lmc_on_train_end=False, model_name="resnet8-8", dataset="cifar10easy")
+        eval_loss_hard = self.run_command_and_return_result("test-cifar10-hard", "model1/train/cross_entropy", seed1=99, perturb_scale=0, n_models=1, lmc_on_train_end=False, model_name="resnet8-8", dataset="cifar10hard")
+        self.assertLess(eval_loss_easy, eval_loss_hard)
+
 
 if __name__ == "__main__":
     unittest.main()
