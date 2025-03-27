@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lmc"
-version = "0.1.0"
+version = "0.2.0"
 description = ""
 authors = ["Gül Sena Altıntaş <30217912+gsaltintas@users.noreply.github.com>",
 "Devin Kwok <6848383+devinkwok@users.noreply.github.com>"]
@@ -8,14 +8,14 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-torch = "2.0.1"
-torchvision = "0.15.2"
-torchmetrics = "1.6.0"
+torch = "^2.4.0"
+torchvision = "*"
+torchmetrics = "*"
 matplotlib = "3.7.2"
 rich = "^13.8.0"
 wandb = "0.15.2"
 opencv-python = "^4.8.0"  # Updated from 4.5.4.58
-numpy = "1.24.3"
+#numpy = "1.24.3"
 seaborn = "^0.13.2"
 ipykernel = "^6.29.5"
 jupyter = "^1.1.1"
@@ -31,7 +31,7 @@ ml-collections = "^0.1.1"
 tabulate = "^0.9.0"
 scikit-learn = "^1.6.0"
 evaluate = "^0.4.3"
-
+ai2-olmo-core = "^1.7.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -44,30 +44,13 @@ authors = [
     {name = "Devin Kwok", email = "6848383+devinkwok@users.noreply.github.com"}
 ]
 requires-python = "<4.0,>=3.10"
-dependencies = [
-    "torch==2.0.1",
-    "torchvision==0.15.2",
-    "torchmetrics==1.6.0",
-    "matplotlib==3.7.2",
-    "rich<14.0.0,>=13.8.0",
-    "wandb==0.15.2",
-    "opencv-python<5.0.0,>=4.8.0",
-    "numpy==1.24.3",
-    "seaborn<1.0.0,>=0.13.2",
-    "ipykernel<7.0.0,>=6.29.5",
-    "jupyter<2.0.0,>=1.1.1",
-    "transformers<5.0.0,>=4.46.2",
-    "peft<1.0.0,>=0.13.2",
-    "datasets<4.0.0,>=3.1.0",
-    "huggingface-hub<1.0.0,>=0.26.2",
-    "sentencepiece",
-    "pot<1.0.0,>=0.9.5",
-    "ml-collections<1.0.0,>=0.1.1",
-    "tabulate<1.0.0,>=0.9.0",
-    "scikit-learn>=1.6.0",
-    "evaluate>=0.4.3",
-]
 name = "lmc"
 version = "0.1.0"
 description = ""
 readme = "README.md"
+dependencies = [
+    "flax>=0.10.4",
+    "jax[cuda]>=0.5.3",
+    "numpy==1.26.4",
+    "wandb>=0.19.8",
+]
