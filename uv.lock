@@ -1421,6 +1421,7 @@ dependencies = [
     { name = "opencv-python", version = "4.10.0.84", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_system != 'Darwin') or (python_full_version < '3.12' and sys_platform != 'linux')" },
     { name = "peft", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "pot", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "repsim", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "rich", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "scikit-learn", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
     { name = "seaborn", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
@@ -1446,6 +1447,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.8.0,<5.0.0" },
     { name = "peft", specifier = ">=0.13.2,<1.0.0" },
     { name = "pot", specifier = ">=0.9.5,<1.0.0" },
+    { name = "repsim", git = "https://github.com/wrongu/repsim.git" },
     { name = "rich", specifier = ">=13.8.0,<14.0.0" },
     { name = "scikit-learn", specifier = ">=1.6.0" },
     { name = "seaborn", specifier = ">=0.13.2,<1.0.0" },
@@ -2747,6 +2749,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/e3/c446a64984ea9f69982ba1a69d4658d5014bc7a0ea468a07e1a1265db6e2/regex-2024.11.6-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:4f51f88c126370dcec4908576c5a627220da6c09d0bff31cfa89f2523843316d", size = 787733 },
     { url = "https://files.pythonhosted.org/packages/2b/f1/e40c8373e3480e4f29f2692bd21b3e05f296d3afebc7e5dcf21b9756ca1c/regex-2024.11.6-cp313-cp313-win32.whl", hash = "sha256:63b13cfd72e9601125027202cad74995ab26921d8cd935c25f09c630436348ff", size = 262122 },
     { url = "https://files.pythonhosted.org/packages/45/94/bc295babb3062a731f52621cdc992d123111282e291abaf23faa413443ea/regex-2024.11.6-cp313-cp313-win_amd64.whl", hash = "sha256:2b3361af3198667e99927da8b84c1b010752fa4b1115ee30beaa332cabc3ef1a", size = 273545 },
+]
+
+[[package]]
+name = "repsim"
+version = "0.8.3"
+source = { git = "https://github.com/wrongu/repsim.git#ecd0a545fbb409e971c63f52d27a4899c0070f6e" }
+dependencies = [
+    { name = "numpy", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "scikit-learn", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "scipy", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
+    { name = "torch", marker = "platform_system != 'Darwin' or sys_platform != 'linux'" },
 ]
 
 [[package]]

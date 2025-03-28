@@ -222,7 +222,11 @@ class Experiment:
     evaluate_ckpt3: str = None
     resume_from: Optional[str] = None
     resume_step: Optional[str] = "-1"
-    log_to_same_experiment: Optional[bool] = False
+    log_to_same_experiment: Optional[bool] = False  # TODO doesn't work currently
+
+    cka_eval: bool = False
+    cka_include: List[str] = field(init=True, default_factory=list)
+    cka_exclude: List[str] = field(init=True, default_factory=list)
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -257,11 +261,15 @@ class Experiment:
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
         self.resume_step = kwargs.get("resume_step", "-1")
+        self.deterministic = kwargs.get("deterministic", False)
+        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
         self.evaluate_ckpt1 = kwargs.get("evaluate_ckpt1", None)
         self.evaluate_ckpt2 = kwargs.get("evaluate_ckpt2", None)
         self.evaluate_ckpt3 = kwargs.get("evaluate_ckpt3", None)
-        self.deterministic = kwargs.get("deterministic", False)
-        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
+
+        self.cka_eval = kwargs.get("cka_eval", True)
+        self.cka_include = kwargs.get("cka_include", [])
+        self.cka_exclude = kwargs.get("cka_exclude", [])
 
         # Dynamically build the Seeds class
 
@@ -401,6 +409,7 @@ class Experiment:
 
 @dataclass(init=False)
 class Trainer(Experiment):
+
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
