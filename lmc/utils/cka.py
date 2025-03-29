@@ -13,8 +13,8 @@ from repsim.metrics import AngularCKA
 def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False, n_examples=-1):
     log_dct = {}
     config = el_1.config
-    include = config.cka_include
-    exclude = config.cka_exclude
+    include = [x for x in config.cka_include.split(",") if len(x) > 0]
+    exclude = [x for x in config.cka_exclude.split(",") if len(x) > 0]
     dataloader = el_1.train_eval_loader if train else el_1.test_loader
         
     device = el_1.device
@@ -22,7 +22,7 @@ def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False
 
     # get intermediate activations
     intermediates_1, outputs_1 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device, n_examples=n_examples)
-    intermediates_2, outputs_2 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device, n_examples=n_examples)
+    intermediates_2, outputs_2 = evaluate_model(el_2.model, dataloader, include=include, exclude=exclude, device=device, n_examples=n_examples)
     n_examples = outputs_1.shape[0]
 
     # compute CKA

@@ -226,8 +226,8 @@ class Experiment:
 
     cka_n_train: int = 0
     cka_n_test: int = 0
-    cka_include: List[str] = field(init=True, default_factory=list)
-    cka_exclude: List[str] = field(init=True, default_factory=list)
+    cka_include: str = ""
+    cka_exclude: str = ""
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -270,8 +270,8 @@ class Experiment:
 
         self.cka_n_train = kwargs.get("cka_n_train", 0)
         self.cka_n_test = kwargs.get("cka_n_test", 0)
-        self.cka_include = kwargs.get("cka_include", [])
-        self.cka_exclude = kwargs.get("cka_exclude", [])
+        self.cka_include = kwargs.get("cka_include", "")
+        self.cka_exclude = kwargs.get("cka_exclude", "")
 
         # Dynamically build the Seeds class
 
