@@ -224,7 +224,8 @@ class Experiment:
     resume_step: Optional[str] = "-1"
     log_to_same_experiment: Optional[bool] = False  # TODO doesn't work currently
 
-    cka_eval: bool = False
+    cka_n_train: int = 0
+    cka_n_test: int = 0
     cka_include: List[str] = field(init=True, default_factory=list)
     cka_exclude: List[str] = field(init=True, default_factory=list)
 
@@ -267,7 +268,8 @@ class Experiment:
         self.evaluate_ckpt2 = kwargs.get("evaluate_ckpt2", None)
         self.evaluate_ckpt3 = kwargs.get("evaluate_ckpt3", None)
 
-        self.cka_eval = kwargs.get("cka_eval", True)
+        self.cka_n_train = kwargs.get("cka_n_train", 0)
+        self.cka_n_test = kwargs.get("cka_n_test", 0)
         self.cka_include = kwargs.get("cka_include", [])
         self.cka_exclude = kwargs.get("cka_exclude", [])
 

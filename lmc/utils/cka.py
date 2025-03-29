@@ -10,36 +10,34 @@ from lmc.utils.training_element import TrainingElement
 from repsim.metrics import AngularCKA
 
 
-def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False):
+def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False, n_examples=-1):
     log_dct = {}
     config = el_1.config
     include = config.cka_include
     exclude = config.cka_exclude
     dataloader = el_1.train_eval_loader if train else el_1.test_loader
+        
     device = el_1.device
     split = "train" if train else "test"
 
     # get intermediate activations
-    intermediates_1, outputs_1 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device)
-    intermediates_2, outputs_2 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device)
-
-    print("DEBUG REPSIM", list(intermediates_1.keys()))
+    intermediates_1, outputs_1 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device, n_examples=n_examples)
+    intermediates_2, outputs_2 = evaluate_model(el_1.model, dataloader, include=include, exclude=exclude, device=device, n_examples=n_examples)
+    n_examples = outputs_1.shape[0]
 
     # compute CKA
-    for k, v_1 in intermediates_1.items():
-        log_dct[f"cka/{el_1.element_ind}-{el_2.element_ind}/{split}/{k}"] = cka_eval(v_1, intermediates_2[k])
+    for k in intermediates_1.keys():
+        v_1 = intermediates_1[k].reshape(n_examples, -1)
+        v_2 = intermediates_2[k].reshape(n_examples, -1)
+        metric = AngularCKA(m=n_examples)
+        dist = metric.length(metric.neural_data_to_point(v_1), metric.neural_data_to_point(v_2))
+        log_dct[f"cka/{el_1.element_ind}-{el_2.element_ind}/{split}/{k}"] = dist
 
     # compute difference in output in magnitude of error vector and classification disagreement
     log_dct[f"disagree/{split}/class"] = torch.sum(torch.not_equal(torch.argmax(outputs_1, dim=1), torch.argmax(outputs_2, dim=1)))
     log_dct[f"disagree/{split}/margin"] = torch.linalg.norm(torch.softmax(outputs_1, dim=1) - torch.softmax(outputs_2, dim=1))
 
     return log_dct
-
-
-def cka_eval(X_1, X_2):
-    metric = AngularCKA(m=X_1.shape[0])
-    dist = metric.length(metric.neural_data_to_point(X_1), metric.neural_data_to_point(X_2))
-    return dist
 
 
 """
@@ -131,7 +129,7 @@ class SaveIntermediateHook:
             assert key not in self.intermediates, key
             self.intermediates[key] = value
 
-
+@torch.no_grad()
 def evaluate_intermediates(
         model: nn.Module,
         dataloader: torch.utils.data.DataLoader,
@@ -140,6 +138,7 @@ def evaluate_intermediates(
         include: List[str]=None,
         exclude: List[str]=None,
         verbose=False,
+        n_examples=-1,
 ) -> Generator:
     """Evaluate a model on a dataloader, returning inputs, intermediate values, outputs, and labels
 
@@ -170,16 +169,19 @@ def evaluate_intermediates(
     model.eval()
     intermediates = SaveIntermediateHook(
         named_modules, include=include, exclude=exclude, device=device)
-    with torch.no_grad():
-        for i, (batch_examples, labels) in enumerate(dataloader):
-            with intermediates as hidden:
-                if verbose: print(f"...batch {i}")
-                batch_examples = batch_examples.to(device=device)
-                labels = labels.to(device=device)
-                output = model(batch_examples)
-                yield batch_examples, hidden, output, labels
+    for i, (batch_examples, labels) in enumerate(dataloader):
+        batch_size = len(labels)
+        if n_examples > 0 and i * batch_size >= n_examples:
+            return
+        with intermediates as hidden:
+            if verbose: print(f"...batch {i}, {n_examples} {batch_size}")
+            batch_examples = batch_examples.to(device=device)
+            labels = labels.to(device=device)
+            output = model(batch_examples)
+            yield batch_examples, hidden, output, labels
 
 
+@torch.no_grad()
 def combine_batches(eval_intermediates_generator: Generator) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor, torch.Tensor]:
     """Combines batches from evaluate_intermediates().
 
@@ -208,6 +210,8 @@ def evaluate_model(model: nn.Module,
                    include,
                    exclude,
                    device: str="cuda",
+                   verbose: bool=True,
+                   n_examples: int=-1,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Evaluate model and return outputs, and optionally labels, accuracy, and loss.
     This does not return intermediate values.
@@ -228,6 +232,6 @@ def evaluate_model(model: nn.Module,
             If return_accuracy or loss_fn are not set, accuracy or loss are None respectively.
     """
     eval_iterator = evaluate_intermediates(
-        model, dataloader, device, named_modules=[], include=include, exclude=exclude)
+        model, dataloader, device, include=include, exclude=exclude, verbose=verbose, n_examples=n_examples)
     _, intermediates, outputs, _ = combine_batches(eval_iterator)
     return intermediates, outputs

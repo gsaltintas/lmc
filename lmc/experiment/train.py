@@ -138,9 +138,10 @@ class TrainingRunner(ExperimentManager):
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]
             log_dct.update(element.dist_from_element(next_el))
-            if self.config.cka_eval:
-                log_dct.update(cka_evals_by_layer(element, next_el, train=True))
-                log_dct.update(cka_evals_by_layer(element, next_el, train=False))
+            if self.config.cka_n_train:
+                log_dct.update(cka_evals_by_layer(element, next_el, train=True, n_examples=self.config.cka_n_train))
+            if self.config.cka_n_test:
+                log_dct.update(cka_evals_by_layer(element, next_el, train=False, n_examples=self.config.cka_n_test))
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))
