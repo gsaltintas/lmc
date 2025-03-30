@@ -12,7 +12,7 @@ import wandb
 from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
-from lmc.utils.cka import cka_evals_by_layer
+from lmc.utils.cka import evaluate_cka, evaluate_ensemble
 from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
@@ -140,9 +140,9 @@ class TrainingRunner(ExperimentManager):
             next_el = self.training_elements[next_el_ind]
             log_dct.update(element.dist_from_element(next_el))
             if self.config.cka_n_train:
-                log_dct.update(cka_evals_by_layer(element, next_el, train=True, n_examples=self.config.cka_n_train))
+                log_dct.update(evaluate_cka(element, next_el, train=True, n_examples=self.config.cka_n_train))
             if self.config.cka_n_test:
-                log_dct.update(cka_evals_by_layer(element, next_el, train=False, n_examples=self.config.cka_n_test))
+                log_dct.update(evaluate_cka(element, next_el, train=False, n_examples=self.config.cka_n_test))
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))
@@ -160,6 +160,8 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
+            log_dct.update(evaluate_ensemble(self.training_elements, train=True))
+            log_dct.update(evaluate_ensemble(self.training_elements, train=False))
         if self.config.n_models > 2:
             evaluate_merge(
                 self.training_elements,

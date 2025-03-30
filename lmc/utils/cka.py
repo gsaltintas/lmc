@@ -6,11 +6,12 @@ import torch
 import torch.nn as nn
 
 from lmc.utils.training_element import TrainingElement
+from lmc.utils.lmc_utils import evaluate_model_vision
 
 from repsim.metrics import AngularCKA
 
 
-def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False, n_examples=-1):
+def evaluate_cka(el_1: TrainingElement, el_2: TrainingElement, train=False, n_examples=-1):
     log_dct = {}
     config = el_1.config
     include = [x for x in config.cka_include.split(",") if len(x) > 0]
@@ -38,6 +39,41 @@ def cka_evals_by_layer(el_1: TrainingElement, el_2: TrainingElement, train=False
     log_dct[f"disagree/{split}/margin"] = torch.linalg.norm(torch.softmax(outputs_1, dim=1) - torch.softmax(outputs_2, dim=1))
 
     return log_dct
+
+
+def evaluate_ensemble(elements: List[TrainingElement], train=False):
+    if elements[0].config.data.is_language_dataset():
+        raise NotImplementedError("model ensembling not implemented for language tasks")
+
+    config = elements[0].config
+    split = "train" if train else "test"
+    dataloader = elements[0].train_eval_loader if train else elements[0].test_loader
+    num_classes = config.data.get_num_labels()
+    device = elements[0].device
+    loss_fn = elements[0].loss_fn
+
+    ensemble = EnsembleModel([el.model for el in elements], device)
+    results = evaluate_model_vision(ensemble, dataloader, num_classes=num_classes, device=device, criterion=loss_fn)
+    log_dct = {
+        f"ensemble/{split}/accuracy": results["acc"],
+        f"ensemble/{split}/cross_entropy": results["ce"],
+    }
+    return log_dct
+
+
+class EnsembleModel(nn.Module):
+    def __init__(self, models: List[nn.Module], device):
+        super().__init__()
+        self.models = models
+        self.device = device
+
+    def eval(self):
+        for model in self.models:
+            model.eval()
+
+    def __call__(self, x):
+        logits = [model(x) for model in self.models]
+        return torch.mean(torch.stack(logits, dim=0), dim=0)
 
 
 """
@@ -210,7 +246,7 @@ def evaluate_model(model: nn.Module,
                    include,
                    exclude,
                    device: str="cuda",
-                   verbose: bool=True,
+                   verbose: bool=False,
                    n_examples: int=-1,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
     """Evaluate model and return outputs, and optionally labels, accuracy, and loss.
