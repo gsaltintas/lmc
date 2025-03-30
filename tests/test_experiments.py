@@ -35,7 +35,7 @@ class TestTrainingRunner(BaseTest):
 
         # should not be identical due to independent sgd noise
         with self.subTest("sgd noise"):
-            self.assertEqual("different", self.run_butterfly_deterministic(args=["--perturb_reset_dataloader", "true"]))
+            self.assertEqual("same", self.run_butterfly_deterministic(loader_seed1=99, loader_seed2=98, args=["--perturb_use_dataloader1_to_step", "-1"]))
 
         # should fail
         with self.subTest("bad args"):
