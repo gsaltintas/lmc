@@ -1,3 +1,4 @@
+from copy import deepcopy
 import os
 from dataclasses import dataclass, field
 from typing import Dict
@@ -205,17 +206,28 @@ class TrainingRunner(ExperimentManager):
         # go through each training element
         self.global_step += 1
         log_dct = {}
+        first_batch = None
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
             if element.curr_step >= element.max_steps:
                 continue
+
+            # tie all batches together until perturb_use_dataloader1_to_step - this allows implementing of parent-child spawning experiment (Frankle et al. 2020)
+            first_batch = batch if first_batch is None else first_batch
+            # allow negative indices (i.e. -1 means to last training step)
+            if element.curr_step < (self.config.perturb_use_dataloader1_to_step % (element.max_steps + 1)):
+                batch = [x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x) for x in first_batch]
+
             # train
             element.step(batch)
             # if at end of batch, log lr, batch hashes, training metrics
             if self.global_step % self.steps_per_epoch == 0:
                 log_dct.update(element.log_train_metrics())
                 # log lr, batch hashes of last step
+                log_dct.update(element.get_step_snapshot())
+            # log lr, batch hashes, every step of first epoch (useful for sanity checking/debugging)
+            if element.curr_step < self.steps_per_epoch:
                 log_dct.update(element.get_step_snapshot())
         # log all of the info together at once
         log_dct.update(self.eval_and_save())
