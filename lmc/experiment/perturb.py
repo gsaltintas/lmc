@@ -162,17 +162,6 @@ class PerturbedTrainingRunner(TrainingRunner):
                     self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
                     self.logger.info("Model %d lr schedule reset.", ind)
 
-            # if set, this is equivalent to parent-child spawning experiment of Frankle et al. 2020
-            # each model will have independent SGD noise after perturbation time based on perturb_seed
-            if self.config.perturb_reset_dataloader:
-                dl = setup_loader(
-                    el.config.data,
-                    train=True,
-                    evaluate=False,
-                    loader_seed=el.perturb_seed,
-                    tokenizer=el.tokenizer,
-                )
-                el.train_loader = dl
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 

@@ -222,7 +222,12 @@ class Experiment:
     evaluate_ckpt3: str = None
     resume_from: Optional[str] = None
     resume_step: Optional[str] = "-1"
-    log_to_same_experiment: Optional[bool] = False
+    log_to_same_experiment: Optional[bool] = False  # TODO doesn't work currently
+
+    cka_n_train: int = 0
+    cka_n_test: int = 0
+    cka_include: str = ""
+    cka_exclude: str = ""
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -257,11 +262,16 @@ class Experiment:
         self.model_dir = kwargs.get("model_dir", None)
         self.resume_from = kwargs.get("resume_from", None)
         self.resume_step = kwargs.get("resume_step", "-1")
+        self.deterministic = kwargs.get("deterministic", False)
+        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
         self.evaluate_ckpt1 = kwargs.get("evaluate_ckpt1", None)
         self.evaluate_ckpt2 = kwargs.get("evaluate_ckpt2", None)
         self.evaluate_ckpt3 = kwargs.get("evaluate_ckpt3", None)
-        self.deterministic = kwargs.get("deterministic", False)
-        self.zip_and_save_source = kwargs.get("zip_and_save_source", True)
+
+        self.cka_n_train = kwargs.get("cka_n_train", 0)
+        self.cka_n_test = kwargs.get("cka_n_test", 0)
+        self.cka_include = kwargs.get("cka_include", "")
+        self.cka_exclude = kwargs.get("cka_exclude", "")
 
         # Dynamically build the Seeds class
 
@@ -401,6 +411,7 @@ class Experiment:
 
 @dataclass(init=False)
 class Trainer(Experiment):
+
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 
@@ -468,7 +479,7 @@ class PerturbedTrainer(Trainer):
     log_per_layer_l2: bool = False
     perturb_fraction: float = 1
     perturb_debug_dummy_run: bool = False
-    perturb_reset_dataloader: bool = False
+    perturb_use_dataloader1_to_step: int = 0
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -501,7 +512,7 @@ class PerturbedTrainer(Trainer):
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
         self.perturb_fraction = kwargs.get("perturb_fraction", 1)
         self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
-        self.perturb_reset_dataloader = kwargs.get("perturb_reset_dataloader", False)
+        self.perturb_use_dataloader1_to_step = kwargs.get("perturb_use_dataloader1_to_step", 0)
         self.dont_perturb_module_patterns = kwargs.get(
             "dont_perturb_module_patterns", []
         )

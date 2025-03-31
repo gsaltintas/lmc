@@ -178,13 +178,18 @@ def barrier_from_df(
     max_interpolated = results_.loc[ep, (split, metric)].max() * scale
     endpoint_0 = results_.loc[(ep, 0)][(split, metric)] * scale
     endpoint_1 = results_.loc[(ep, 1)][(split, metric)] * scale
+    min_interpolated = results_.loc[ep, (split, metric)].min() * scale
 
     linear_path = (1.0 - alpha) * endpoint_0 + alpha * endpoint_1
     barrier = max_interpolated - linear_path
-    return {
+
+    log_dct = {
         prefix + f"weighted/barrier_{split}": barrier,
         prefix + f"weighted/alpha_{split}": alpha,
+        f"interpolated/{metric}/best_{split}": min_interpolated,
+        f"interpolated/{metric}/alpha_{split}": minalpha,
     }
+    return log_dct
 
 
 def extract_barrier_vision(results: pd.DataFrame, ep: int) -> Dict[str, float]:
