@@ -225,6 +225,8 @@ class TrainingRunner(ExperimentManager):
             # allow negative indices (i.e. -1 means to last training step)
             if element.curr_step < (self.config.perturb_use_dataloader1_to_step % (element.max_steps + 1)):
                 batch = [x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x) for x in first_batch]
+            if element.curr_step >= (self.config.perturb_use_dataloader1_from_step % (element.max_steps + 1)):
+                batch = [x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x) for x in first_batch]
 
             # train
             element.step(batch)
