@@ -3,8 +3,11 @@ from textwrap import wrap
 from typing import List, Literal, Optional, Union
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib import ticker, transforms
+from matplotlib.scale import ScaleBase
 
 from lmc.logging.plot_utils import (
     MARKERSIZE,
@@ -18,6 +21,60 @@ from lmc.logging.plot_utils import (
 from lmc.logging.report_utils import filter_bad_runs as filter_bad_runs_func
 from lmc.logging.report_utils import get_labels
 from lmc.logging.wandb_registry import MetricCategory, PermMethod, Split, WandbMetric
+
+
+class SafeLogScale(ScaleBase):
+    """
+    Custom log scale that treats log(0) as 0 instead of -∞.
+    """
+
+    name = "safe_log"
+
+    def __init__(self, axis, **kwargs):
+        super().__init__(axis)
+
+    def get_transform(self):
+        return self.SafeLogTransform()
+
+    def set_default_locators_and_formatters(self, axis):
+        """
+        Define default locators and formatters for the custom scale.
+        """
+        axis.set_major_locator(ticker.LogLocator(base=10.0, subs="auto"))
+        axis.set_major_formatter(
+            ticker.LogFormatterMathtext()
+        )  # <-- Uses 10^x notation
+        axis.set_minor_locator(
+            ticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=10)
+        )
+
+    class SafeLogTransform(transforms.Transform):
+        input_dims = output_dims = 1
+
+        def transform_non_affine(self, values):
+            values = np.asarray(values)
+            return np.where(
+                values > 0, np.log10(values), 0
+            )  # log10(x) for x > 0, else 0
+
+        def inverted(self):
+            return SafeLogScale.InvertedSafeLogTransform()
+
+    class InvertedSafeLogTransform(transforms.Transform):
+        input_dims = output_dims = 1
+
+        def transform_non_affine(self, values):
+            values = np.asarray(values)
+            return np.where(values > 0, 10**values, 0)  # 10^x for x > 0, else 0
+
+        def inverted(self):
+            return SafeLogScale.SafeLogTransform()
+
+
+from matplotlib import scale as mscale
+
+# Register the scale so it can be used in plots
+mscale.register_scale(SafeLogScale)
 
 
 def plot_perturb_barrier(
@@ -35,10 +92,23 @@ def plot_perturb_barrier(
     separate_legend: bool = True,
     save_fig: bool = True,
     x_label: str = None,
+    y_label: str = None,
     plot_type: Literal["scatter", "line"] = "line",
     title: str = "",
     legend_template: str = "",
-    legend_title: str = "",
+    legend_title: str = None,
+    xscale: Literal["log", "linear", "symlog"] = "linear",
+    yscale: Literal["log", "linear", "symlog"] = "linear",
+    hue_cnt: Optional[int] = None,
+    ax=None,
+    markers: bool = True,
+    ncols: int = 2,
+    save_prefix: str = "",
+    uncertainty: bool = False,
+    inset_fig: bool = False,
+    inset_pos: Literal["left", "right", "bottom-left"] = "left",
+    zoom_y_last_step: int = None,
+    add_test_line: bool = False,
 ) -> Path:
     """Plot barrier metrics comparing train and test performance across different perturbation scales.
 
@@ -69,12 +139,29 @@ def plot_perturb_barrier(
     Returns:
         Path to the saved figure file
     """
+    if inset_fig and ax:
+        raise NotImplementedError(f"Inset fig and ax are mutually exclusive for now")
+    if ax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig = ax.figure
+    if inset_fig:
+        if inset_pos == "left":
+            inset_ax = plt.axes([0.2, 0.6, 0.2, 0.2], facecolor="lightgray")
+        elif inset_pos == "right":
+            inset_ax = plt.axes([0.7, 0.6, 0.2, 0.2], facecolor="lightgray")
+        elif inset_pos == "bottom-left":
+            inset_ax = plt.axes([0.2, 0.2, 0.2, 0.2], facecolor="lightgray")
+
+        else:
+            raise ValueError(f"{inset_pos} unkonw")
     plt_kwargs = {}
     if plot_type == "scatter":
         plot_fn = sns.scatterplot
     elif plot_type == "line":
         plot_fn = sns.lineplot
-        plt_kwargs.update(dict(markersize=MARKERSIZE))
+        markersize = MARKERSIZE if markers else 0
+        plt_kwargs.update(dict(markersize=markersize, errorbar="ci"))
     else:
         raise ValueError(f"{plot_type} currently not supported")
     # Setup
@@ -95,14 +182,19 @@ def plot_perturb_barrier(
         x_label = NON_METRIC_LABEL_MAP.get(x_metric)
 
     tmp = merged_df.copy()
+    # if yscale == "log":
+    #     print("uuu log")
+    #     tmp[x] = tmp[x] + 5e-3
+    #     print(tmp[x].min())
     if filter_bad_runs:
         tmp = filter_bad_runs_func(merged_df, registry)
     # Apply zoom filters
     tmp = tmp.reset_index()
     tmp = tmp[tmp["perturb_mode"] == perturb_method]
-    path = out_dir.joinpath(f"{perturb_method}-{base_metric.prefix}").with_suffix(
-        ".pdf"
-    )
+    save_prefix += "-" if save_prefix else ""
+    path = out_dir.joinpath(
+        f"{save_prefix}{perturb_method}-{base_metric.prefix}"
+    ).with_suffix(".pdf")
     if zoom == "first":
         tmp = tmp[tmp[x] <= zoom_first_step]
         path = path.with_stem(f"{path.stem}-zoom-first")
@@ -111,45 +203,77 @@ def plot_perturb_barrier(
         path = path.with_stem(f"{path.stem}-zoom-last")
 
     # Plot
-    fig, ax = plt.subplots()
     tmp = tmp.sort_values(x, ascending=True)
     masks = get_labels(tmp, labels, format_labels=False)
-    hues = get_hues(1, len(masks), "plasma")
+    if hue_cnt is None:
+        hue_cnt = len(masks)
+    hues = get_hues(1, hue_cnt + 1, "viridis", equidistant=True)[:-1]
+    # hues = get_hues(1, hue_cnt + 1, "plasma", equidistant=True)[1:]
 
     for i, (label_, mask) in enumerate(masks.items()):
-        print(label_)
+        # print(label_)
         df = tmp.loc[mask]
         color = hues[i % len(hues)]
-        label = legend_template.format(*list(label_))
+        # If label_ is not already a list, convert it to one without splitting strings
+        if not isinstance(label_, (list, tuple)):
+            label_ = [label_]  # This will keep strings intact
 
-        for mode in [Split.TRAIN, Split.TEST]:
+        label = legend_template.format(*label_)
+        splits = [Split.TRAIN]
+        if add_test_line:
+            splits.append(Split.TEST)
+        for mode in splits:
+            axs_to_plot = [ax]
+            if mode == Split.TRAIN and inset_fig:
+                axs_to_plot.append(inset_ax)
             orig_split = base_metric.split
-            metric_name_ = metric_name.replace(orig_split.value, mode.value)
+            metric_name_ = metric_name
+            if orig_split is not None:
+                metric_name_ = metric_name.replace(orig_split.value, mode.value)
             metric = registry.get_metric(metric_name_)
+            for ax_to_plot in axs_to_plot:
+                plot_fn(
+                    df,
+                    x=x,
+                    y=metric.flat_name,
+                    ax=ax_to_plot,
+                    marker="o" if markers else "",
+                    color=color,
+                    label=label if mode == Split.TRAIN else None,
+                    linestyle="-" if mode == Split.TRAIN else "--",
+                    **plt_kwargs,
+                )
 
-            plot_fn(
-                df,
-                x=x,
-                y=metric.flat_name,
-                ax=ax,
-                marker="o",
-                color=color,
-                label=label if mode == Split.TRAIN else None,
-                linestyle="-" if mode == Split.TRAIN else "--",
-                **plt_kwargs,
-            )
-
-    plt.xlabel(x_label)
-    plt.ylabel(base_metric.general_ylabel)
-    # plt.title("\n".join(wrap(f"ResNet 20 - {perturb_method.title()} Perturbance", 30)))
-    plt.title("\n".join(wrap(title)))
+    ax.set_xlabel(x_label)
+    if not y_label:
+        y_label = base_metric.general_ylabel
+    ax.set_ylabel(y_label)
+    ax.set_xscale(xscale)
+    ax.set_yscale(yscale)
+    # ax.set_title("\n".join(wrap(f"ResNet 20 - {perturb_method.title()} Perturbance", 30)))
+    ax.set_title("\n".join(wrap(title, 30)))
+    if inset_fig:
+        inset_ax.set_xlabel("")
+        inset_ax.set_ylabel("")
+        inset_ax.set_xscale(xscale)
+        inset_ax.set_xlim(zoom_first_step, zoom_last_step)
+        inset_ax.set_yscale(yscale)
+        # Adjust font size
+        inset_ax.tick_params(axis="both", labelsize=8)  # Smaller font for tick labels
+        # inset_ax.set_title("Inset", fontsize=10)  # Smaller title font
+        inset_ax.get_legend().remove()
+        if zoom_y_last_step is not None:
+            inset_ax.set_ylim(bottom=None, top=zoom_y_last_step)
     if plot_type == "line":
-        modify_confidence_alphas(ax, 0.1)
+        trans = 0.1 if uncertainty else 0
+        modify_confidence_alphas(ax, trans)
 
-    if legend_title == "":
+    if legend_title is None:
         legend_title = " ".join(labels)
     if separate_legend:
-        fig_leg = extract_legend(ax, ncol=2, add_tr_te=True, title=legend_title)
+        fig_leg = extract_legend(
+            ax, ncol=ncols, add_tr_te=add_test_line, title=legend_title
+        )
     else:
         fig_leg = None
         ax.legend(title=legend_title, bbox_to_anchor=(1, 0.5))
@@ -158,11 +282,13 @@ def plot_perturb_barrier(
 
         fig.savefig(path)
         if fig_leg is not None:
+            leg_path = path.as_posix().replace(".pdf", "-legend.pdf")
             fig_leg.savefig(
-                path.as_posix().replace(".pdf", "-legend.pdf"),
+                leg_path,
                 dpi=300,
                 bbox_inches="tight",
             )
-
-    plt.show()
+            print(f"Saved legend to {leg_path}")
+        print(f"Saved figure to {path}")
+        plt.show()
     return path

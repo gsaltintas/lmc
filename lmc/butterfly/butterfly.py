@@ -370,4 +370,3 @@ def sample_noise_and_perturb(
             log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
     perturb_model(model, noise)
     return log_dct
-    return log_dct
