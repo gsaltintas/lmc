@@ -1,18 +1,17 @@
 from dataclasses import dataclass, field
 
 import torch
-from torch.nn.utils import parameters_to_vector
 from transformers import AutoTokenizer
 
 import wandb
-from lmc.butterfly.butterfly import get_average_grad_norm, sample_noise_and_perturb
+from lmc.butterfly.butterfly import sample_noise_and_perturb
 from lmc.experiment.train import TrainingRunner
 from lmc.experiment_config import PerturbedTrainer
 from lmc.models.layers import has_batch_norm
 from lmc.utils.lmc_utils import repair
 from lmc.utils.opt import get_lr, reset_base_lrs
 from lmc.utils.setup_training import configure_lr_scheduler, setup_loader
-from lmc.utils.training_element import TrainingElement
+from lmc.utils.training_element import TrainingElement, params_l2
 
 
 @dataclass
@@ -33,29 +32,23 @@ class PerturbedTrainingRunner(TrainingRunner):
     def on_train_start(self):
         super().on_train_start()
         print("Running perturbed training.")
-        all_params = [
-            [p.detach().cpu().contiguous() for p in el.model.parameters()]
-            for el in self.training_elements
-        ]
-        self.models_at_init = [parameters_to_vector(params) for params in all_params]
         log_dct = dict()
-        log_dct.update(
-            {
-                f"static/init_l2/{i}/total": torch.norm(v).item()
-                for i, v in enumerate(self.models_at_init, start=1)
-            }
-        )
-        # note: l2_dist_at_init is deprecated because it l2 between models is now logged in train.py in evaluate_element
-        # save per-layer L2s
-        if self.config.log_per_layer_l2:
-            for i, el in enumerate(self.training_elements, start=1):
+        for el in self.training_elements:
+            log_dct[f"static/init_l2/{el.element_ind}/total"] = params_l2(
+                el.model.parameters()
+            )
+            # save per-layer L2s
+            if self.config.log_per_layer_l2:
                 log_dct.update(
                     {
-                        f"static/init_l2/{i}/layer/{k}": torch.norm(v.flatten()).item()
+                        f"static/init_l2/{el.element_ind}/layer/{k}": torch.norm(
+                            v.flatten()
+                        ).item()
                         for k, v in el.model.named_parameters()
                         if v.requires_grad
                     }
                 )
+        # note: l2_dist_at_init is deprecated because it l2 between models is now logged in train.py in evaluate_element
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 
@@ -72,7 +65,6 @@ class PerturbedTrainingRunner(TrainingRunner):
             assert g["lr"] == current_lr, (
                 f"Lr of the parameter group {g} is not configured properly."
             )
-        steps_per_epoch = len(element.train_loader)
 
         if prev_max_steps is None:
             prev_max_steps = element.max_steps
@@ -169,6 +161,7 @@ class PerturbedTrainingRunner(TrainingRunner):
                 if el.scheduler is not None:
                     self.reset_lr_schedule(el, prev_max_steps=prev_max_steps)
                     self.logger.info("Model %d lr schedule reset.", ind)
+
         if self.config.logger.use_wandb:
             wandb.log(log_dct)
 

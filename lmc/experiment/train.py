@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Dict
 
@@ -12,6 +13,7 @@ from lmc.data.data_stats import TaskType
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
+from lmc.utils.cka import evaluate_cka, evaluate_ensemble
 from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
@@ -141,16 +143,22 @@ class TrainingRunner(ExperimentManager):
 
     def evaluate_element(self, element: TrainingElement, i):
         log_dct = {f"step/model{i}": element.curr_step}
-        log_dct[self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name] = (
-            element.dist_from_init()
-        )
+        log_dct.update(element.dist_from_init())
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]
-            log_dct[
-                self.wandb_registry.get_metric(
-                    f"l2_dist_{i}-{next_el_ind + 1}"
-                ).log_name
-            ] = element.dist_from_element(next_el)
+            log_dct.update(element.dist_from_element(next_el))
+            if self.config.cka_n_train:
+                log_dct.update(
+                    evaluate_cka(
+                        element, next_el, train=True, n_examples=self.config.cka_n_train
+                    )
+                )
+            if self.config.cka_n_test:
+                log_dct.update(
+                    evaluate_cka(
+                        element, next_el, train=False, n_examples=self.config.cka_n_test
+                    )
+                )
         # Choose evaluation function based on task
         if self.config.data.is_language_dataset():
             log_dct.update(self._eval_language(element, i))
@@ -168,6 +176,8 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
+            log_dct.update(evaluate_ensemble(self.training_elements, train=True))
+            log_dct.update(evaluate_ensemble(self.training_elements, train=False))
         if self.config.n_models > 2:
             evaluate_merge(
                 self.training_elements,
@@ -183,6 +193,8 @@ class TrainingRunner(ExperimentManager):
                 continue
             if element.curr_step in self.eval_steps:
                 log_dct.update(self.evaluate_element(element, i))
+                # log lr, batch hashes of last step
+                log_dct.update(element.get_step_snapshot())
             if element.curr_step in self.save_steps:
                 element.save(self.steps_per_epoch)
         if self.global_step in self.lmc_steps:
@@ -216,20 +228,39 @@ class TrainingRunner(ExperimentManager):
     def step_all_training_elements(self, batches):
         # go through each training element
         self.global_step += 1
-        log_dct = {"step/epoch": self.ep, "step/global": self.global_step}
+        log_dct = {}
+        first_batch = None
         for i, (batch, element) in enumerate(
             zip(batches, self.training_elements), start=1
         ):
             if element.curr_step >= element.max_steps:
                 continue
+
+            # tie all batches together until perturb_use_dataloader1_to_step - this allows implementing of parent-child spawning experiment (Frankle et al. 2020)
+            first_batch = batch if first_batch is None else first_batch
+            # allow negative indices (i.e. -1 means to last training step)
+            if element.curr_step < (
+                self.config.perturb_use_dataloader1_to_step % (element.max_steps + 1)
+            ):
+                batch = [
+                    x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x)
+                    for x in first_batch
+                ]
+
             # train
-            log_dct.update(element.step(batch))
-            # if at end of batch, log training metrics
+            element.step(batch)
+            # if at end of batch, log lr, batch hashes, training metrics
             if self.global_step % self.steps_per_epoch == 0:
                 log_dct.update(element.log_train_metrics())
+                # log lr, batch hashes of last step
+                log_dct.update(element.get_step_snapshot())
+            # log lr, batch hashes, every step of first epoch (useful for sanity checking/debugging)
+            if element.curr_step < self.steps_per_epoch:
+                log_dct.update(element.get_step_snapshot())
         # log all of the info together at once
         log_dct.update(self.eval_and_save())
-        if self.config.logger.use_wandb:
+        if self.config.logger.use_wandb and log_dct:
+            log_dct.update({"step/epoch": self.ep, "step/global": self.global_step})
             wandb.log(log_dct)
 
     def _eval_vision(self, element, model_idx: int) -> Dict[str, float]:

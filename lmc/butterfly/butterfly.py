@@ -1,18 +1,17 @@
 import logging
-import math
 import re
 from copy import deepcopy
-from typing import Dict, List, Optional, OrderedDict, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
-from torch.nn.utils import parameters_to_vector
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from lmc.experiment_config import PerturbedTrainer
 from lmc.utils.seeds import temp_seed
 from lmc.utils.setup_training import setup_loader
+from lmc.utils.training_element import params_l2, params_to_vector, vector_to_params
 
 logger = logging.getLogger(__name__)  # Add this line to define the logger
 
@@ -172,14 +171,30 @@ def get_gaussian_noise(
 @torch.no_grad()
 def perturb_model(
     model: nn.Module, noise_dct: Dict[str, torch.Tensor], inplace: bool = True
-) -> nn.Module:
-    perturb_params = dict()
+) -> Tuple[nn.Module, Dict[str, torch.Tensor], float, Dict[str, float]]:
+    perturb_params: Dict[str, torch.Tensor] = {}
+    masked_noise = {}
+    total_changed: float = 0
+    total_elements = 0
+    changed_per_layer = {}
     for n, p in model.named_parameters():
         if not p.requires_grad:
             perturb_params[n] = p
             continue
         with torch.no_grad():
-            perturb_params[n] = p + noise_dct[n]
+            # to avoid an unknown floating point issue
+            # compare original and perturbed weights, mask out any that are unchanged
+            perturbed = p + noise_dct[n]
+            unchanged = (perturbed - p) == 0
+            masked_noise[n] = noise_dct[n]
+            masked_noise[n][unchanged] = 0
+            perturb_params[n] = p + masked_noise[n]
+            # record number of masked weights per layer
+            n_masked = torch.sum(unchanged).item()
+            total_changed += p.nelement() - n_masked
+            total_elements += p.nelement()
+            changed_per_layer[n] = (p.nelement() - n_masked) / p.nelement()
+
     if inplace:
         model.load_state_dict(perturb_params, strict=False)
     else:
@@ -190,8 +205,7 @@ def perturb_model(
 
 def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
     if isinstance(noise, dict):
-        noise_ = [p.detach().cpu().contiguous() for p in noise.values()]
-        noise = parameters_to_vector(noise_)
+        noise = nn.parameters_to_vector(noise.values())
     return torch.linalg.norm(noise)
 
 
@@ -295,7 +309,7 @@ def get_average_grad_norm(
         if param.grad is not None:
             param_norm = param.grad.data.norm(2)
             total_norm += param_norm.item() ** 2
-            param_count += param.numel()
+            param_count += param.nelement()
 
     # Divide by both number of parameters and number of processed batches
     if processed_batches == 0 or param_count == 0:
@@ -321,7 +335,7 @@ def scale_noise(
     # log expected l2 (std) and per-layer std
     expected_l2, _ = get_all_init_l2s(model, layers)
     # log l2 of noise before scaling
-    actual_norm = get_l2(noise_dct)
+    actual_norm = params_l2(noise_dct.values())
     # do the scaling
     if normalize:
         scale /= actual_norm
@@ -332,10 +346,29 @@ def scale_noise(
     return noise_dct
 
 
+def shuffle_tensor(tensor: torch.Tensor, seed: Optional[int]) -> torch.Tensor:
+    shape = tensor.shape
+    generator = None if seed is None else torch.Generator().manual_seed(seed)
+    perm = torch.randperm(tensor.nelement(), generator=generator, device=tensor.device)
+    return tensor.reshape(-1)[perm].reshape(shape)
+
+
+def mask_noise(
+    noise_dct: Dict[str, torch.Tensor], unmasked_frac: float, seed: int
+) -> Dict[str, torch.Tensor]:
+    mask = {k: torch.zeros_like(v) for k, v in noise_dct.items()}
+    flat_mask = params_to_vector(mask.values())
+    n_mask = round(unmasked_frac * flat_mask.nelement())
+    flat_mask[:n_mask] = 1
+    mask = vector_to_params(shuffle_tensor(flat_mask, seed=seed), noise_dct)
+    noise_dct = {k: v * mask[k].to(device=v.device) for k, v in noise_dct.items()}
+    return noise_dct
+
+
 def sample_noise_and_perturb(
     config: PerturbedTrainer,
     model,
-    perturb_seed: Optional[int],
+    perturb_seed: int,
     loss_fn: nn.Module,
     ind: int,
     tokenizer: AutoTokenizer = None,
@@ -363,10 +396,18 @@ def sample_noise_and_perturb(
         config.normalize_perturb,
         config.scale_to_init_if_normalized,
     )
+    noise = mask_noise(noise, config.perturb_fraction, perturb_seed)
+
+    # modify model in-place
+    _, masked_noise, changed_frac, changed_per_layer = perturb_model(model, noise)
+
     # log l2 and per-layer l2 of scaled noise
-    log_dct = {f"static/noise_l2/{ind}/total": get_l2(noise)}
+    log_dct = {
+        f"static/noise_l2/{ind}/total": params_l2(masked_noise.values()),
+        f"static/noise/frac/{ind}/total": changed_frac,
+    }
     if config.log_per_layer_l2:
         for k, v in noise.items():
-            log_dct[f"static/noise_l2/{ind}/layer/{k}"] = get_l2(v)
-    perturb_model(model, noise)
+            log_dct[f"static/noise_l2/{ind}/layer/{k}"] = torch.linalg.norm(v.flatten())
+            log_dct[f"static/noise/frac/{ind}/layer/{k}"] = changed_per_layer[k]
     return log_dct

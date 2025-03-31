@@ -33,6 +33,10 @@ class TestTrainingRunner(BaseTest):
     def test_butterfly_deterministic(self):
         # check whether model pairs are same or not
 
+        # should not be identical due to independent sgd noise
+        with self.subTest("sgd noise"):
+            self.assertEqual("same", self.run_butterfly_deterministic(loader_seed1=99, loader_seed2=98, args=["--perturb_use_dataloader1_to_step", "-1"]))
+
         # should fail
         with self.subTest("bad args"):
             self.assertEqual(

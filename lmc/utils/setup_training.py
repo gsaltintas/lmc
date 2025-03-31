@@ -723,7 +723,7 @@ def setup_vision_loader(
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=train,
+        shuffle=train and not evaluate,
         num_workers=data_conf.num_workers,
         generator=g,
         worker_init_fn=seed_worker,
@@ -935,8 +935,10 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
         seed = getattr(config.seeds, f"seed{i}")
         loader_seed = getattr(config.seeds, f"loader_seed{i}")
         perturb_seed = seed
-        if hasattr(config, f"perturb_seed{i}"):
-            perturb_seed = getattr(config.seeds, f"perturb_seed{i}")
+        if hasattr(config, "perturb_seeds"):
+            perturb_seeds = getattr(config, "perturb_seeds")
+            if hasattr(perturb_seeds, f"perturb_seed{i}"):
+                perturb_seed = getattr(perturb_seeds, f"perturb_seed{i}")
 
         ## setup individual model dir
         model_dir_ = model_dir.joinpath(f"model{i}")

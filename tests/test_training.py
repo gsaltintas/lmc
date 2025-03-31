@@ -337,8 +337,29 @@ class TestTraining(BaseTest):
             ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-eval", "lmc-0-1/lmc/loss/weighted/barrier_train")
             self.assertEqual(barrier, ref_barrier)
 
-    def tearDown(self):
-        return
+        with self.subTest("no training, eval only"):
+            _ = self.run_command_and_return_result("test-ckpt-notrain", "model1/test/cross_entropy", seed1=99, seed2=2, perturb_seed1=99, perturb_scale=1, perturb_step="100st", n_models=2, args=["--save_specific_steps", "100st", "--evaluate_ckpt1", str(self.log_dir / "test-ckpt-ref" / "model2"),  "--evaluate_ckpt2", str(self.log_dir / "test-ckpt-ref" / "model1"), "--lmc_specific_steps", "100st"], lmc_on_train_end=True)
+            ref_ce = self.get_summary_value(self.log_dir / "test-ckpt-ref", "model1/test/cross_entropy")
+            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "model2/test/cross_entropy")
+            self.assertEqual(test_ce, ref_ce)
+            ref_ce = self.get_summary_value(self.log_dir / "test-ckpt-ref", "model2/test/cross_entropy")
+            test_ce = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "model1/test/cross_entropy")
+            self.assertEqual(test_ce, ref_ce)
+            barrier = self.get_summary_value(self.log_dir / "test-ckpt-ref", "lmc-0-1/lmc/loss/weighted/barrier_train")
+            ref_barrier = self.get_summary_value(self.log_dir / "test-ckpt-notrain", "lmc-0-1/lmc/loss/weighted/barrier_train")
+            self.assertEqual(barrier, ref_barrier)
+
+    def test_three_models(self):
+        # check that lmc-0-1, lmc-0-2, and lmc-1-2 keys exist
+        self.run_command_and_return_result("test-three", "lmc-0-1/lmc/loss/weighted/barrier_test",  model_name="resnet8-4", dataset="cifar10", n_models=3, lmc_on_train_end=True)
+        self.get_summary_value(self.log_dir / "test-three", "lmc-0-2/lmc/loss/weighted/barrier_test")
+        self.get_summary_value(self.log_dir / "test-three", "lmc-1-2/lmc/loss/weighted/barrier_test")
+
+    def test_cifar10_split(self):
+        eval_loss_easy = self.run_command_and_return_result("test-cifar10-easy", "model1/train/cross_entropy", seed1=99, perturb_scale=0, n_models=1, lmc_on_train_end=False, model_name="resnet8-8", dataset="cifar10easy")
+        eval_loss_hard = self.run_command_and_return_result("test-cifar10-hard", "model1/train/cross_entropy", seed1=99, perturb_scale=0, n_models=1, lmc_on_train_end=False, model_name="resnet8-8", dataset="cifar10hard")
+        self.assertLess(eval_loss_easy, eval_loss_hard)
+
 
 if __name__ == "__main__":
     unittest.main()

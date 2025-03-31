@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import torch
 from torch import nn, optim
@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 
 from lmc.data.data_stats import TaskType
 from lmc.experiment_config import Trainer
+from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.metrics import (
     MathMetricsEvaluator,
     Metrics,
@@ -43,6 +44,37 @@ def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
     ckpts = get_ckpts_by_step(ckpt_dir, steps_per_epoch)
     last_step = list(ckpts.keys())[-1]
     return ckpts[last_step]
+
+
+def params_to_vector(params: Iterable[torch.Tensor]) -> torch.Tensor:
+    return torch.nn.utils.parameters_to_vector(params).detach().cpu()
+
+
+def vector_to_params(
+    vector: torch.Tensor, reference_state_dict: Dict[str, torch.Tensor]
+):
+    """Convert a vector back into a state dict with the same shapes as reference state_dict."""
+
+    if len(vector.shape) > 1:
+        raise ValueError("vector has more than one dimension.")
+
+    state_dict = {}
+    for k in sorted(reference_state_dict.keys()):
+        if vector.nelement() == 0:
+            raise ValueError("Ran out of values.")
+
+        size, shape = reference_state_dict[k].nelement(), reference_state_dict[k].shape
+        this, vector = vector[:size], vector[size:]
+        state_dict[k] = this.reshape(shape)
+
+    if vector.nelement() > 0:
+        raise ValueError("Excess values.")
+    return state_dict
+
+
+def params_l2(params: Iterable[torch.Tensor]) -> float:
+    noise = params_to_vector(params)
+    return torch.linalg.norm(noise).item()
 
 
 def load_model_from_state_dict(
@@ -160,12 +192,17 @@ class TrainingElement(ABC):
     ITERATOR_COLORS: Tuple[str] = ("#75507b", "#4f42b5", "#808080")
 
     def __post_init__(self):
+        self.last_step_batch = None
         self.curr_step = 0
         self.optimal_acc: float = -1
         self.setup_iterators()
+        self.wandb_registry = WandbMetricsRegistry(self.config.n_models)
+        self.init_model_vector = self.get_init_model_vector()
+
+    def get_init_model_vector(self):
         # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
         params = [p.detach().cpu().contiguous() for p in self.model.parameters()]
-        self.init_model_vector = nn.utils.parameters_to_vector(params)
+        return params_to_vector(params)
 
     def setup_iterators(self):
         if self.config.logger.use_tqdm:
@@ -219,31 +256,47 @@ class TrainingElement(ABC):
                 return False
         return True
 
-    def dist_from_init(self) -> float:
+    def _dist_statistics(self, other_vector):
         current_params = [
             p.detach().cpu().contiguous() for p in self.model.parameters()
         ]
         current_vector = torch.nn.utils.parameters_to_vector(current_params)
-        dist = torch.linalg.norm(current_vector.detach().cpu() - self.init_model_vector)
-        return dist.item()
+        dist = torch.linalg.norm(current_vector - other_vector)
+        cosine = torch.nn.functional.cosine_similarity(
+            current_vector, other_vector, dim=0
+        )
+        return dist.item(), cosine.item()
 
-    def dist_from_element(self, el: "TrainingElement") -> float:
-        current_params = [
-            p.detach().cpu().contiguous() for p in self.model.parameters()
-        ]
-        current_vector = torch.nn.utils.parameters_to_vector(current_params)
+    def dist_from_init(self) -> Dict[str, Any]:
+        init_l2, init_cos = self._dist_statistics(self.init_model_vector)
+        i = self.element_ind
+        log_dct = {
+            self.wandb_registry.get_metric(f"l2_dist_from_init_{i}").log_name: init_l2,
+            self.wandb_registry.get_metric(
+                f"cos_dist_from_init_{i}"
+            ).log_name: init_cos,
+        }
+        return log_dct
+
+    def dist_from_element(self, el: "TrainingElement") -> Dict[str, Any]:
         other_params = [p.detach().cpu().contiguous() for p in el.model.parameters()]
         other_vector = torch.nn.utils.parameters_to_vector(other_params)
-        dist = torch.linalg.norm(
-            current_vector.detach().cpu() - other_vector.detach().cpu()
-        )
-        return dist.item()
+        i = self.element_ind
+        j = el.element_ind
+        el_l2, el_cos = self._dist_statistics(other_vector)
+        log_dct = {
+            self.wandb_registry.get_metric(f"l2_dist_{i}-{j}").log_name: el_l2,
+            self.wandb_registry.get_metric(f"cos_dist_{i}-{j}").log_name: el_cos,
+        }
+        return log_dct
 
     def log_train_metrics(self):
         log_dct = {
             f"model{self.element_ind}/train/{key}": val
             for (key, val) in self.metrics.get_metrics(percentage=False).items()
         }
+        # log lr, batch hashes of last step
+        log_dct.update(self.get_step_snapshot())
         return log_dct
 
     def save(self, steps_per_epoch, save_name=None):
@@ -270,28 +323,43 @@ class TrainingElement(ABC):
             pickle_protocol=4,
         )
 
-    @abstractmethod
-    def step(self, batch) -> Dict[str, Any]:
-        self.model.train()
-        log_dct = {f"step/model{self.element_ind}": self.curr_step}
-        self.train_iterator.update()
-        self.curr_step += 1
+    def update_step_snapshot(self, batch):
+        self.last_step_batch = batch
         # Get learning rate
         if self.scheduler is None:
-            lr = self.opt.param_groups[0]["lr"]
+            self.last_step_lr = self.opt.param_groups[0]["lr"]
         else:
-            lr = self.scheduler.get_last_lr()[-1]
-        log_dct[f"lr/model{self.element_ind}"] = lr
+            self.last_step_lr = self.scheduler.get_last_lr()[-1]
 
-        # if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-        #     self.opt.zero_grad()
+    def get_step_snapshot(self):
+        if self.last_step_batch is None:
+            return {}  # this prevents get_step_snapshot from logging the same step twice
+        x, y = self.last_step_batch
+        hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
+        hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
+        log_dct = {
+            f"step/model{self.element_ind}": self.curr_step,
+            f"data_hash/model{self.element_ind}/x": hash_x,
+            f"data_hash/model{self.element_ind}/y": hash_y,
+            f"lr/model{self.element_ind}": self.last_step_lr,
+        }
+        self.last_step_batch = None
         return log_dct
+
+    @abstractmethod
+    def step(self, batch):
+        # save information from the last step that was run, to log occasionally
+        self.update_step_snapshot(batch)
+        self.model.train()
+        self.train_iterator.update()
+        self.curr_step += 1
+        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
+            self.opt.zero_grad()
 
 
 class VisionTrainingElement(TrainingElement):
     def step(self, batch):
-        log_dct = super().step(batch)
-        self.opt.zero_grad()
+        super().step(batch)
         x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
@@ -310,7 +378,6 @@ class VisionTrainingElement(TrainingElement):
             out.detach(), y.detach(), targs_perm, k=3, avg=True
         )
         self.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
-        return log_dct
 
 
 class SegmentationTrainingElement(VisionTrainingElement):
@@ -421,7 +488,7 @@ class NLPTrainingElement(TrainingElement):
             self.math_evaluator = MathMetricsEvaluator()
 
     def step(self, batch):
-        log_dct = super().step(batch)
+        super().step(batch)
         # Pre-fetch next batch while computing current one
         batch = {
             k: v.to(self.device, non_blocking=True)
@@ -524,7 +591,6 @@ class NLPTrainingElement(TrainingElement):
                     metrics_kwargs["accuracy"] = avg_correct.item()
 
         self.metrics.update(**metrics_kwargs)
-        return log_dct
 
 
 @dataclass(init=False)
@@ -575,10 +641,12 @@ class CheckpointEvaluationElement(TrainingElement):
         )
         self.__post_init__()
 
+    def get_init_model_vector(self):
+        return None  # this shouldn't be accessed as dist_from_init returns nothing
+
     def step(self, batch):
         self.train_iterator.update()
         self.curr_step += 1
-        return {}
 
     def on_epoch_start(self):
         pass  # do nothing
@@ -599,6 +667,12 @@ class CheckpointEvaluationElement(TrainingElement):
                     f"Checkpoint at step {self.curr_step} not found in {self.ckpt_dir}"
                 )
         return self._model
+
+    def log_train_metrics(self):
+        return {}  # saved checkpoints have no training metrics
+
+    def dist_from_init(self):
+        return {}
 
     def save(self, steps_per_epoch, save_name=None):
         pass  # do nothing

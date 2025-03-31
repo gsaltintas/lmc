@@ -189,6 +189,28 @@ class VisionRegistry(BaseRegistry):
             torch_dataset=D.CIFAR10,
             task_type=TaskType.CLASSIFICATION,
         ),
+        "cifar10easy": VisionConfig(
+            samples=25000,
+            classes=10,
+            channels=3,
+            resolution=32,
+            mean=np.array([0.49139968, 0.48215827, 0.44653124]),
+            std=np.array([0.24703233, 0.24348505, 0.26158768]),
+            can_cache=True,
+            torch_dataset="lmc.data.cifar10split.CIFAR10_EL2N_EASY",
+            task_type=TaskType.CLASSIFICATION,
+        ),
+        "cifar10hard": VisionConfig(
+            samples=25000,
+            classes=10,
+            channels=3,
+            resolution=32,
+            mean=np.array([0.49139968, 0.48215827, 0.44653124]),
+            std=np.array([0.24703233, 0.24348505, 0.26158768]),
+            can_cache=True,
+            torch_dataset="lmc.data.cifar10split.CIFAR10_EL2N_HARD",
+            task_type=TaskType.CLASSIFICATION,
+        ),
         "cifar100": VisionConfig(
             samples=50000,
             classes=100,
@@ -274,6 +296,8 @@ class VisionRegistry(BaseRegistry):
     imagenet1k: ClassVar[VisionConfig] = _registry["imagenet1k"]
     tinyimagenet: ClassVar[VisionConfig] = _registry["tinyimagenet"]
     cifar10: ClassVar[VisionConfig] = _registry["cifar10"]
+    cifar10easy: ClassVar[VisionConfig] = _registry["cifar10easy"]
+    cifar10hard: ClassVar[VisionConfig] = _registry["cifar10hard"]
     cifar100: ClassVar[VisionConfig] = _registry["cifar100"]
     cifar10_random_labels: ClassVar[VisionConfig] = _registry["cifar10_random_labels"]
     mnist: ClassVar[VisionConfig] = _registry["mnist"]

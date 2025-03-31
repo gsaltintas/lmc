@@ -462,6 +462,8 @@ class DataConfig(Config):
     dataset: Literal[
         # Vision datasets
         "cifar10",
+        "cifar10easy",
+        "cifar10hard",
         "mnist",
         "cifar100",
         "tiny-imagenet",
