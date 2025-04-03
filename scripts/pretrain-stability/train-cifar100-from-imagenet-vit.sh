@@ -2,9 +2,9 @@
 #SBATCH --time=249
 #SBATCH --gres=gpu:l40s:1
 ###SBATCH --gres=gpu:rtx8000:1
-#SBATCH --mem-per-cpu=16G
-#SBATCH --tmp=32G
-#SBATCH --cpus-per-gpu=4
+#SBATCH --mem-per-cpu=20G
+#SBATCH --tmp=128G
+#SBATCH --cpus-per-gpu=8
 #SBATCH --job-name=vit
 
 seeds1=(22 45 987)
@@ -83,6 +83,8 @@ python main.py perturb \
     --perturb_inds 1 \
     --normalize_perturb=true \
     --same_steps_pperturb=false \
+    --cka_n_train=10000 \
+    --cka_n_test=10000 \
     --dont_perturb_module_patterns '.*norm.*|.*bias.*' 
 
 # srun --time 480 --mem-per-cpu 16G --tmp 32G --cpus-per-gpu 4 --gres=gpu:l40s:1 --pty bash
