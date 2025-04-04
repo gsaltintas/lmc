@@ -12,14 +12,10 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from lmc.data.data_stats import TaskType
+from lmc.data.math_datasets import MathMetricsEvaluator
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
-from lmc.utils.metrics import (
-    MathMetricsEvaluator,
-    Metrics,
-    compute_metrics,
-    mixup_topk_accuracy,
-)
+from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
 
 logger = logging.getLogger("setup")
@@ -592,6 +588,22 @@ class NLPTrainingElement(TrainingElement):
 
         self.metrics.update(**metrics_kwargs)
 
+    def get_step_snapshot(self):
+        if self.last_step_batch is None:
+            return {}  # this prevents get_step_snapshot from logging the same step twice
+        batch = self.last_step_batch
+        x = batch["input_ids"]
+        hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
+        # hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
+        log_dct = {
+            f"step/model{self.element_ind}": self.curr_step,
+            f"data_hash/model{self.element_ind}/x": hash_x,
+            # f"data_hash/model{self.element_ind}/y": hash_y,
+            f"lr/model{self.element_ind}": self.last_step_lr,
+        }
+        self.last_step_batch = None
+        return log_dct
+
 
 @dataclass(init=False)
 class CheckpointEvaluationElement(TrainingElement):
@@ -656,7 +668,9 @@ class CheckpointEvaluationElement(TrainingElement):
         if self.loaded_model_step != self.curr_step:
             if self.curr_step in self.ckpts:
                 ckpt_path = self.ckpts[self.curr_step]
-                ckpt = torch.load(ckpt_path, map_location=self.device)
+                ckpt = torch.load(
+                    ckpt_path, map_location=self.device, weights_only=False
+                )
                 logger.info(
                     f"model{self.element_ind} loaded from checkpoint {ckpt_path}"
                 )

@@ -1,7 +1,7 @@
 import logging
 import re
 from copy import deepcopy
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from torch import nn
@@ -115,17 +115,15 @@ def get_batch_noise(
 
     # Compute gradients w.r.t the model's parameters
     noise = {}
-    non_noise_layers = []
     for name, param in model.named_parameters():
         grad = param.grad
         if name not in layers:
-            non_noise_layers.append(name)
+            logger.info(f"Not generating any noise for parameter ({name}).")
             noise[name] = torch.zeros_like(param)
         elif grad is None:
             grad = torch.zeros_like(param)
         else:
             noise[name] = grad.clone()
-    logger.info(f"Did not generate any noise for parameters: ({non_noise_layers}).")
     model.zero_grad()
     return noise
 
@@ -153,17 +151,15 @@ def get_gaussian_noise(
     # when adding noise to w, (w+n)*x = wx + xn has scale proportional to w
     # when adding noise to x, w*(x+n) = wx + wn should also have the same scale
     noise_dct = dict()
-    not_perturbed_layers = []
     for name, param in model.named_parameters():
         if name not in layers:
-            not_perturbed_layers.append(name)
+            logger.info(f"Not generating any noise for parameter ({name}).")
             noise_dct[name] = torch.zeros_like(param)
             continue
         noise = torch.empty_like(param)
         with torch.no_grad():
             torch.nn.init.normal_(noise, 0, std[name])
         noise_dct[name] = noise
-    logger.info(f"Did not generate any noise for parameters ({not_perturbed_layers}).")
     model.zero_grad()
     return noise_dct
 
@@ -200,13 +196,7 @@ def perturb_model(
     else:
         model = deepcopy(model)
         model.load_state_dict(perturb_params)
-    return model
-
-
-def get_l2(noise: Union[Dict[str, torch.Tensor], torch.Tensor]) -> float:
-    if isinstance(noise, dict):
-        noise = nn.parameters_to_vector(noise.values())
-    return torch.linalg.norm(noise)
+    return model, masked_noise, total_changed / total_elements, changed_per_layer
 
 
 def get_all_init_l2s(model, layers) -> Tuple[float, Dict[str, float]]:
