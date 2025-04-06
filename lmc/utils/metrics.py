@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
@@ -246,43 +247,6 @@ def compute_math_metrics(model_output, batch):
 
     metrics = evaluate_math_qa(predicted_answers, true_answers)
     return metrics
-
-
-import re
-from typing import Dict, List
-
-import evaluate
-
-
-class MathMetricsEvaluator:
-    def __init__(self):
-        self.exact_match = evaluate.load("exact_match")
-
-    def extract_answer(self, text: str) -> str:
-        """Extract numerical answer from model output."""
-        # Clean number format (remove commas in numbers)
-        text = re.sub(r"(\d),(\d)", r"\1\2", text)
-        # Find all numbers in the text
-        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
-        return numbers[-1] if numbers else ""
-
-    def compute_metrics(
-        self, predictions: List[str], references: List[str]
-    ) -> Dict[str, float]:
-        # Clean and extract answers from predictions
-        cleaned_preds = [self.extract_answer(pred) for pred in predictions]
-        # Clean reference answers
-        cleaned_refs = [re.sub(r"(\d),(\d)", r"\1\2", ref) for ref in references]
-
-        # Compute exact match score
-        metrics = self.exact_match.compute(
-            predictions=cleaned_preds,
-            references=cleaned_refs,
-            ignore_case=True,
-            ignore_punctuation=True,
-        )
-
-        return {"exact_match": metrics["exact_match"]}
 
 
 METRIC_TO_FUNCTION = {

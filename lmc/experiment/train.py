@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 import wandb
 from lmc.data.data_stats import TaskType
+from lmc.data.math_datasets import MathMetricsEvaluator
 from lmc.experiment.base import ExperimentManager
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
@@ -17,7 +18,6 @@ from lmc.utils.cka import evaluate_cka, evaluate_ensemble
 from lmc.utils.lmc_utils import check_lmc, evaluate_merge
 from lmc.utils.metrics import (
     AverageMeter,
-    MathMetricsEvaluator,
     Metrics,
     compute_metrics,
     mixup_topk_accuracy,
@@ -73,7 +73,7 @@ class TrainingRunner(ExperimentManager):
             self.config.data.task_type == TaskType.GENERATION
             and self.config.data.dataset in ["gsm8k", "math", "mathqa", "asdiv"]
         ):
-            self.math_evaluator = MathMetricsEvaluator()
+            self.math_evaluator = MathMetricsEvaluator(self.config.data.dataset)
 
     def get_steps(self, freq, step_list):
         steps = set()
@@ -147,13 +147,13 @@ class TrainingRunner(ExperimentManager):
         for next_el_ind in range(i, self.config.n_models):
             next_el = self.training_elements[next_el_ind]
             log_dct.update(element.dist_from_element(next_el))
-            if self.config.cka_n_train:
+            if self.config.cka_n_train and self.config.n_models > 1:
                 log_dct.update(
                     evaluate_cka(
                         element, next_el, train=True, n_examples=self.config.cka_n_train
                     )
                 )
-            if self.config.cka_n_test:
+            if self.config.cka_n_test and self.config.n_models > 1:
                 log_dct.update(
                     evaluate_cka(
                         element, next_el, train=False, n_examples=self.config.cka_n_test
@@ -478,7 +478,6 @@ class TrainingRunner(ExperimentManager):
                     # do_sample=False,
                     do_sample=True,
                 )
-
                 # # Decode generations
                 # predictions = model.generation_tokenizer.batch_decode(
                 #     generated_outputs, skip_special_tokens=True
@@ -488,7 +487,6 @@ class TrainingRunner(ExperimentManager):
                 #     # batch["labels"],
                 #     skip_special_tokens=True,
                 # )
-
                 # Clean the outputs during decoding
                 predictions = [
                     pred.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
@@ -502,7 +500,7 @@ class TrainingRunner(ExperimentManager):
                 references = [
                     ref.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
                     for ref in model.generation_tokenizer.batch_decode(
-                        batch["reference_ids"],
+                        batch["labels"],
                         skip_special_tokens=True,
                         # batch["labels"], skip_special_tokens=False
                     )
@@ -511,19 +509,6 @@ class TrainingRunner(ExperimentManager):
                     predictions, references
                 )
 
-                if batch_idx == 0:  # First batch
-                    print("\nSample Generation:")
-                    for i in range(min(2, len(predictions))):
-                        print(f"\nInput {i}:")
-                        print(model.generation_tokenizer.decode(batch["input_ids"][i]))
-                        print("===" * 50)
-                        print(f"\nGenerated {i}:")
-                        print(predictions[i])
-                        print("===" * 50)
-                        print(f"\nReference {i}:")
-                        print(references[i])
-                        print("===" * 100)
-                        print("===" * 100)
                 predictions = outputs.logits
 
                 metrics_kwargs.update(math_metrics)

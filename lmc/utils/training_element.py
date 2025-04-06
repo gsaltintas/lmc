@@ -197,7 +197,9 @@ class TrainingElement(ABC):
 
     def get_init_model_vector(self):
         # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
-        params = [p.detach().cpu().contiguous() for p in self.model.parameters()]
+        params = [
+            p.clone().detach().cpu().contiguous() for p in self.model.parameters()
+        ]
         return params_to_vector(params)
 
     def setup_iterators(self):
@@ -275,7 +277,9 @@ class TrainingElement(ABC):
         return log_dct
 
     def dist_from_element(self, el: "TrainingElement") -> Dict[str, Any]:
-        other_params = [p.detach().cpu().contiguous() for p in el.model.parameters()]
+        other_params = [
+            p.clone().detach().cpu().contiguous() for p in el.model.parameters()
+        ]
         other_vector = torch.nn.utils.parameters_to_vector(other_params)
         i = self.element_ind
         j = el.element_ind
@@ -496,6 +500,9 @@ class NLPTrainingElement(TrainingElement):
         # Forward pass depends on task type
         if self.config.data.task_type == TaskType.GENERATION:
             # Language modeling
+            import code
+
+            code.interact(local=locals() | globals())
             outputs = self.model(**batch)
             loss = outputs.loss
         elif self.config.data.task_type in [
@@ -549,6 +556,7 @@ class NLPTrainingElement(TrainingElement):
                 #  Optionally track token-level accuracy if needed
                 shift_logits = outputs.logits[..., :-1, :].contiguous()
                 shift_labels = batch["labels"][..., 1:].contiguous()
+                ## TODO: problematic, fix
                 token_acc = (shift_logits.argmax(-1) == shift_labels).float().mean()
                 metrics_kwargs["accuracy"] = token_acc.item()
                 # metrics_kwargs["token_accuracy"] = token_acc.item()

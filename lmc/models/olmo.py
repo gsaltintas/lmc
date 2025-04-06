@@ -6,7 +6,6 @@ import torch
 import transformers
 from torch import nn
 from transformers import (
-    AutoConfig,
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -54,29 +53,13 @@ class OLMo(BaseModel):
         self.model_name = model_name
         self.task_type = task_type
         super().__init__(output_dim, initialization_strategy, act="act", norm=norm)
-
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            revision=revision,
-            chat_template=CHAT_TEMPLATES.get(chat_template, None),
-            padding_side="right",  # Default, but being explicit
-        )
-        self.generation_tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            chat_template=chat_template,
-            revision=revision,
-            padding_side="left",  # Default, but being explicit
-        )
-        # Set padding token if not defined
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.generation_tokenizer.pad_token = self.tokenizer.eos_token
+        kwargs = dict(device_map="auto")
+        if use_bfloat16:
+            kwargs["torch_dtype"] = torch.bfloat16
 
         if initialization_strategy == "pretrained":
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, trust_remote_code=True, revision=revision
+                model_name, trust_remote_code=True, revision=revision, **kwargs
             )
             if task_type == "classification":
                 if output_dim is None:
@@ -99,12 +82,32 @@ class OLMo(BaseModel):
                 )
             else:  # generation
                 self.model = AutoModelForCausalLM(
-                    config, trust_remote_code=True, revision=revision
+                    config, trust_remote_code=True, revision=revision, **kwargs
                 )
 
             self.logger.info(
                 f"OLMo model initialized from scratch, if that's not the desired behavior pass --initialization_strategy=pretrained."
             )
+        print(f"Loading tokenizer")
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            revision=revision,
+            chat_template=CHAT_TEMPLATES.get(chat_template, None),
+            padding_side="right",  # Default, but being explicit
+            config=self.model.config,
+        )
+        self.generation_tokenizer = AutoTokenizer.from_pretrained(
+            model_name,
+            trust_remote_code=True,
+            chat_template=chat_template,
+            revision=revision,
+            padding_side="left",  # Default, but being explicit
+        )
+        # Set padding token if not defined
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.generation_tokenizer.pad_token = self.tokenizer.eos_token
 
         if gradient_checkpointing:
             self.model.gradient_checkpointing_enable()

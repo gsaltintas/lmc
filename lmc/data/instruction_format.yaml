@@ -1,0 +1,9 @@
+      
+openai/gsm8k:
+    instruction:
+        You are a helpful assistant specializing in solving mathematical word problems.
+        Return your final answer after '####' only in digits, without explanations.
+    user_input: question
+    assistant_output: answer
+    task_type: chain_of_thought
+    answer_len: long
