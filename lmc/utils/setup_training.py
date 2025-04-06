@@ -27,7 +27,7 @@ from transformers import (
 import wandb
 from lmc.config import DataConfig
 from lmc.data.data_stats import DatasetRegistry, TaskType
-from lmc.data.math_datasets import get_math_preprocessor
+from lmc.data.math_datasets import MathDatasetLoader, get_math_preprocessor
 from lmc.data.random_labels import RandomLabelDataset
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
@@ -364,7 +364,9 @@ def get_task_preprocessor(
     """Returns the appropriate preprocessing function for the given task type."""
 
     if data_conf.dataset in ["gsm8k", "math", "mathqa", "asdiv"]:
-        return get_math_preprocessor(
+        loader = MathDatasetLoader(tokenizer, data_conf.dataset_info)
+        return loader.process_example
+        return (
             tokenizer,
             data_conf,
             evaluate,

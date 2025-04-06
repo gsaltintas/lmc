@@ -3,12 +3,24 @@
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 from torchvision import datasets as D
+from yaml import Loader, load
 
 logger = logging.getLogger(__name__)
+
+
+def get_instruction_formats():
+    p = Path(__file__).parent / "instruction_format.yaml"
+    with open(p, "r") as f:
+        dct = load(f, Loader=Loader)
+    return dct
+
+
+instruction_formats = get_instruction_formats()
 
 
 class TaskType(Enum):
@@ -20,6 +32,7 @@ class TaskType(Enum):
     SEQUENCE_LABELING = "sequence_labeling"
     REGRESSION = "regression"
     SEGMENTATION = "segmentation"
+    INSTRUCTION = "instruction"
 
 
 # Vision Registry
@@ -52,6 +65,8 @@ class LanguageConfig:
     vocab_size: Optional[int] = None
     metrics: List[str] = field(default_factory=list)  # Add this field
     trust_remote_code: bool = False
+    dataset_text_field: str = "text"
+    dataset_label_field: str = "label"
 
     def is_generation(self):
         return self.task_type == TaskType.GENERATION
@@ -59,6 +74,7 @@ class LanguageConfig:
     def __post_init__(self):
         if self.max_gen_seq_length is None:
             self.max_gen_seq_length = self.max_seq_length
+        self.instruction_format = instruction_formats.get(self.hf_path, {})
 
 
 @dataclass
@@ -323,6 +339,8 @@ class MathDatasetRegistry(BaseRegistry):
             splits={"train": "train", "validation": "test"},
             metrics=["exact_match"],
             max_gen_seq_length=128,
+            dataset_text_field="question",
+            dataset_label_field="answer",
         ),
         "math": LanguageConfig(
             samples=1744,  # {"train": 7500, "test": 5000},
@@ -602,6 +620,48 @@ class GenerationRegistry(BaseRegistry):
     c4: ClassVar[LanguageConfig] = _registry["c4"]
     pile: ClassVar[LanguageConfig] = _registry["pile"]
     bookcorpus: ClassVar[LanguageConfig] = _registry["bookcorpus"]
+
+
+class InstructionTuningRegistry(BaseRegistry):
+    _registry: ClassVar[Dict[str, LanguageConfig]] = {
+        "alpaca": LanguageConfig(
+            samples=52002,  # Alpaca dataset has 52K instruction-following examples
+            classes=None,  # Not a classification task
+            vocab_size=None,  # Use default vocab size from the model
+            task_type=TaskType.INSTRUCTION,  # Instruction-based task
+            max_seq_length=512,  # Standard context length
+            hf_path="tatsu-lab/alpaca",  # Hugging Face dataset path
+            max_gen_seq_length=128,  # Reasonable generation length for instructions
+            splits={"train": "train"},  # Only has a train split
+            metrics=["exact_match", "rouge"],  # Common metrics for instruction tuning
+            trust_remote_code=False,
+        ),
+        # "tulu-3-sft-mixture": LanguageConfig(
+        #     samples=
+        # )
+        "tulu-3-sft-personas-instruction-following": LanguageConfig(
+            samples=29980,
+            classes=None,
+            vocab_size=None,
+            task_type=TaskType.INSTRUCTION,  # Instruction-based task
+            max_seq_length=512,  # Standard context length
+            hf_path="allenai/tulu-3-sft-personas-instruction-following",
+            splits={"train": "train"},  # Only has a train split
+            metrics=["exact_match", "rouge"],  # Common metrics for instruction tuning
+            trust_remote_code=True,
+        ),
+        "drop": LanguageConfig(
+            samples=86935,
+            hf_path="ucinlp/drop",
+            vocab_size=None,
+            classes=None,
+            task_type=TaskType.INSTRUCTION,  # Instruction-based task
+            max_seq_length=512,  # Standard context length
+            splits={"train": "train", "test": "validation"},
+            metrics=[],  # TODO
+        ),
+    }
+    alpaca: ClassVar[LanguageConfig] = _registry["alpaca"]
 
 
 class GLUERegistry(BaseRegistry):
