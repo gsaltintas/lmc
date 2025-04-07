@@ -676,6 +676,7 @@ class LoggerConfig(Config):
     print_summary: bool = True
     print_optimizers: bool = True
     push_to_hub: bool = False
+    hf_path: str = ""
 
     project: str = None
     entity: str = None
@@ -708,6 +709,17 @@ class LoggerConfig(Config):
         else:
             s = current_slurm_id
         self.log_dir = Path(self.log_dir).resolve().absolute()
+        if self.hf_path == "":
+            from huggingface_hub import whoami
+
+            user = whoami()
+            if "name" not in user:
+                raise ValueError(
+                    "Huggingface user unknown, please provide a valid hf_path to push the end model to the hub."
+                )
+            user = user["name"]
+            self.hf_path = f"{user}/{self.run_name}-{current_slurm_id}"
+        self.hf_path = self.hf_path.replace("--", "_").replace("..", "_")
         return super().__post_init__()
 
 
@@ -751,6 +763,8 @@ class ModelConfig_(Config):
             raise ValueError(
                 f"Model name not properly configured, try one of {pformat(MODEL_NAME_PATTERNS)}"
             )
+        if self.revision.lower() in ["null", "none"]:
+            self.revision = None
         return super().__post_init__()
 
 

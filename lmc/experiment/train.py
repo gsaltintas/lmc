@@ -342,9 +342,9 @@ class TrainingRunner(ExperimentManager):
                 logits = outputs.logits
             else:
                 logits = outputs
-            import code
+            # import code
 
-            code.interact(local=locals() | globals())
+            # code.interact(local=locals() | globals())
             # Resize logits to match mask size if needed
             if logits.shape[2:] != masks.shape[1:]:
                 logits = torch.nn.functional.interpolate(
@@ -449,12 +449,13 @@ class TrainingRunner(ExperimentManager):
 
         iterator.reset()
         for batch_idx, batch in enumerate(loader):
+            if batch_idx > 20:
+                break
             batch = {
                 k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                 for k, v in batch.items()
             }
             iterator.update()
-
             outputs = model(**batch)
             n = batch["input_ids"].shape[0]
             metrics_kwargs = {"n": n}
@@ -478,40 +479,39 @@ class TrainingRunner(ExperimentManager):
                     # do_sample=False,
                     do_sample=True,
                 )
-                # # Decode generations
-                # predictions = model.generation_tokenizer.batch_decode(
-                #     generated_outputs, skip_special_tokens=True
-                # )
-                # references = model.generation_tokenizer.batch_decode(
-                #     batch["reference_ids"],
-                #     # batch["labels"],
-                #     skip_special_tokens=True,
-                # )
                 # Clean the outputs during decoding
                 predictions = [
-                    pred.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
+                    self.math_evaluator.extract_answer(
+                        self.math_evaluator.normalize_answer(pred)
+                    )
                     for pred in model.generation_tokenizer.batch_decode(
                         generated_outputs,
-                        skip_special_tokens=False,  # We'll clean manually
+                        skip_special_tokens=True,  # We'll clean manually
                     )
                 ]
 
                 # Clean the references
+                labels = batch["labels"].clone()
+                labels[labels == -100] = model.generation_tokenizer.pad_token_id
+
                 references = [
-                    ref.split("<|assistant|>")[-1].split("<|endoftext|>")[0].strip()
+                    self.math_evaluator.extract_answer(
+                        self.math_evaluator.normalize_answer(ref)
+                    )
                     for ref in model.generation_tokenizer.batch_decode(
-                        batch["labels"],
-                        skip_special_tokens=True,
-                        # batch["labels"], skip_special_tokens=False
+                        labels,
+                        skip_special_tokens=True,  # We'll clean manually
                     )
                 ]
                 math_metrics = self.math_evaluator.compute_metrics(
-                    predictions, references
+                    predictions,
+                    references,
+                    # generated_outputs[""]
                 )
 
                 predictions = outputs.logits
 
-                metrics_kwargs.update(math_metrics)
+                metrics_kwargs.update({"accuracy": math_metrics["exact_match"]})
 
             # Update dataset-specific metrics
             elif dataset.metrics:

@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from lmc.config import Config, DataConfig
 from lmc.data.data_stats import TaskType
+from lmc.data.math_datasets import MathMetricsEvaluator
 from lmc.models.base_model import BaseModel
 from lmc.permutations.activation_alignment import activation_matching
 from lmc.permutations.perm_stability import sinkhorn_kl
@@ -519,16 +520,23 @@ def check_lmc(
                     )
     print("=" * 25, " LMC Results ", "=" * 25)
     print(results.dropna(axis=1, how="all"))
-    print("=" * 22, " LMC Results (WM) ", "=" * 23)
-    print(results_perm_wm.dropna(axis=1, how="all"))
-    print("=" * 22, " LMC Results (AM) ", "=" * 23)
-    print(results_perm_act_aligned.dropna(axis=1, how="all"))
+    if check_perms:
+        print("=" * 22, " LMC Results (WM) ", "=" * 23)
+        print(results_perm_wm.dropna(axis=1, how="all"))
+        if results_perm_act_aligned is not None:
+            print("=" * 22, " LMC Results (AM) ", "=" * 23)
+            print(results_perm_act_aligned.dropna(axis=1, how="all"))
     print(log_dct)
     return results, results_perm_wm, results_perm_act_aligned
 
 
 def evaluate_model_language(
-    model, loader, data_config: DataConfig, device=None, criterion=None
+    model,
+    loader,
+    data_config: DataConfig,
+    device=None,
+    criterion=None,
+    math_evaluator=None,
 ) -> dict:
     """
     Evaluate language model using HuggingFace model's native functionality.
@@ -536,6 +544,8 @@ def evaluate_model_language(
     """
     if device is None:
         device = model.device
+    if math_evaluator is None:
+        math_evaluator = MathMetricsEvaluator(data_config.dataset)
     model.eval()
     dataset = data_config.dataset_info
 
@@ -552,9 +562,45 @@ def evaluate_model_language(
         metrics_kwargs = {"n": n}
         # Always track loss
         metrics_kwargs["cross_entropy"] = outputs.loss.item()
+        metrics_kwargs["perplexity"] = torch.exp(outputs.loss).item()
 
         # Update dataset-specific metrics
-        if dataset.metrics:
+        if data_config.task_type == TaskType.GENERATION:
+            generated_outputs = model.generate(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                # max_new_tokens=256,
+                # max_new_tokens=512,
+                # num_beams=5,  # Add beam search
+                temperature=0.7,  # Add some temperature
+                no_repeat_ngram_size=3,  # Prevent repetition
+                max_new_tokens=data_config.max_gen_seq_length,
+                pad_token_id=model.tokenizer.pad_token_id,
+                # eos_token_id=model.tokenizer.eos_token_id,
+                # do_sample=False,
+                do_sample=True,
+            )
+            predictions = [
+                math_evaluator.extract_answer(math_evaluator.normalize_answer(pred))
+                for pred in model.generation_tokenizer.batch_decode(
+                    generated_outputs,
+                    skip_special_tokens=True,  # We'll clean manually
+                )
+            ]
+            references = [
+                math_evaluator.extract_answer(math_evaluator.normalize_answer(ref))
+                for ref in model.generation_tokenizer.batch_decode(
+                    batch["labels"],
+                    skip_special_tokens=True,  # We'll clean manually
+                )
+            ]
+            math_metrics = math_evaluator.compute_metrics(
+                predictions,
+                references,
+                # generated_outputs[""]
+            )
+            metrics_kwargs.update({"accuracy": math_metrics["exact_match"]})
+        elif dataset.metrics:
             if data_config.task_type == TaskType.REGRESSION:
                 predictions = outputs.logits
             else:
