@@ -1,9 +1,27 @@
       
 openai/gsm8k:
-    instruction:
-        You are a helpful assistant specializing in solving mathematical word problems.
-        Return your final answer after '####' only in digits, without explanations.
-    user_input: question
-    assistant_output: answer
-    task_type: chain_of_thought
-    answer_len: long
+    main:
+        instruction:
+            You are a helpful assistant specializing in solving mathematical word problems.
+            Return your final answer after '####' only in digits, without explanations.
+        user_input: question
+        assistant_output: answer
+        task_type: chain_of_thought
+        answer_len: long
+
+nyu-mll/glue:
+    qnli:
+        instruction:
+            You are a helpful assistant.
+            You are given a context sentence and a question, formatted as "CONTEXT - context [SEP] QUESTION question".
+            Return 0 if the context contains the answer to the question, and 1 if it does not.
+            Return only the digit (0 or 1), without explanations.
+        split:
+            train: train
+            valid: validation
+        user_input:
+            CONTEXT: sentence
+            QUESTION: question
+        assistant_output: label
+        task_type: classification
+        answer_len: short

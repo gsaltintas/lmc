@@ -1,5 +1,6 @@
 #### WIP
 #
+import logging
 from typing import Any, Dict
 
 from datasets import load_dataset
@@ -7,6 +8,8 @@ from transformers import PreTrainedTokenizer
 
 from lmc.config import DataConfig
 from lmc.data.data_stats import LanguageConfig
+
+logging.basicConfig(level=logging.INFO)
 
 
 def format_chat_template(prompt, row):
@@ -56,47 +59,111 @@ def format_chat_template(prompt, row):
 class MathDatasetLoader:
     """Handles loading and processing of individual math datasets."""
 
-    def __init__(self, tokenizer, config: LanguageConfig):
+    def __init__(
+        self,
+        tokenizer,
+        config,
+        padding: bool = True,
+        eval: bool = False,
+    ):
         self.tokenizer = tokenizer
         self.config = config
+        self.padding = padding
+        self.eval = eval
+        if eval:
+            self.padding_side = "left"
+        else:
+            self.padding_side = "right"
 
-    def process_example(self, example):
+    def process_example(self, example, add_generation_prompt: bool = False):
+        """Process a single example"""
+        return self._process_data(example, add_generation_prompt)
+
+    def process_batch(self, examples, add_generation_prompt: bool = False):
+        """Process a batch of examples"""
+        # Initialize result dictionaries with empty lists
+        result = {"input_ids": [], "attention_mask": [], "labels": []}
+        processed_inputs = []
+        # Process each example in the batch
+        n = examples
+        for i in range(len(examples[next(iter(examples))])):
+            # Extract a single example from the batch
+            example = {k: examples[k][i] for k in examples}
+
+            # Process the individual example
+            processed = self._process_data(example, add_generation_prompt)
+            processed_inputs.append(processed)
+            continue
+        tokenized = self.tokenizer(
+            processed_inputs,
+            truncation=True,
+            padding="max_length",  # Always pad to max_length
+            max_length=self.config.max_seq_length,
+            return_tensors="pt",
+            padding_side=self.padding_side,
+        )
+
+        # Add labels for causal language modeling (also padded)
+        tokenized["labels"] = tokenized["input_ids"].clone()
+
+        return tokenized
+
+    def _process_data(self, example, add_generation_prompt: bool = False):
+        """Internal method to process a single example"""
+
         if "gsm8k" in self.config.hf_path:
             instruction_format = self.config.instruction_format
-            import code
-
-            code.interact(local=locals() | globals())
             chat = format_chat_template(instruction_format, example)
-            return self.tokenizer.apply_chat_template(
+
+            # Get formatted string first
+            formatted_text = self.tokenizer.apply_chat_template(
                 chat,
                 tokenize=False,
                 add_special_tokens=False,
-                add_generation_prompt=False,  # TODO: check this
-                # return_tensors="pt",
+                add_generation_prompt=add_generation_prompt,
             )
-            prompt = f"Question: {example['question']}\nSolve step by step:"
-            target = example["answer"]
+            return formatted_text
         # EleutherAI/hendrycks_math
         elif "hendrycks_math" in self.config.hf_path:
             prompt = f"Problem: {example['problem']}"
             target = example["solution"]
 
+            # Tokenize combined input and target
+            formatted_text = prompt + self.tokenizer.eos_token + target
+            tokenized = self.tokenizer(
+                formatted_text,
+                max_length=self.config.max_seq_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors=None,
+            )
+
+            # Add labels for causal language modeling
+            tokenized["labels"] = tokenized["input_ids"].copy()
+            return tokenized
+
         elif "math_qa" in self.config.hf_path:
             prompt = f"Question: {example['Problem']}\nOptions: {example['options']}"
             target = f"{example['Rationale']}\nAnswer: {example['correct']}"
+
+            # Tokenize combined input and target
+            formatted_text = prompt + self.tokenizer.eos_token + target
+            tokenized = self.tokenizer(
+                formatted_text,
+                max_length=self.config.max_seq_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors=None,
+            )
+
+            # Add labels for causal language modeling
+            tokenized["labels"] = tokenized["input_ids"].copy()
+            return tokenized
 
         else:
             raise ValueError(
                 f"{self.config.hf_path} not yet supported in math datasets."
             )
-        return self.tokenizer(
-            prompt,
-            target,
-            max_length=self.config.max_seq_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
 
     def load_dataset(self, split="train"):
         dataset = load_dataset(
