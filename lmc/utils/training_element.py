@@ -256,7 +256,7 @@ class TrainingElement(ABC):
 
     def _dist_statistics(self, other_vector):
         current_params = [
-            p.detach().cpu().contiguous() for p in self.model.parameters()
+            p.clone().detach().cpu().contiguous() for p in self.model.parameters()
         ]
         current_vector = torch.nn.utils.parameters_to_vector(current_params)
         dist = torch.linalg.norm(current_vector - other_vector)
@@ -322,6 +322,12 @@ class TrainingElement(ABC):
             / save_name,
             pickle_protocol=4,
         )
+        if self.config.logger.push_to_hub:
+            try:
+                path = f"{self.config.logger.hf_path}-{self.element_ind}"
+                self.model.model.push_to_hub(path)
+            except Exception as e:
+                print(f"Proble pushing to hub {e}")
 
     def update_step_snapshot(self, batch):
         self.last_step_batch = batch
@@ -404,9 +410,9 @@ class SegmentationTrainingElement(VisionTrainingElement):
             logits = outputs.logits
         else:
             logits = outputs
-        import code
+        # import code
 
-        code.interact(local=locals() | globals())
+        # code.interact(local=locals() | globals())
 
         # Resize logits to match mask size if needed
         if logits.shape[-2:] != y.shape[-2:]:
@@ -500,9 +506,6 @@ class NLPTrainingElement(TrainingElement):
         # Forward pass depends on task type
         if self.config.data.task_type == TaskType.GENERATION:
             # Language modeling
-            import code
-
-            code.interact(local=locals() | globals())
             outputs = self.model(**batch)
             loss = outputs.loss
         elif self.config.data.task_type in [
@@ -553,13 +556,13 @@ class NLPTrainingElement(TrainingElement):
             if self.config.data.task_type == TaskType.GENERATION:
                 perplexity = torch.exp(loss)
                 metrics_kwargs["perplexity"] = perplexity.item()
-                #  Optionally track token-level accuracy if needed
-                shift_logits = outputs.logits[..., :-1, :].contiguous()
-                shift_labels = batch["labels"][..., 1:].contiguous()
-                ## TODO: problematic, fix
-                token_acc = (shift_logits.argmax(-1) == shift_labels).float().mean()
-                metrics_kwargs["accuracy"] = token_acc.item()
-                # metrics_kwargs["token_accuracy"] = token_acc.item()
+                # #  Optionally track token-level accuracy if needed
+                # shift_logits = outputs.logits[..., :-1, :].contiguous()
+                # shift_labels = batch["labels"][..., 1:].contiguous()
+                # ## TODO: problematic, fix
+                # token_acc = (shift_logits.argmax(-1) == shift_labels).float().mean()
+                # metrics_kwargs["accuracy"] = token_acc.item()
+                # # metrics_kwargs["token_accuracy"] = token_acc.item()
 
             elif dataset.metrics:
                 if self.config.data.task_type == TaskType.REGRESSION:

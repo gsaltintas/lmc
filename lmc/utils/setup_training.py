@@ -24,6 +24,10 @@ from transformers import (
     PreTrainedTokenizer,
 )
 
+# TODO: check
+# from trl import DataCollatorWithCompletionOnly
+from trl import DataCollatorForCompletionOnlyLM
+
 import wandb
 from lmc.config import DataConfig
 from lmc.data.data_stats import DatasetRegistry, TaskType
@@ -360,12 +364,14 @@ def get_task_preprocessor(
     tokenizer: PreTrainedTokenizer,
     data_conf: DataConfig,
     evaluate: bool,
-) -> Callable:
+) -> Tuple[Callable, bool]:
     """Returns the appropriate preprocessing function for the given task type."""
-
+    batched = True
     if data_conf.dataset in ["gsm8k", "math", "mathqa", "asdiv"]:
-        loader = MathDatasetLoader(tokenizer, data_conf.dataset_info)
-        return loader.process_example
+        loader = MathDatasetLoader(
+            tokenizer, data_conf.dataset_info, padding=evaluate, eval=evaluate
+        )
+        return loader.process_batch, True
         return (
             tokenizer,
             data_conf,
@@ -561,7 +567,14 @@ def get_task_preprocessor(
         TaskType.REGRESSION: preprocess_sequence_pair,
     }
 
-    return preprocessors[task_type]
+    return preprocessors[task_type], batched
+
+
+def ensure_labels(examples):
+    # Ensure labels are present
+    if "labels" not in examples and "input_ids" in examples:
+        examples["labels"] = [ids.copy() for ids in examples["input_ids"]]
+    return examples
 
 
 def setup_nlp_loader(
@@ -592,7 +605,8 @@ def setup_nlp_loader(
             split = splits["test"]
         else:
             logger.warning(
-                f"Dataset {data_conf.dataset} has no validation/test split, using train split"
+                "Dataset %s has no validation/test split, using train split",
+                data_conf.dataset,
             )
             split = splits["train"]
 
@@ -609,8 +623,8 @@ def setup_nlp_loader(
     dataset = load_dataset(dataset_conf.hf_path, **load_kwargs)
 
     # Debug: print first example
-    logger.debug(f"First example from dataset: {dataset[0]}")
-    logger.debug(f"Dataset features: {dataset.features}")
+    logger.debug("First example from dataset: %s", dataset[0])
+    logger.debug("Dataset features: %s", str(dataset.features))
     tokenizer_to_use = tokenizer
     # For math tasks in evaluation mode, use left padding
     if (
@@ -621,19 +635,27 @@ def setup_nlp_loader(
         # Deep copy the tokenizer for evaluation
         eval_tokenizer = deepcopy(tokenizer)
         eval_tokenizer.padding_side = "left"
+        # check if this is necessary
         if eval_tokenizer.pad_token is None:
+            print(f"No pad token found")
             eval_tokenizer.pad_token = eval_tokenizer.eos_token
         tokenizer_to_use = eval_tokenizer
+        print("Using a generation tokenizer, wwith padding='left'.")
 
     # Get appropriate preprocessor
-    preprocessor = get_task_preprocessor(
+    preprocessor, batched = get_task_preprocessor(
         task_type, tokenizer_to_use, data_conf, evaluate
     )
 
     # Transform dataset
     tokenized_dataset = dataset.map(
-        preprocessor, batched=True, remove_columns=dataset.column_names
+        preprocessor,
+        batched=batched,
+        remove_columns=dataset.column_names,
+        num_proc=1,  # Force single process execution
+        disable_nullable=True,
     )
+    # tokenized_dataset = tokenized_dataset.map(ensure_labels, batched=True)
 
     # Setup data collator based on task
     if task_type == TaskType.GENERATION and data_conf.whole_word_masking:
@@ -643,7 +665,15 @@ def setup_nlp_loader(
             mlm_probability=data_conf.masking_probability,
         )
     else:
-        data_collator = DataCollatorWithPadding(tokenizer_to_use)
+        ## TODO: only implemented for olmo
+        response_template = "#### "
+        response_template = "<|assistant|>"
+        data_collator = DataCollatorForCompletionOnlyLM(
+            tokenizer_to_use.encode(response_template, add_special_tokens=False),
+            tokenizer=tokenizer,
+        )
+
+        # data_collator = DataCollatorWithPadding(tokenizer_to_use)
 
     batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
     return DataLoader(
@@ -771,13 +801,13 @@ def setup_model_dir(config: Trainer) -> Path:
         config.model_dir = Path(
             config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}"
         )
-        logger.info(f"Created model dir: {config.model_dir}")
+        logger.info("Created model dir: %s", config.model_dir)
     elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
         now = datetime.now()
         short_id = str(now.microsecond)[-4:]
         config.model_dir = Path(str(config.model_dir) + "_" + short_id)
         logger.info(
-            f"enforce_new_model_dir True, creating a new model dir: {config.model_dir}"
+            "enforce_new_model_dir True, creating a new model dir: %s", config.model_dir
         )
     config.model_dir = Path(config.model_dir)
     config.model_dir.mkdir(exist_ok=True)
