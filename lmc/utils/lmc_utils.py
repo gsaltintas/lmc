@@ -551,7 +551,7 @@ def evaluate_model_language(
 
     metrics = Metrics()
     metrics_kwargs = {}
-    for batch in loader:
+    for i, batch in enumerate(loader):
         batch = {
             k: v.to(model.device) if isinstance(v, torch.Tensor) else v
             for k, v in batch.items()
@@ -584,14 +584,18 @@ def evaluate_model_language(
                 math_evaluator.extract_answer(math_evaluator.normalize_answer(pred))
                 for pred in model.generation_tokenizer.batch_decode(
                     generated_outputs,
-                    skip_special_tokens=True,  # We'll clean manually
+                    skip_special_tokens=True,
                 )
             ]
+            # Clean the references
+            labels = batch["labels"].clone()
+            labels[labels == -100] = model.generation_tokenizer.pad_token_id
+
             references = [
                 math_evaluator.extract_answer(math_evaluator.normalize_answer(ref))
                 for ref in model.generation_tokenizer.batch_decode(
-                    batch["labels"],
-                    skip_special_tokens=True,  # We'll clean manually
+                    labels,
+                    skip_special_tokens=True,
                 )
             ]
             math_metrics = math_evaluator.compute_metrics(

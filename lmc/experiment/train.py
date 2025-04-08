@@ -176,8 +176,9 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
-            log_dct.update(evaluate_ensemble(self.training_elements, train=True))
-            log_dct.update(evaluate_ensemble(self.training_elements, train=False))
+            if not self.config.data.is_language_dataset():
+                log_dct.update(evaluate_ensemble(self.training_elements, train=True))
+                log_dct.update(evaluate_ensemble(self.training_elements, train=False))
         if self.config.n_models > 2:
             evaluate_merge(
                 self.training_elements,
@@ -449,8 +450,6 @@ class TrainingRunner(ExperimentManager):
 
         iterator.reset()
         for batch_idx, batch in enumerate(loader):
-            if batch_idx > 20:
-                break
             batch = {
                 k: v.to(self.device) if isinstance(v, torch.Tensor) else v
                 for k, v in batch.items()
