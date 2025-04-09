@@ -192,6 +192,18 @@ class WandbMetricsRegistry(MetricsRegistry):
                     "model{}-ce",
                     MetricCategory.CROSS_ENTROPY,
                 ),
+                # "ensemble_accuracy": MetricTemplate(
+                #     "model{}/{}/accuracy",
+                #     "$\\mathrm{{Acc}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                #     "model{}-acc",
+                #     MetricCategory.ACCURACY,
+                # ),
+                # "ensemble_cross_entropy": MetricTemplate(
+                #     "model{}/{}/cross_entropy",
+                #     "$\\mathrm{{CE}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                #     "model{}-ce",
+                #     MetricCategory.CROSS_ENTROPY,
+                # ),
             }
         )
         ## language
@@ -359,7 +371,41 @@ class WandbMetricsRegistry(MetricsRegistry):
                             ),
                         ),
                     )
+                for key in ["class", "margin"]:
+                    metric_key = f"{split.value}_disagree_{key}"
+                    if key == "class":
+                        title = f"Disagreement in {split.value.title()} (%)"
+                    else:
+                        title = f"{split.value.title()} Logits L2 Dist."
 
+                    self.add_metric(
+                        metric_key,
+                        WandbMetric(
+                            f"disagree/{split.value}/{key}",
+                            title,
+                            f"disagree_{split.value}_{key}",
+                            split=split,
+                        ),
+                    )
+                self.add_metric(
+                    f"cka_max_{split.value}",
+                    WandbMetric(
+                        f"cka_max_{split.value}",
+                        f"{split.value.title()} Max. Angular CKA",
+                        f"cka_max_{split.value}",
+                        split=split,
+                    ),
+                )
+
+                self.add_metric(
+                    f"ensemble_accuracy_{split.value}",
+                    WandbMetric(
+                        f"ensemble/{split.value}/accuracy",
+                        f"{split.value.title()} Ensemble Acc.",
+                        f"ensemble_acc_{split.value}",
+                        split=split,
+                    ),
+                )
             # L2 and noise metrics
             self.add_metric(
                 f"l2_at_init_{model_idx}",
@@ -395,6 +441,15 @@ class WandbMetricsRegistry(MetricsRegistry):
                     f"static/noise_l2/{model_idx}/total",
                     # f"static/noise/{model_idx}-l2-scaled",
                     f"Effective Noise L2 for Model {model_idx}",
+                    f"noise_scaled{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
+            self.add_metric(  # TODO: not sure what this is
+                f"noise_l2_frac_{model_idx}",
+                WandbMetric(
+                    f"static/noise/frac/{model_idx}/total",
+                    f"Noise L2 for Model {model_idx}",
                     f"noise_scaled{model_idx}",
                     category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
                 ),
@@ -456,7 +511,7 @@ class WandbMetricsRegistry(MetricsRegistry):
                     f"l2_dist_{model_idx}-{next_el_ind}",
                     WandbMetric(
                         f"l2/dist_{model_idx}-{next_el_ind}",
-                        rf"$ L2(\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}}) $",
+                        rf"$ L2(\theta_{{{{{model_idx}}}_t}} - \theta_{{{{{next_el_ind}}}_t}}) $",
                         # rf"$ \lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \rVert_F $",
                         f"l2_dist_{model_idx}-{next_el_ind}",
                         category=MetricCategory.L2_DISTANCE,

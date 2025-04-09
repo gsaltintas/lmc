@@ -109,6 +109,9 @@ def plot_perturb_barrier(
     inset_pos: Literal["left", "right", "bottom-left"] = "left",
     zoom_y_last_step: int = None,
     add_test_line: bool = False,
+    file_extension: Literal["pdf", "png", "jpg"] = "pdf",
+    style_by: str = None,
+    palette: str = "viridis",
 ) -> Path:
     """Plot barrier metrics comparing train and test performance across different perturbation scales.
 
@@ -139,6 +142,12 @@ def plot_perturb_barrier(
     Returns:
         Path to the saved figure file
     """
+    # yscale = "log"
+    # file_extension = "png"
+    separate_legend = False
+
+    ### change above after rebuttal
+
     if inset_fig and ax:
         raise NotImplementedError(f"Inset fig and ax are mutually exclusive for now")
     if ax is None:
@@ -162,6 +171,7 @@ def plot_perturb_barrier(
         plot_fn = sns.lineplot
         markersize = MARKERSIZE if markers else 0
         plt_kwargs.update(dict(markersize=markersize, errorbar="ci"))
+        # plt_kwargs.update(dict(markersize=markersize, errorbar="ci", style=style_by))
     else:
         raise ValueError(f"{plot_type} currently not supported")
     # Setup
@@ -176,11 +186,13 @@ def plot_perturb_barrier(
     if isinstance(x_metric, str) and registry.has_metric(x_metric):
         x_metric = registry.get_metric(x_metric)
         x = x_metric.flat_name
+    print(x_metric, x, x_label)
+
     if isinstance(x_metric, WandbMetric) and x_label is None:
         x_label = x_metric.ylabel
     if x_label is None:
-        x_label = NON_METRIC_LABEL_MAP.get(x_metric)
-
+        x_label = NON_METRIC_LABEL_MAP.get(x)
+    print(x_label)
     tmp = merged_df.copy()
     # if yscale == "log":
     #     print("uuu log")
@@ -194,8 +206,9 @@ def plot_perturb_barrier(
     save_prefix += "-" if save_prefix else ""
     path = out_dir.joinpath(
         f"{save_prefix}{perturb_method}-{base_metric.prefix}"
-    ).with_suffix(".pdf")
+    ).with_suffix(f".{file_extension}")
     if zoom == "first":
+        print("zoooom")
         tmp = tmp[tmp[x] <= zoom_first_step]
         path = path.with_stem(f"{path.stem}-zoom-first")
     elif zoom == "last":
@@ -207,8 +220,9 @@ def plot_perturb_barrier(
     masks = get_labels(tmp, labels, format_labels=False)
     if hue_cnt is None:
         hue_cnt = len(masks)
-    hues = get_hues(1, hue_cnt + 1, "viridis", equidistant=True)[:-1]
+    hues = get_hues(1, hue_cnt + 1, palette, equidistant=True)[:-1]
     # hues = get_hues(1, hue_cnt + 1, "plasma", equidistant=True)[1:]
+    print(len(hues), len(masks))
 
     for i, (label_, mask) in enumerate(masks.items()):
         # print(label_)
@@ -220,6 +234,7 @@ def plot_perturb_barrier(
 
         label = legend_template.format(*label_)
         splits = [Split.TRAIN]
+        splits = [base_metric.split]
         if add_test_line:
             splits.append(Split.TEST)
         for mode in splits:
@@ -232,6 +247,7 @@ def plot_perturb_barrier(
                 metric_name_ = metric_name.replace(orig_split.value, mode.value)
             metric = registry.get_metric(metric_name_)
             for ax_to_plot in axs_to_plot:
+                put_label = mode == Split.TRAIN or len(splits) == 1
                 plot_fn(
                     df,
                     x=x,
@@ -239,8 +255,9 @@ def plot_perturb_barrier(
                     ax=ax_to_plot,
                     marker="o" if markers else "",
                     color=color,
-                    label=label if mode == Split.TRAIN else None,
-                    linestyle="-" if mode == Split.TRAIN else "--",
+                    label=label if put_label else None,
+                    # style=style_by,
+                    # linestyle="-" if put_label else "--",
                     **plt_kwargs,
                 )
 
@@ -282,7 +299,9 @@ def plot_perturb_barrier(
 
         fig.savefig(path)
         if fig_leg is not None:
-            leg_path = path.as_posix().replace(".pdf", "-legend.pdf")
+            leg_path = path.as_posix().replace(
+                f".{file_extension}", f"-legend.{file_extension}"
+            )
             fig_leg.savefig(
                 leg_path,
                 dpi=300,

@@ -114,6 +114,8 @@ def get_merged_df(
                 "run.group": run.group,
                 "run.name": run.name,
                 "run_full_path": "/".join(run.path),
+                "run.state": run.state,
+                "run.tags": run.tags,
             }
             | run.config
             | unflatten_dict(run.config)
