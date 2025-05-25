@@ -61,12 +61,12 @@ class OLMo(BaseModel):
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name, trust_remote_code=True, revision=revision, **kwargs
             )
-            if task_type == "classification":
-                if output_dim is None:
-                    raise ValueError(
-                        "output_dim must be specified for classification tasks"
-                    )
-                # self.classifier = nn.Linear(self.model.config.hidden_size, output_dim)
+            # if task_type == "classification":
+            #     if output_dim is None:
+            #         raise ValueError(
+            #             "output_dim must be specified for classification tasks"
+            #         )
+            #     # self.classifier = nn.Linear(self.model.config.hidden_size, output_dim)
         else:
             # Create a custom configuration
             config = OlmoConfig.from_pretrained(model_name, trust_remote_code=True)
@@ -94,15 +94,17 @@ class OLMo(BaseModel):
             trust_remote_code=True,
             revision=revision,
             chat_template=CHAT_TEMPLATES.get(chat_template, None),
-            padding_side="right",  # Default, but being explicit
+            padding_side="right",
             config=self.model.config,
         )
         self.generation_tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=True,
-            chat_template=chat_template,
+            # chat_template=chat_template,
+            chat_template=CHAT_TEMPLATES.get(chat_template, None),
             revision=revision,
             padding_side="left",  # Default, but being explicit
+            config=self.model.config,
         )
         # Set padding token if not defined
         if self.tokenizer.pad_token is None:

@@ -150,13 +150,21 @@ class TrainingRunner(ExperimentManager):
             if self.config.cka_n_train and self.config.n_models > 1:
                 log_dct.update(
                     evaluate_cka(
-                        element, next_el, train=True, n_examples=self.config.cka_n_train
+                        element,
+                        next_el,
+                        train=True,
+                        n_examples=self.config.cka_n_train,
+                        is_language=self.config.data.is_language_dataset(),
                     )
                 )
             if self.config.cka_n_test and self.config.n_models > 1:
                 log_dct.update(
                     evaluate_cka(
-                        element, next_el, train=False, n_examples=self.config.cka_n_test
+                        element,
+                        next_el,
+                        train=False,
+                        n_examples=self.config.cka_n_test,
+                        is_language=self.config.data.is_language_dataset(),
                     )
                 )
         # Choose evaluation function based on task
@@ -176,6 +184,7 @@ class TrainingRunner(ExperimentManager):
                 log_dct,
                 check_perms=self.config.lmc.lmc_check_perms,
             )
+            # if self.config.data.task_type != TaskType.GENERATION:
             if not self.config.data.is_language_dataset():
                 log_dct.update(evaluate_ensemble(self.training_elements, train=True))
                 log_dct.update(evaluate_ensemble(self.training_elements, train=False))

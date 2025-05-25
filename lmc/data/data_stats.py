@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Union
+from typing import ClassVar, Dict, List, Literal, Optional, Union
 
 import numpy as np
 from torchvision import datasets as D
@@ -74,7 +74,13 @@ class LanguageConfig:
     def __post_init__(self):
         if self.max_gen_seq_length is None:
             self.max_gen_seq_length = self.max_seq_length
-        self.instruction_format = instruction_formats.get(self.hf_path, {})
+        inst_format = instruction_formats.get(self.hf_path, {})
+        if self.hf_config:
+            inst_format = inst_format.get(self.hf_config)
+        # import code
+
+        # code.interact(local=locals() | globals())
+        self.instruction_format = inst_format
 
 
 @dataclass
@@ -333,7 +339,7 @@ class MathDatasetRegistry(BaseRegistry):
             samples=7473,  # Exact train count
             classes=None,  # Generation task
             task_type=TaskType.GENERATION,
-            max_seq_length=512,
+            max_seq_length=1024,
             hf_path="openai/gsm8k",
             hf_config="main",
             splits={"train": "train", "validation": "test"},
@@ -438,14 +444,15 @@ class QARegistry(BaseRegistry):
             hf_path="duorc",
             splits={"train": "train", "validation": "validation"},
         ),
-        "drop": LanguageConfig(
-            samples=77000,
-            classes=2,
-            task_type=TaskType.QUESTION_ANSWERING,
-            max_seq_length=512,
-            hf_path="drop",
-            splits={"train": "train", "validation": "validation"},
-        ),
+        # "drop": LanguageConfig(
+        #     samples=77000,
+        #     # classes=2,
+        #     classes=None,
+        #     task_type=TaskType.QUESTION_ANSWERING,
+        #     max_seq_length=512,
+        #     hf_path="drop",
+        #     splits={"train": "train", "validation": "validation"},
+        # ),
         "wikihop": LanguageConfig(
             samples=51000,
             classes=2,
@@ -516,7 +523,7 @@ class QARegistry(BaseRegistry):
     newsqa: ClassVar[LanguageConfig] = _registry["newsqa"]
     hotpotqa: ClassVar[LanguageConfig] = _registry["hotpotqa"]
     duorc: ClassVar[LanguageConfig] = _registry["duorc"]
-    drop: ClassVar[LanguageConfig] = _registry["drop"]
+    # drop: ClassVar[LanguageConfig] = _registry["drop"]
     wikihop: ClassVar[LanguageConfig] = _registry["wikihop"]
     boolq: ClassVar[LanguageConfig] = _registry["boolq"]
     comqa: ClassVar[LanguageConfig] = _registry["comqa"]

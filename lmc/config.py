@@ -763,7 +763,7 @@ class ModelConfig_(Config):
             raise ValueError(
                 f"Model name not properly configured, try one of {pformat(MODEL_NAME_PATTERNS)}"
             )
-        if self.revision.lower() in ["null", "none"]:
+        if self.revision and self.revision.lower() in ["null", "none"]:
             self.revision = None
         return super().__post_init__()
 

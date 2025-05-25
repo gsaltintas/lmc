@@ -658,22 +658,23 @@ def setup_nlp_loader(
     # tokenized_dataset = tokenized_dataset.map(ensure_labels, batched=True)
 
     # Setup data collator based on task
-    if task_type == TaskType.GENERATION and data_conf.whole_word_masking:
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer_to_use,
-            mlm=True,
-            mlm_probability=data_conf.masking_probability,
-        )
+    if task_type == TaskType.GENERATION:
+        if data_conf.whole_word_masking:
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=tokenizer_to_use,
+                mlm=True,
+                mlm_probability=data_conf.masking_probability,
+            )
+        else:
+            ## TODO: only implemented for olmo
+            response_template = "#### "
+            response_template = "<|assistant|>"
+            data_collator = DataCollatorForCompletionOnlyLM(
+                tokenizer_to_use.encode(response_template, add_special_tokens=False),
+                tokenizer=tokenizer,
+            )
     else:
-        ## TODO: only implemented for olmo
-        response_template = "#### "
-        response_template = "<|assistant|>"
-        data_collator = DataCollatorForCompletionOnlyLM(
-            tokenizer_to_use.encode(response_template, add_special_tokens=False),
-            tokenizer=tokenizer,
-        )
-
-        # data_collator = DataCollatorWithPadding(tokenizer_to_use)
+        data_collator = DataCollatorWithPadding(tokenizer_to_use)
 
     batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
     return DataLoader(
@@ -760,7 +761,8 @@ def setup_vision_loader(
         generator=g,
         worker_init_fn=seed_worker,
         pin_memory=data_conf.pin_memory,
-        prefetch_factor=2,
+        prefetch_factor=2 if data_conf.num_workers > 0 else None,
+        # persistent_workers=True if data_conf.num_workers > 0 else False,
     )
     return loader
 

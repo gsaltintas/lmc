@@ -43,7 +43,9 @@ def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
 
 
 def params_to_vector(params: Iterable[torch.Tensor]) -> torch.Tensor:
-    return torch.nn.utils.parameters_to_vector(params).detach().cpu()
+    # necessary for lang models
+    current_params = [p.clone().detach().cpu().contiguous() for p in params]
+    return torch.nn.utils.parameters_to_vector(current_params).detach().cpu()
 
 
 def vector_to_params(
@@ -517,6 +519,9 @@ class NLPTrainingElement(TrainingElement):
             outputs = self.model(**batch)
             loss = outputs.loss
             logits = outputs.logits
+            import code
+
+            # code.interact(local=locals() | globals())
         elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
             # Question answering
             outputs = self.model(**batch)
