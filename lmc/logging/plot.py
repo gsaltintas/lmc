@@ -112,6 +112,8 @@ def plot_perturb_barrier(
     file_extension: Literal["pdf", "png", "jpg"] = "pdf",
     style_by: str = None,
     palette: str = "viridis",
+    marker="o",
+    markersize=MARKERSIZE,
 ) -> Path:
     """Plot barrier metrics comparing train and test performance across different perturbation scales.
 
@@ -142,10 +144,6 @@ def plot_perturb_barrier(
     Returns:
         Path to the saved figure file
     """
-    # yscale = "log"
-    # file_extension = "png"
-    separate_legend = False
-
     ### change above after rebuttal
 
     if inset_fig and ax:
@@ -167,9 +165,10 @@ def plot_perturb_barrier(
     plt_kwargs = {}
     if plot_type == "scatter":
         plot_fn = sns.scatterplot
+        # plt_kwargs.update(markersize=markersize)
     elif plot_type == "line":
         plot_fn = sns.lineplot
-        markersize = MARKERSIZE if markers else 0
+        markersize = markersize if markers else 0
         plt_kwargs.update(dict(markersize=markersize, errorbar="ci"))
         # plt_kwargs.update(dict(markersize=markersize, errorbar="ci", style=style_by))
     else:
@@ -180,7 +179,10 @@ def plot_perturb_barrier(
         labels = ["perturb_scale"]
     # Get metrics
     base_name = metric_name
-    base_metric = registry.get_metric(base_name)
+    if registry.has_metric(base_name):
+        base_metric = registry.get_metric(base_name)
+    else:
+        base_metric = base_name
     x = x_metric
     print("hello", x, x_metric, registry.has_metric(x_metric))
     if isinstance(x_metric, str) and registry.has_metric(x_metric):
@@ -204,9 +206,13 @@ def plot_perturb_barrier(
     tmp = tmp.reset_index()
     tmp = tmp[tmp["perturb_mode"] == perturb_method]
     save_prefix += "-" if save_prefix else ""
-    path = out_dir.joinpath(
-        f"{save_prefix}{perturb_method}-{base_metric.prefix}"
-    ).with_suffix(f".{file_extension}")
+    suffix = f".{file_extension}"
+    if not isinstance(base_metric, str):
+        suffix = f"-{base_metric.prefix}{suffix}"
+    path = out_dir.joinpath(f"{save_prefix}{perturb_method}{suffix}")
+    if yscale == "log":
+        path = path.with_stem(f"{path.stem}-log")
+
     if zoom == "first":
         print("zoooom")
         tmp = tmp[tmp[x] <= zoom_first_step]
@@ -233,27 +239,31 @@ def plot_perturb_barrier(
             label_ = [label_]  # This will keep strings intact
 
         label = legend_template.format(*label_)
-        splits = [Split.TRAIN]
-        splits = [base_metric.split]
+        if isinstance(base_metric, str):
+            splits = [Split.TRAIN]
+        else:
+            splits = [base_metric.split]
         if add_test_line:
             splits.append(Split.TEST)
         for mode in splits:
             axs_to_plot = [ax]
             if mode == Split.TRAIN and inset_fig:
                 axs_to_plot.append(inset_ax)
-            orig_split = base_metric.split
+            orig_split = splits[0]
             metric_name_ = metric_name
             if orig_split is not None:
                 metric_name_ = metric_name.replace(orig_split.value, mode.value)
-            metric = registry.get_metric(metric_name_)
+            if registry.has_metric(metric_name_):
+                metric = registry.get_metric(metric_name_)
+                metric_name_ = metric.flat_name
             for ax_to_plot in axs_to_plot:
                 put_label = mode == Split.TRAIN or len(splits) == 1
                 plot_fn(
                     df,
                     x=x,
-                    y=metric.flat_name,
+                    y=metric_name_,
                     ax=ax_to_plot,
-                    marker="o" if markers else "",
+                    marker=marker if markers else "",
                     color=color,
                     label=label if put_label else None,
                     # style=style_by,
@@ -263,7 +273,12 @@ def plot_perturb_barrier(
 
     ax.set_xlabel(x_label)
     if not y_label:
-        y_label = base_metric.general_ylabel
+        if isinstance(base_metric, str):
+            raise Warning(
+                f"Metric not found in the registry, pass y_label for proper formatting."
+            )
+        else:
+            y_label = base_metric.general_ylabel
     ax.set_ylabel(y_label)
     ax.set_xscale(xscale)
     ax.set_yscale(yscale)
@@ -293,11 +308,15 @@ def plot_perturb_barrier(
         )
     else:
         fig_leg = None
-        ax.legend(title=legend_title, bbox_to_anchor=(1, 0.5))
+        ax.legend(title=legend_title)
+        #   , bbox_to_anchor=(1, 0.5))
+        # ax.legend(title=legend_title, bbox_to_anchor=(1, 0.5))
     if save_fig:
         path.parent.mkdir(exist_ok=True, parents=True)
-
-        fig.savefig(path)
+        # sns.despine()
+        if separate_legend:
+            plt.tight_layout()
+        fig.savefig(path, bbox_inches="tight")
         if fig_leg is not None:
             leg_path = path.as_posix().replace(
                 f".{file_extension}", f"-legend.{file_extension}"
