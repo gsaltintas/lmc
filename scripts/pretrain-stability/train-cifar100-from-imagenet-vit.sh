@@ -29,6 +29,7 @@ SEED2=2
 SEED3=3
 STEPS=5ep
 WANDB=true
+# WANDB=false
 tqdm=false
 RESIZE=224
 BS=32
@@ -40,6 +41,8 @@ PERTURB_SCALE=${4-0.1}
 PERTURB_MODE=${5-batch}
 WARMUP_RATIO=${6-0.1}
 SEED1=${7-$SEED1}
+WANDB_PROJECT="LMCFinetuning-ViT"
+WANDB_PROJECT="LMCFinetuning-ViT-CKA"
 
 python main.py perturb \
     --model_name $MODEL \
@@ -54,6 +57,7 @@ python main.py perturb \
         --download=true \
         --resize=$RESIZE \
         --num_workers=4 \
+        --num_workers=0 \
     --optimizer=$OPT \
         --training_steps=$STEPS \
         --lr_scheduler onecycle \
@@ -62,15 +66,16 @@ python main.py perturb \
         --warmup_ratio=$WARMUP_RATIO \
         --batch_size=$BS \
         --test_batch_size=128 \
+        --test_batch_size=32 \
     --log_dir=/network/scratch/g/gul-sena.altintas/finetune \
         --enforce_new_model_dir=True \
         --use_tqdm=$tqdm \
-        --save_freq=5ep \
+        --save_freq=10ep \
         --cleanup_after=false \
     --use_wandb $WANDB \
         --group=$MODEL\
         --run_name=$MODEL-$DATASET-$PERTURB_MODE \
-        --project=LMCFinetuning-ViT \
+        --project=$WANDB_PROJECT \
     --n_models=2 \
         --seed1=$SEED1 \
         --loader_seed1=$SEED1 \
@@ -85,7 +90,13 @@ python main.py perturb \
     --same_steps_pperturb=false \
     --cka_n_train=10000 \
     --cka_n_test=10000 \
+    --cka_include="classifier,encoder.layer.0.output.out,encoder.layer.5.output.out,encoder.layer.11.output.out" \
     --dont_perturb_module_patterns '.*norm.*|.*bias.*' 
+    # --cka_strategy=pool \
 
+    # --cka_include="patch_embed,encoder.layer.0.attention.output.dropout,encoder.layer.5.attention.output.dropout,encoder.layer.11.attention.output.dropout,classifier,encoder.layer.0.output,encoder.layer.5.output,encoder.layer.11.output" \
+
+    # --cka_include="patch_embed,encoder.layer.0.attention.output,encoder.layer.5.attention.output,encoder.layer.11.attention.output,classifier" \
+    # --cka_include="encoder.layer.0.attention.output,encoder.layer.2.attention.output,encoder.layer.5.attention.output,encoder.layer.8.attention.output,encoder.layer.11.attention.output,encoder.layer.0.intermediate,encoder.layer.5.intermediate,encoder.layer.11.intermediate,encoder.layer.0.output,encoder.layer.11.output,classifier" \
 # srun --time 480 --mem-per-cpu 16G --tmp 32G --cpus-per-gpu 4 --gres=gpu:l40s:1 --pty bash
 # srun --time 480 --mem-per-cpu 16G --tmp 32G --cpus-per-gpu 4 --gres=gpu:rtx8000:1 --pty bash

@@ -1,11 +1,12 @@
 #!/bin/bash
 
-# bash scripts/pretrain-stability/vit-all-jobs.sh --preset batch --mode direct  --warmup_ratios 0.1 --dataset cifar100  --mode single --train_seed 111
-# bash scripts/pretrain-stability/vit-all-jobs.sh --preset batch --mode direct  --warmup_ratios 0.1 --dataset cifar100  --mode direct
+# bash scripts/pretrain-stability/multibert-all-jobs.sh --preset batch --checkpoint 2000k 200k 20k --dataset qnli --perturb_steps 1 4910 --mode single --warmup_ratios 0.1 --train_seed 111 --base_seed 0
+# bash scripts/pretrain-stability/multibert-all-jobs.sh --preset batch --checkpoint 2000k 200k 20k --dataset mrpc --perturb_steps 1 250 --mode single --warmup_ratios 0.1 --train_seed 1111 --base_seed 0
+# bash scripts/pretrain-stability/multibert-all-jobs.sh --preset batch --checkpoint 200k --dataset mrpc qnli --mode single
 # Help and documentation
 show_help() {
     cat <<EOF
-Script for submitting ViT stability experiments with different configurations.
+Script for submitting BERT stability experiments with different configurations.
 
 Usage: 
     $(basename $0) [--preset NAME] [--checkpoint STEP...] [--dataset NAME...] [--mode MODE]
@@ -13,15 +14,17 @@ Usage:
 Options:
     --preset NAME     - Load a predefined configuration set
         Available presets:
+        - gaussian_small  : Small-scale gaussian noise experiments (4 datasets)
         - gaussian_full   : Full-scale gaussian noise experiments (8 datasets)
         - batch          : Batch-wise perturbation experiments
 
-    --checkpoint ... - Override model name from hf steps to run
-        Example: --checkpoint "google/vit-base-patch16-224"
+    --checkpoint STEP... - Override checkpoint steps to run
+        Available steps: 20k, 200k, 2000k
+        Example: --checkpoint 20k 200k
 
     --dataset NAME...    - Override datasets to run
-        Available datasets: cifar100, cifar10, etc.
-        Example: --dataset 
+        Available datasets: sst2, cola, mrpc, stsb, qqp, mnli, qnli, rte
+        Example: --dataset sst2 cola
 
     --mode MODE      - Submission mode (default: grouped)
         Available modes: grouped, single, direct
@@ -53,12 +56,12 @@ EOF
 [[ "$1" == "--help" || "$1" == "-h" ]] && show_help
 
 # Common configuration parameters
-ALL_DATASETS=("cifar100")
-ALL_MODEL_NAMES=("google/vit-base-patch16-224")
+ALL_DATASETS=("sst2" "cola" "mrpc" "stsb" "qqp" "mnli" "qnli" "rte")
+ALL_CKPT_STEPS=("20k" "200k" "2000k")
 DEFAULT_WARMUP_RATIOS=(0 0.1)
 if [[ $(pwd) == *"mila"* ]]; then
-    GPU="l40s"
-    gpu_str=" --gres=gpu:l40s:1 --mem-per-cpu=16G --tmp=32G --cpus-per-gpu=4 "
+    GPU="rtx8000"
+    gpu_str=" --gres=gpu:rtx8000:1 --mem-per-cpu=8G --tmp=8G --cpus-per-gpu=4 "
 else
     GPU="a6000"
     gpu_str=" --nodelist=quartet5 --gres=gpu:1 --mem-per-cpu=8G --cpus-per-task=4 "
@@ -66,12 +69,11 @@ fi
 echo gpu: $GPU
 
 # Default values
-MODE="single"
+MODE="grouped"
 PRESET="gaussian_full" # Default preset
-PRESET="batch" # Default preset
-PERTURB_MODE="batch"
+PERTURB_MODE="gaussian"
 BASE_MODEL_SEED="0"
-PERTURB_STEPS=(0 1 375 750)
+PERTURB_STEPS=(1 100)
 WARMUP_RATIOS=(0 0.1)
 TRAIN_SEED=42
 NJOBS=${NJOBS:-40000}
@@ -127,6 +129,10 @@ while [[ $# -gt 0 ]]; do
         MODE="$2"
         shift 2
         ;;
+    --base_seed)
+        BASE_MODEL_SEED="$2"
+        shift 2
+        ;;
     --train_seed)
         TRAIN_SEED="$2"
         shift 2
@@ -158,21 +164,27 @@ else
 fi
 
 # Configuration presets
+gaussian_small_config() {
+    DATASETS=("sst2" "cola" "mrpc" "stsb")
+    CKPT_STEPS=("20k" "200k")
+    PERTURB_MODE="gaussian"
+}
+
 gaussian_full_config() {
     DATASETS=("${ALL_DATASETS[@]}")
-    CKPT_STEPS=("${ALL_MODEL_NAMES[@]}")
+    CKPT_STEPS=("${ALL_CKPT_STEPS[@]}")
     PERTURB_MODE="gaussian"
 }
 
 batch_config() {
-    DATASETS=("cifar100")
-    CKPT_STEPS=("google/vit-base-patch16-224")
+    DATASETS=("sst2" "cola" "mrpc" "stsb")
+    CKPT_STEPS=("2000k")
     PERTURB_MODE="batch"
 }
 
 
 if [[ $PERTURB_MODE -eq "batch" ]]; then
-    PERTURB_SCALES=(0.00001 0.001 0.01 0.1)
+    PERTURB_SCALES=(0.00001 0.001 0.01)
 else
     PERTURB_SCALES=(0.1 0.5 0.01)
 fi
@@ -187,25 +199,26 @@ fi
 
 # Load base configuration first
 case $PRESET in
+"gaussian_small") gaussian_small_config ;;
 "gaussian_full") gaussian_full_config ;;
 "batch") batch_config ;;
 *)
     echo "Invalid preset name: $PRESET"
-    echo "Available presets: gaussian_full, batch"
+    echo "Available presets: gaussian_small, gaussian_full, batch"
     exit 1
     ;;
 esac
 
 # Override with custom values if provided
 if [[ ${#CUSTOM_CHECKPOINTS[@]} -gt 0 ]]; then
-#     # Validate checkpoints
-#     for step in "${CUSTOM_CHECKPOINTS[@]}"; do
-#         if [[ ! " ${ALL_MODEL_NAMES[@]} " =~ " ${step} " ]]; then
-#             echo "Invalid checkpoint step: $step"
-#             echo "Available steps: ${ALL_MODEL_NAMES[*]}"
-#             exit 1
-#         fi
-#     done
+    # Validate checkpoints
+    for step in "${CUSTOM_CHECKPOINTS[@]}"; do
+        if [[ ! " ${ALL_CKPT_STEPS[@]} " =~ " ${step} " ]]; then
+            echo "Invalid checkpoint step: $step"
+            echo "Available steps: ${ALL_CKPT_STEPS[*]}"
+            exit 1
+        fi
+    done
     CKPT_STEPS=("${CUSTOM_CHECKPOINTS[@]}")
 fi
 
@@ -254,16 +267,17 @@ case $MODE in
             for PERTURB_SCALE in "${PERTURB_SCALES[@]}"; do
                 for WARMUP_RATIO in "${WARMUP_RATIOS[@]}"; do
                     for DATASET in "${DATASETS[@]}"; do
-                        bash scripts/pretrain-stability/train-cifar100-from-imagenet-vit.sh \
+                        bash scripts/pretrain-stability/train-multibert.sh \
                             "${DATASET}" \
                             "${CKPT_STEP}" \
                             "${PERTURB_STEP}" \
                             "${PERTURB_SCALE}" \
                             "${PERTURB_MODE}" \
                             "${WARMUP_RATIO}" \
+                            "${BASE_MODEL_SEED}" \
                             "${TRAIN_SEED}" 
                         sleep 0.2
-                        exit
+                        # exit
                     done
                 done
             done
@@ -273,26 +287,29 @@ case $MODE in
 
 "single")
     # Submit each combination as a separate job
-    for CKPT_STEP in "${CKPT_STEPS[@]}"; do
+                    for DATASET in "${DATASETS[@]}"; do
         for PERTURB_STEP in "${PERTURB_STEPS[@]}"; do
             for PERTURB_SCALE in "${PERTURB_SCALES[@]}"; do
                 for WARMUP_RATIO in "${WARMUP_RATIOS[@]}"; do
-                    for DATASET in "${DATASETS[@]}"; do
+    for CKPT_STEP in "${CKPT_STEPS[@]}"; do
                         while [[ $(squeue -u $USER | wc -l) -ge $NJOBS ]]; do
                             sleep 1
                         done
                         sbatch --time=360 $gpu_str \
                             --job-name="pretrain-bert-stab-${DATASET}" \
-                            --wrap="bash scripts/pretrain-stability/train-cifar100-from-imagenet-vit.sh \
+                            --wrap="bash scripts/pretrain-stability/train-multibert.sh \
                                     '${DATASET}' \
                                     '${CKPT_STEP}' \
                                     '${PERTURB_STEP}' \
                                     '${PERTURB_SCALE}' \
                                     '${PERTURB_MODE}' \
                                     '${WARMUP_RATIO}' \
+                                    '${BASE_MODEL_SEED}' \
                                     '${TRAIN_SEED}'"
                         sleep 0.2
                     done
+                    # exit 0
+                    # sleep 60
                 done
             done
         done
@@ -313,7 +330,7 @@ case $MODE in
         WARMUP_RATIOS_STR="${WARMUP_RATIOS[*]}"
 
         sbatch --time=1040 $gpu_str \
-            --job-name="pretrain-vit-stab-${DATASET}" \
+            --job-name="pretrain-bert-stab-${DATASET}" \
             --wrap="/bin/bash -c '
                     IFS=\" \" read -r -a CKPT_STEPS <<< \"$CKPT_STEPS_STR\"
                     IFS=\" \" read -r -a PERTURB_STEPS <<< \"$PERTURB_STEPS_STR\"
@@ -324,13 +341,14 @@ case $MODE in
                         for PERTURB_STEP in \"\${PERTURB_STEPS[@]}\"; do
                             for PERTURB_SCALE in \"\${PERTURB_SCALES[@]}\"; do
                                 for WARMUP_RATIO in \"\${WARMUP_RATIOS[@]}\"; do
-                                    bash scripts/pretrain-stability/train-cifar100-from-imagenet-vit.sh  \
+                                    bash scripts/pretrain-stability/train-multibert.sh \
                                         \"${DATASET}\" \
                                         \"\${CKPT_STEP}\" \
                                         \"\${PERTURB_STEP}\" \
                                         \"\${PERTURB_SCALE}\" \
                                         \"${PERTURB_MODE}\" \
                                         \"\${WARMUP_RATIO}\" \
+                                        \"${BASE_MODEL_SEED}\" \
                                         \"${TRAIN_SEED}\" 
                                     sleep 0.2
                                 done

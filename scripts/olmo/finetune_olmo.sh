@@ -1,15 +1,16 @@
 #!/bin/bash
-#SBATCH --time=249
-#SBATCH --gres=gpu:a100:1
-#SBATCH --mem-per-cpu=8G
-#SBATCH --cpus-per-gpu=8
+#SBATCH --time=12:00:00
+#SBATCH --gres=gpu:l40s:1
+#SBATCH --mem-per-cpu=16G
+#SBATCH --cpus-per-gpu=4
 #SBATCH --tmp=8G
-#SBATCH --job-name=glue_train
+#SBATCH --job-name=olmo
 #SBATCH --begin=now+0minutes
-#SBATCH --output=slurm-%j.out
+#SBATCH --output=olmo/slurm-%j.out
 #### vector
 ##SBATCH --account=deadline
 ##SBATCH --qos=deadline
+##SBATCH --gres=gpu:a100:1
 
 #  salloc  --cpus-per-task=8 --mem=72G --time=03:00:00 --gres=gpu:a100:1 --qos=deadline --account deadline
 # gsm8k, math, mathqa
@@ -37,6 +38,7 @@ GRAD_ACCUM=8
 
 STEPS="1000st"
 STEPS="3ep"
+# STEPS="3st"
 
 WD=0.01
 
@@ -44,8 +46,9 @@ SEED1=$TRAIN_SEED
 SEED2=$TRAIN_SEED
 
 USE_WANDB="true"
-USE_WANDB="false"
-NPOINTS=11
+# USE_WANDB="false"
+NPOINTS=5
+# NPOINTS=2
 # NPOINTS=2
 # STEPS="10st"
 PROJECT="LMCPretrainingStability-OLMo"
@@ -103,13 +106,19 @@ TOKENIZER="allenai/OLMo-1B-hf"
 REVISION="step738000-tokens3094B"
 # BS=16
 # GRAD_ACCUM=1
+REVISION=${2-"step738000-tokens3094B"}
 
-seed_str="   --n_models=1 --seed1=$SEED1 --loader_seed1=$SEED1 "
+    # --eval_freq=none \
+    # --eval_specific_steps="1000000000st" \
+seed_str="   --n_models=1 --seed1=$SEED1 --loader_seed1=$SEED1  "
 seed_str="   --n_models=2 --seed1=$SEED1 --loader_seed1=$SEED1 --seed2=$SEED1 --loader_seed2=$SEED1 "
 
+echo starting perturb experiment with dataset $DATASET on model $MODEL
+echo revision $REVISION
+echo perturb_step=$PERTURB_STEP perturb_scale=$PERTURB_SCALE perturb_mode=$PERTURB_MODE
+echo seed=$SEED1
+
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0 python main.py perturb \
-    --eval_freq=none \
-    --eval_specific_steps="1000000000st" \
     --model_name $MODEL \
     --revision $REVISION \
     --initialization_strategy=pretrained \
@@ -146,6 +155,8 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0 python m
     --perturb_inds 1 \
     --same_steps_pperturb=false \
     --dont_perturb_module_patterns '.*norm.*|.*bias.*|.*embeddings.*' \
+    --push_to_hub=true \
+    --lmc_check_perms=false \
     $seed_str
 
 

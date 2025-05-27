@@ -37,6 +37,7 @@ NPOINTS=11
 # NPOINTS=2
 # STEPS="10st"
 PROJECT="LMCPretrainingStability-MultiBert-2"
+PROJECT="LMCPretrainingStability-MultiBert-2-CKA"
 
 # Adjust batch size and steps based on dataset size and complexity
 if [[ "$DATASET" =~ ^(rte|mrpc)$ ]]; then
@@ -90,6 +91,7 @@ python main.py perturb \
     --lr_scheduler onecycle \
     --warmup_ratio $WARMUP_RATIO \
     --batch_size=$BS \
+    --test_batch_size=128 \
     --gradient_accumulation_steps=$GRAD_ACCUM \
     --log_dir=$SCRATCH/finetune_lmc \
     --cleanup_after=false \
@@ -114,6 +116,12 @@ python main.py perturb \
     --perturb_inds 1  \
     --same_steps_pperturb=false \
     --dont_perturb_module_patterns '.*norm.*|.*bias.*|.*embeddings.*' \
+    --cka_n_train=10000 \
+    --cka_n_test=10000 \
+    --cka_strategy="last_element" \
+    --cka_include="encoder.layer.0.output.out,encoder.layer.2.output.out,encoder.layer.5.output.out,encoder.layer.8.output.out,encoder.layer.11.output.out"
+    
+    # encoder.layer.0.output,encoder.layer.2.output,encoder.layer.5.output,encoder.layer.8.output,encoder.layer.11.output,encoder.layer.0.output,encoder.layer.2.output,encoder.layer.5.output,encoder.layer.8.output,encoder.layer.11.output"
 
 
 exit 0
