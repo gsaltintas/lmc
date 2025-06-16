@@ -1,9 +1,9 @@
+import logging
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
-import logging
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple, Iterable
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import torch
 from torch import nn, optim
@@ -12,11 +12,11 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from lmc.data.data_stats import TaskType
+from lmc.data.math_datasets import MathMetricsEvaluator
 from lmc.experiment_config import Trainer
 from lmc.logging.wandb_registry import WandbMetricsRegistry
 from lmc.utils.metrics import Metrics, compute_metrics, mixup_topk_accuracy
 from lmc.utils.step import Step
-
 
 logger = logging.getLogger("setup")
 
@@ -43,7 +43,9 @@ def get_last_ckpt(ckpt_dir: Path, steps_per_epoch: int) -> Path:
 
 
 def params_to_vector(params: Iterable[torch.Tensor]) -> torch.Tensor:
-    return torch.nn.utils.parameters_to_vector(params).detach().cpu()
+    # necessary for lang models
+    current_params = [p.clone().detach().cpu().contiguous() for p in params]
+    return torch.nn.utils.parameters_to_vector(current_params).detach().cpu()
 
 
 def vector_to_params(
@@ -197,7 +199,10 @@ class TrainingElement(ABC):
 
     def get_init_model_vector(self):
         # TODO if resume_from starts at nonzero step, init_model_vector is from current step, not 0
-        return params_to_vector(self.model.parameters())
+        params = [
+            p.clone().detach().cpu().contiguous() for p in self.model.parameters()
+        ]
+        return params_to_vector(params)
 
     def setup_iterators(self):
         if self.config.logger.use_tqdm:
@@ -252,8 +257,10 @@ class TrainingElement(ABC):
         return True
 
     def _dist_statistics(self, other_vector):
-        current_vector = params_to_vector(self.model.parameters())
-        current_vector = current_vector.detach().cpu()
+        current_params = [
+            p.clone().detach().cpu().contiguous() for p in self.model.parameters()
+        ]
+        current_vector = torch.nn.utils.parameters_to_vector(current_params)
         dist = torch.linalg.norm(current_vector - other_vector)
         cosine = torch.nn.functional.cosine_similarity(
             current_vector, other_vector, dim=0
@@ -272,7 +279,10 @@ class TrainingElement(ABC):
         return log_dct
 
     def dist_from_element(self, el: "TrainingElement") -> Dict[str, Any]:
-        other_vector = params_to_vector(el.model.parameters())
+        other_params = [
+            p.clone().detach().cpu().contiguous() for p in el.model.parameters()
+        ]
+        other_vector = torch.nn.utils.parameters_to_vector(other_params)
         i = self.element_ind
         j = el.element_ind
         el_l2, el_cos = self._dist_statistics(other_vector)
@@ -314,6 +324,12 @@ class TrainingElement(ABC):
             / save_name,
             pickle_protocol=4,
         )
+        if self.config.logger.push_to_hub:
+            try:
+                path = f"{self.config.logger.hf_path}-{self.element_ind}"
+                self.model.model.push_to_hub(path)
+            except Exception as e:
+                print(f"Proble pushing to hub {e}")
 
     def update_step_snapshot(self, batch):
         self.last_step_batch = batch
@@ -372,7 +388,113 @@ class VisionTrainingElement(TrainingElement):
         self.metrics.update(acc.item(), topk.item(), None, loss.item(), n=x.shape[0])
 
 
+class SegmentationTrainingElement(VisionTrainingElement):
+    def __init__(self, *args, ignore_index=255, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ignore_index = ignore_index
+
+    def step(self, batch):
+        log_dct = super(VisionTrainingElement, self).step(
+            batch
+        )  # Skip VisionTrainingElement's step
+        self.opt.zero_grad()
+
+        # Handle batch data for segmentation
+        x, y = batch
+        x = x.to(self.device)
+        y = y.to(self.device)
+
+        # Forward pass
+        outputs = self.model(x)
+
+        # Handle different output formats (some models return dict, others return logits directly)
+        if hasattr(outputs, "logits"):
+            logits = outputs.logits
+        else:
+            logits = outputs
+        # import code
+
+        # code.interact(local=locals() | globals())
+
+        # Resize logits to match mask size if needed
+        if logits.shape[-2:] != y.shape[-2:]:
+            logits = torch.nn.functional.interpolate(
+                logits, size=y.shape[-2:], mode="bilinear", align_corners=False
+            )
+
+        # Calculate loss
+        loss = self.loss_fn(logits, y)
+
+        # Backward and optimize
+        loss.backward()
+        # TODO: grad clipping
+
+        self.opt.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
+
+        # Calculate segmentation metrics (instead of classification metrics)
+        with torch.no_grad():
+            # Get predictions
+            preds = torch.argmax(logits, dim=1)
+
+            # Calculate IoU
+            intersection, union = self._calculate_iou(preds, y)
+            miou = intersection.sum() / (union.sum() + 1e-10)
+
+            # Calculate pixel accuracy
+            mask = y != self.ignore_index
+            correct = ((preds == y) & mask).sum()
+            total = mask.sum()
+            pixel_acc = correct / (total + 1e-10)
+
+        # Update metrics with segmentation-specific values
+        self.metrics.update(
+            pixel_acc.item(), miou.item(), None, loss.item(), n=x.shape[0]
+        )
+
+        return log_dct
+
+    def _calculate_iou(self, preds, targets):
+        """Calculate intersection and union for IoU metric"""
+        # Create mask to ignore certain pixels (typically 255)
+        mask = targets != self.ignore_index
+
+        # Get valid predictions and targets
+        preds = preds[mask]
+        targets = targets[mask]
+
+        # Count unique classes in this batch
+        num_classes = max(
+            self.model.num_classes if hasattr(self.model, "num_classes") else 150,
+            preds.max().item() + 1,
+            targets.max().item() + 1,
+        )
+
+        # Calculate IoU for each class
+        intersection = torch.zeros(1, device=preds.device)
+        union = torch.zeros(1, device=preds.device)
+
+        for cls in range(num_classes):
+            pred_inds = preds == cls
+            target_inds = targets == cls
+
+            intersection += (pred_inds & target_inds).sum()
+            union += (pred_inds | target_inds).sum()
+
+        return intersection, union
+
+
 class NLPTrainingElement(TrainingElement):
+    def __post_init__(self):
+        super().__post_init__()
+
+        if (
+            self.config.data.task_type == TaskType.GENERATION
+            and self.config.data.dataset in ["gsm8k", "math", "mathqa", "asdiv"]
+        ):
+            self.math_evaluator = MathMetricsEvaluator()
+
     def step(self, batch):
         super().step(batch)
         # Pre-fetch next batch while computing current one
@@ -388,7 +510,6 @@ class NLPTrainingElement(TrainingElement):
             # Language modeling
             outputs = self.model(**batch)
             loss = outputs.loss
-
         elif self.config.data.task_type in [
             TaskType.CLASSIFICATION,
             TaskType.NATURAL_LANGUAGE_INFERENCE,
@@ -398,6 +519,9 @@ class NLPTrainingElement(TrainingElement):
             outputs = self.model(**batch)
             loss = outputs.loss
             logits = outputs.logits
+            import code
+
+            # code.interact(local=locals() | globals())
         elif self.config.data.task_type == TaskType.QUESTION_ANSWERING:
             # Question answering
             outputs = self.model(**batch)
@@ -413,20 +537,39 @@ class NLPTrainingElement(TrainingElement):
             )  # Remove last dimension since it's regression
         else:
             raise ValueError(f"Unsupported task type: {self.config.data.task_type}")
+        loss = loss / self.config.trainer.gradient_accumulation_steps
+        loss.backward()
 
-        if self.curr_step % self.config.trainer.gradient_accumulation_steps == 0:
-            loss.backward()
+        if (self.curr_step + 1) % self.config.trainer.gradient_accumulation_steps == 0:
+            # After accumulating gradients for config.trainer.gradient_accumulation_steps steps:
             if clip_val := self.config.trainer.opt.gradient_clip_val:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_val)
             self.opt.step()
+
             if self.scheduler is not None:
                 self.scheduler.step()
+            self.opt.zero_grad()  # Important: Clear gradients after optimizer step
 
         # Update metrics based on task
         with torch.no_grad():
-            metrics_kwargs = {"cross_entropy": loss.item(), "n": len(batch)}
+            metrics_kwargs = {
+                "cross_entropy": loss.item(),
+                "n": len(batch),
+                "perplexity": torch.exp(loss).item(),
+            }
             dataset = self.config.data.dataset_info
-            if dataset.metrics:
+            if self.config.data.task_type == TaskType.GENERATION:
+                perplexity = torch.exp(loss)
+                metrics_kwargs["perplexity"] = perplexity.item()
+                # #  Optionally track token-level accuracy if needed
+                # shift_logits = outputs.logits[..., :-1, :].contiguous()
+                # shift_labels = batch["labels"][..., 1:].contiguous()
+                # ## TODO: problematic, fix
+                # token_acc = (shift_logits.argmax(-1) == shift_labels).float().mean()
+                # metrics_kwargs["accuracy"] = token_acc.item()
+                # # metrics_kwargs["token_accuracy"] = token_acc.item()
+
+            elif dataset.metrics:
                 if self.config.data.task_type == TaskType.REGRESSION:
                     predictions = outputs.logits
                 else:
@@ -436,11 +579,7 @@ class NLPTrainingElement(TrainingElement):
                 )
                 metrics_kwargs.update(d)
             else:
-                if self.config.data.task_type == TaskType.GENERATION:
-                    perplexity = torch.exp(loss)
-                    metrics_kwargs["perplexity"] = perplexity.item()
-
-                elif self.config.data.task_type in [
+                if self.config.data.task_type in [
                     TaskType.CLASSIFICATION,
                     TaskType.NATURAL_LANGUAGE_INFERENCE,
                 ]:
@@ -464,6 +603,22 @@ class NLPTrainingElement(TrainingElement):
                     metrics_kwargs["accuracy"] = avg_correct.item()
 
         self.metrics.update(**metrics_kwargs)
+
+    def get_step_snapshot(self):
+        if self.last_step_batch is None:
+            return {}  # this prevents get_step_snapshot from logging the same step twice
+        batch = self.last_step_batch
+        x = batch["input_ids"]
+        hash_x = hash(tuple(x.detach().flatten().cpu().numpy()))
+        # hash_y = hash(tuple(y.detach().flatten().cpu().numpy()))
+        log_dct = {
+            f"step/model{self.element_ind}": self.curr_step,
+            f"data_hash/model{self.element_ind}/x": hash_x,
+            # f"data_hash/model{self.element_ind}/y": hash_y,
+            f"lr/model{self.element_ind}": self.last_step_lr,
+        }
+        self.last_step_batch = None
+        return log_dct
 
 
 @dataclass(init=False)
@@ -529,7 +684,9 @@ class CheckpointEvaluationElement(TrainingElement):
         if self.loaded_model_step != self.curr_step:
             if self.curr_step in self.ckpts:
                 ckpt_path = self.ckpts[self.curr_step]
-                ckpt = torch.load(ckpt_path, map_location=self.device)
+                ckpt = torch.load(
+                    ckpt_path, map_location=self.device, weights_only=False
+                )
                 logger.info(
                     f"model{self.element_ind} loaded from checkpoint {ckpt_path}"
                 )
@@ -599,6 +756,12 @@ class TrainingElements(object):
 
     def __len__(self):
         return len(self._elements)
+
+    def is_same_model(self):
+        for element in self[1:]:
+            if not self[0].params_equal(element):
+                return False
+        return True
 
     def is_same_model(self):
         for element in self[1:]:

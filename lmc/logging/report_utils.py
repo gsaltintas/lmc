@@ -169,19 +169,29 @@ def print_to_latex(
     index: bool = False,
     style_cells: list = [],
 ):
-    format_float = lambda x: f"{x:.{float_precision}f}" if type(x) is float else x
+    prec = f":.{float_precision}f"
+    format_float = (
+        lambda x: f"gegege{x:.{ {{float_precision}} }f}" if isinstance(x, float) else x
+    )
+
     latex_pivot = latex_pivot.apply(format_float)
     styled_df = latex_pivot
     if style:
         styled_df = latex_pivot.apply(
             highlight_cells, threshold=threshold, style_cells=style_cells, axis=1
         )
+
     col_format = "l" * num_init_cols + "rl" * (
         (len(latex_pivot.columns) - num_init_cols) // 2
     )
+    if (len(latex_pivot.columns) - num_init_cols) % 2 == 1:
+        col_format += "r"
     print(
         styled_df.to_latex(
-            column_format=col_format, index=index, multicolumn_format="c"
+            column_format=col_format,
+            index=index,
+            multicolumn_format="c",
+            float_format=f"%.{float_precision}f",
         ).replace("nan", na_symbol)
     )
 

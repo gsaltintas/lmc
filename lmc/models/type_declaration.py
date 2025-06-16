@@ -5,7 +5,8 @@ from typing import Literal, Optional
 import numpy as np
 
 PATTERNS = {
-    "vit": [r"vit[a-zA-Z]*/(\d+)-(\d+)-(\d+)x(\d+)-(\d+)"],
+    "vit": [r"vit[a-zA-Z]*/(\d+)-(\d+)-(\d+)x(\d+)-(\d+)", r".*vit.*"],
+    "segformer": [r".*segformer.*", r".*nvidia.*"],
     "cnn": [
         r"cnn[a-zA-Z]*/(\d+)xk=(\d+)-s=(\d+)-d=(\d+)-fc=(\d+)-p=(\d+)",
         r"cnn[a-zA-Z]*/(\d+)xk=(\d+)-s=(\d+)-d=(\d+)-fc=(\d+)",
@@ -38,6 +39,7 @@ PATTERNS = {
         "roberta-large-mnli",
         r".*roberta.*",
     ],
+    "olmo": ["olmo-1b", "olmo-7b", r".*olmo.*", r".*OLMo.*"],
 }
 MODEL_NAME_PATTERNS = np.concatenate(list(PATTERNS.values()))
 Inits = Optional[

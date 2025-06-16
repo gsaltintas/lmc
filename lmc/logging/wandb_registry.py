@@ -192,6 +192,18 @@ class WandbMetricsRegistry(MetricsRegistry):
                     "model{}-ce",
                     MetricCategory.CROSS_ENTROPY,
                 ),
+                # "ensemble_accuracy": MetricTemplate(
+                #     "model{}/{}/accuracy",
+                #     "$\\mathrm{{Acc}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                #     "model{}-acc",
+                #     MetricCategory.ACCURACY,
+                # ),
+                # "ensemble_cross_entropy": MetricTemplate(
+                #     "model{}/{}/cross_entropy",
+                #     "$\\mathrm{{CE}}^{{{}}}_{{\\mathrm{{{}}}}}$",
+                #     "model{}-ce",
+                #     MetricCategory.CROSS_ENTROPY,
+                # ),
             }
         )
         ## language
@@ -308,13 +320,17 @@ class WandbMetricsRegistry(MetricsRegistry):
                     for method in PermMethod:
                         metric_key = f"perm_{method.value}{template_name}_{split.value}_{ind0}_{ind1}"
                         base_key = f"perm/{method.value}-{ind0}-{ind1}"
+                        ind_key = f"({ind0}-{ind1})" if self.n_models > 2 else ""
+                        ind_key = method.value.capitalize() + ind_key
 
                         self.add_metric(
                             metric_key,
                             WandbMetric(
                                 template.base_path.format(base_key, split.value),
                                 template.ylabel_template.format(ind_key, split_abbrev),
-                                template.prefix_template.format(base_key, split.value),
+                                template.prefix_template.format(
+                                    base_key.replace("/", "-"), split.value
+                                ),
                                 category=template.category,
                                 split=split,
                                 general_ylabel=template.ylabel_template.format(
@@ -355,7 +371,41 @@ class WandbMetricsRegistry(MetricsRegistry):
                             ),
                         ),
                     )
+                for key in ["class", "margin"]:
+                    metric_key = f"{split.value}_disagree_{key}"
+                    if key == "class":
+                        title = f"Disagreement in {split.value.title()} (%)"
+                    else:
+                        title = f"{split.value.title()} Logits L2 Dist."
 
+                    self.add_metric(
+                        metric_key,
+                        WandbMetric(
+                            f"disagree/{split.value}/{key}",
+                            title,
+                            f"disagree_{split.value}_{key}",
+                            split=split,
+                        ),
+                    )
+                self.add_metric(
+                    f"cka_max_{split.value}",
+                    WandbMetric(
+                        f"cka_max_{split.value}",
+                        f"{split.value.title()} Max. Angular CKA",
+                        f"cka_max_{split.value}",
+                        split=split,
+                    ),
+                )
+
+                self.add_metric(
+                    f"ensemble_accuracy_{split.value}",
+                    WandbMetric(
+                        f"ensemble/{split.value}/accuracy",
+                        f"{split.value.title()} Ensemble Acc.",
+                        f"ensemble_acc_{split.value}",
+                        split=split,
+                    ),
+                )
             # L2 and noise metrics
             self.add_metric(
                 f"l2_at_init_{model_idx}",
@@ -377,10 +427,29 @@ class WandbMetricsRegistry(MetricsRegistry):
                 ),
             )
             self.add_metric(
-                f"noise_l2_scaled_{model_idx}",
+                f"noise_l2_scaled_{model_idx}_old",
                 WandbMetric(
                     f"static/noise/{model_idx}-l2-scaled",
                     f"Effective Noise L2 for Model {model_idx}",
+                    f"noise_scaled{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
+            self.add_metric(
+                f"noise_l2_scaled_{model_idx}",
+                WandbMetric(
+                    f"static/noise_l2/{model_idx}/total",
+                    # f"static/noise/{model_idx}-l2-scaled",
+                    f"Effective Noise L2 for Model {model_idx}",
+                    f"noise_scaled{model_idx}",
+                    category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
+                ),
+            )
+            self.add_metric(  # TODO: not sure what this is
+                f"noise_l2_frac_{model_idx}",
+                WandbMetric(
+                    f"static/noise/frac/{model_idx}/total",
+                    f"Noise L2 for Model {model_idx}",
                     f"noise_scaled{model_idx}",
                     category=MetricCategory.L2_DISTANCE,  # Using L2_DISTANCE category since it's a norm
                 ),
@@ -418,7 +487,9 @@ class WandbMetricsRegistry(MetricsRegistry):
                 f"l2_dist_from_init_{model_idx}",
                 WandbMetric(
                     f"l2/dist_from_init_{model_idx}",
-                    rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{{0}_{{{model_idx}}}}} \rVert_F$",
+                    r"L$^2$ Distance ($\theta_T, \theta_T^\prime$)",
+                    # ) \lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{{0}_{{{model_idx}}}}} \rVert_F $",
+                    # rf"$ \lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{{0}_{{{model_idx}}}}} \rVert_F $",
                     f"l2_dist_from_init_{model_idx}",
                     category=MetricCategory.L2_DISTANCE,
                 ),
@@ -440,9 +511,28 @@ class WandbMetricsRegistry(MetricsRegistry):
                     f"l2_dist_{model_idx}-{next_el_ind}",
                     WandbMetric(
                         f"l2/dist_{model_idx}-{next_el_ind}",
-                        rf"$\lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \rVert_F$",
+                        rf"$ L2(\theta_{{{{{model_idx}}}_t}} - \theta_{{{{{next_el_ind}}}_t}}) $",
+                        # rf"$ \lVert\theta_{{t_{{{model_idx}}}}} - \theta_{{t_{{{next_el_ind}}}}} \rVert_F $",
                         f"l2_dist_{model_idx}-{next_el_ind}",
                         category=MetricCategory.L2_DISTANCE,
+                    ),
+                )
+                self.add_metric(
+                    f"perm_wm_fixed_ponts_{model_idx}_{next_el_ind}",
+                    WandbMetric(
+                        f"perm/wm-{model_idx - 1}-{next_el_ind - 1}/fixed_points_ratio",
+                        f"WM - Fixed Points Ratio",
+                        f"perm_wm_fixed_points_{model_idx}-{next_el_ind}",
+                        category=MetricCategory.COUNT,
+                    ),
+                )
+                self.add_metric(
+                    f"perm_am_fixed_ponts_{model_idx}_{next_el_ind}",
+                    WandbMetric(
+                        f"perm/am-{model_idx - 1}-{next_el_ind - 1}/fixed_points_ratio",
+                        f"AM - Fixed Points Ratio",
+                        f"perm_am_fixed_points_{model_idx}-{next_el_ind}",
+                        category=MetricCategory.COUNT,
                     ),
                 )
                 self.add_metric(

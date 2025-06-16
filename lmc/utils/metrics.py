@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
@@ -6,6 +7,8 @@ import numpy as np
 import torch
 from rich.console import Console
 from rich.table import Table
+from scipy.stats import pearsonr, spearmanr
+from sklearn.metrics import f1_score, matthews_corrcoef
 from tabulate import tabulate
 
 from lmc.data.data_stats import TaskType
@@ -88,6 +91,28 @@ class AverageMeter(object):
         return self.sum / cnt if not percentage else self.sum * 100 / cnt
 
 
+def compute_exact_match(predictions, references):
+    metric = evaluate.load("exact_match")
+    results = metric.compute(
+        predictions=predictions,
+        references=references,
+        ignore_case=True,
+        ignore_punctuation=True,
+    )
+    return results["exact_match"]
+
+
+def compute_exact_match_gsm8k(predictions, references):
+    metric = evaluate.load("exact_match")
+    results = metric.compute(
+        predictions=predictions,
+        references=references,
+        ignore_case=True,
+        ignore_punctuation=True,
+    )
+    return results["exact_match"]
+
+
 ### Language metrics
 def compute_qa_metrics(predictions, references, tokenizer):
     """Compute QA metrics (Exact Match and F1)"""
@@ -107,6 +132,10 @@ def compute_classification_metrics(predictions, references):
 
 def compute_f1_metrics(predictions, references):
     """Compute F1 score (used for MRPC, QQP)"""
+    return f1_score(
+        y_true=references.detach().cpu().numpy(),
+        y_pred=predictions.detach().cpu().numpy(),
+    )
     metric = evaluate.load("f1")
     results = metric.compute(
         predictions=predictions,
@@ -117,12 +146,33 @@ def compute_f1_metrics(predictions, references):
 
 def compute_matthews_correlation(predictions, references):
     """Compute Matthews Correlation (used for CoLA)"""
+    return matthews_corrcoef(
+        references.detach().cpu().numpy(), predictions.detach().cpu().numpy()
+    )
+
+
+def compute_pearson_spearman_corr(predictions, references):
+    """Compute Pearson & Spearman correlation (used for STS-B)"""
+    r, p = (
+        references.detach().cpu().numpy(),
+        predictions.detach().cpu().numpy().flatten(),
+    )
+    pearson_corr = pearsonr(r, p).statistic
+    spearman_corr = spearmanr(r, p).statistic
+    return {
+        "pearson_correlation": pearson_corr,
+        "spearman_correlation": spearman_corr,
+    }
+
+
+def compute_matthews_correlation_hf(predictions, references):
+    """Compute Matthews Correlation (used for CoLA)"""
     metric = evaluate.load("matthews_correlation")
     results = metric.compute(predictions=predictions, references=references)
     return results["matthews_correlation"]
 
 
-def compute_pearson_spearman_corr(predictions, references):
+def compute_pearson_spearman_corr_hf(predictions, references):
     """Compute Pearson & Spearman correlation (used for STS-B)"""
     metric = evaluate.load("glue", "stsb")
     results = metric.compute(predictions=predictions, references=references)
@@ -130,6 +180,73 @@ def compute_pearson_spearman_corr(predictions, references):
         "pearson_correlation": results["pearson"],
         "spearman_correlation": results["spearmanr"],
     }
+
+
+def evaluate_math_qa(predictions, targets):
+    """
+    Evaluates math QA predictions against targets.
+
+    Args:
+        predictions: Model output answers (normalized)
+        targets: Ground truth answers (normalized)
+
+    Returns:
+        Dict containing accuracy metrics
+    """
+
+    def normalize_answer(answer):
+        # Convert to string and strip whitespace
+        answer = str(answer).strip()
+        # Remove commas and whitespace
+        answer = "".join(answer.split()).replace(",", "")
+        # Convert fractions to decimals if possible
+        if "/" in answer:
+            try:
+                num, denom = map(float, answer.split("/"))
+                answer = str(num / denom)
+            except:
+                pass
+        # Handle percentage conversion
+        if "%" in answer:
+            answer = answer.replace("%", "")
+            try:
+                answer = str(float(answer) / 100)
+            except:
+                pass
+        try:
+            # Normalize to float with fixed precision
+            return "{:.6f}".format(float(answer))
+        except:
+            return answer
+
+    correct = 0
+    total = len(predictions)
+
+    for pred, target in zip(predictions, targets):
+        pred_norm = normalize_answer(pred)
+        target_norm = normalize_answer(target)
+
+        if pred_norm == target_norm:
+            correct += 1
+
+    metrics = {
+        "exact_match": correct / total,
+        "normalized_accuracy": correct / total,
+        "total_evaluated": total,
+    }
+
+    return metrics
+
+
+def compute_math_metrics(model_output, batch):
+    predictions = model_output.logits.argmax(dim=-1)
+
+    # Convert token IDs back to text if needed
+    predicted_answers = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+    true_answers = batch["answers"]
+
+    metrics = evaluate_math_qa(predicted_answers, true_answers)
+    return metrics
 
 
 METRIC_TO_FUNCTION = {
@@ -141,7 +258,11 @@ METRIC_TO_FUNCTION = {
     "qa": compute_qa_metrics,
     "accuracy": compute_classification_metrics,
     "acc": compute_classification_metrics,
+    "exact_match": compute_exact_match,
+    "exact_match_gsm8k": compute_exact_match_gsm8k,
 }
+
+METRIC_RENAMES = {"exact_match_gsm8k": "exact_match"}
 
 
 def compute_metrics(metrics: List[str], predictions, references):
@@ -154,6 +275,8 @@ def compute_metrics(metrics: List[str], predictions, references):
         if isinstance(res, dict):
             d.update(res)
         else:
+            if metric_name in METRIC_RENAMES:
+                metric_name = METRIC_RENAMES[metric_name]
             d[metric_name] = res
     return d
 
@@ -412,5 +535,9 @@ def print_to_rich(
         table.add_row(*row_content)
 
     console.print(table)
+    console.print("\n" * 2)
+    console.print("\n" * 2)
+    console.print("\n" * 2)
+    console.print("\n" * 2)
     console.print("\n" * 2)
     console.print("\n" * 2)

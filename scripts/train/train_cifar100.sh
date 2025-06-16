@@ -9,12 +9,19 @@ seeds1=(22 45 987)
 seeds2=(43 66 1008)
 repetition=3
 NORM=batchnorm
-# NORM=layernorm
+NORM=layernorm
 DATASET=cifar100
 LR=0.1
 WD=1e-4
 SEED1=1
-STEPS=200ep
+SEED1=2
+SEED1=3
+STEPS="75000st"
+WANDB=true
+# WARMUP_RATIO=0.032
+# CUTOUT=2
+CUTOUT=4
+WARMUP_RATIO=0.025
 
 python main.py train \
     --model_name resnet50-64 \
@@ -24,20 +31,22 @@ python main.py train \
         --hflip true \
         --random_rotation=10 \
         --random_translate=4 \
-        --cutout=4 \
+        --cutout=$CUTOUT \
     --optimizer=sgd \
         --training_steps=$STEPS \
         --lr_scheduler onecycle \
         --lr $LR \
         --momentum=0.9 \
-        --warmup_ratio=0.025 \
+        --warmup_ratio=$WARMUP_RATIO \
         --batch_size=128 \
     --log_dir=/network/scratch/g/gul-sena.altintas/pretrain \
     --cleanup_after=false \
-    --use_wandb true \
-        --group=ncifar100-resnet50 \
+    --use_wandb $WANDB \
+        --group=cifar100-resnet50-new \
         --run_name=resnet50-cifar100-$NORM \
         --project=ImagePreTraining \
+    --save_freq=1500st \
+    --save_specific_steps="1st,180st,1ep,2000st" \
     --use_tqdm=true \
     --n_models=1 \
         --seed1=$SEED1 \

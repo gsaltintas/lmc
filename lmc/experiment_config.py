@@ -228,6 +228,8 @@ class Experiment:
     cka_n_test: int = 0
     cka_include: str = ""
     cka_exclude: str = ""
+    cka_strategy: Literal["last_element", "all", "pool"] = "last_element"
+    _cka_strategy = "Determines how to handle sequence dimension, last_element: evaluates cka on the last element of the sequence, all: flattens over the sequence dim., pool: averages over the sequence dim."
 
     seeds: make_seeds_class() = field(init=False, default_factory=make_seeds_class)
     resume_from: str = None
@@ -272,7 +274,9 @@ class Experiment:
         self.cka_n_test = kwargs.get("cka_n_test", 0)
         self.cka_include = kwargs.get("cka_include", "")
         self.cka_exclude = kwargs.get("cka_exclude", "")
-
+        self.cka_strategy: Literal["last_element", "all", "pool"] = kwargs.get(
+            "cka_strategy", "last_element"
+        )
         # Dynamically build the Seeds class
 
         seeds_cls = make_seeds_class(self.n_models)
@@ -411,7 +415,6 @@ class Experiment:
 
 @dataclass(init=False)
 class Trainer(Experiment):
-
     _name_prefix: str = "trainer"
     _description: str = "Run a training script."
 

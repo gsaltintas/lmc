@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import re
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from shutil import rmtree
@@ -10,10 +11,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from torch import optim
-from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from datasets import load_dataset
+from torch import nn, optim
+from torch.utils.data import DataLoader
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
@@ -23,20 +24,29 @@ from transformers import (
     PreTrainedTokenizer,
 )
 
+# TODO: check
+# from trl import DataCollatorWithCompletionOnly
+from trl import DataCollatorForCompletionOnlyLM
+
 import wandb
 from lmc.config import DataConfig
 from lmc.data.data_stats import DatasetRegistry, TaskType
+from lmc.data.math_datasets import MathDatasetLoader, get_math_preprocessor
+from lmc.data.random_labels import RandomLabelDataset
 from lmc.experiment_config import Experiment, Trainer
 from lmc.models import MLP, ResNet
 from lmc.models.bert import Bert
 from lmc.models.roberta import Roberta
+from lmc.models.segformer import SEGFORMER
 from lmc.models.t5 import T5
 from lmc.models.utils import count_parameters
+from lmc.models.vit import VIT
 from lmc.utils.seeds import seed_everything, seed_worker
 from lmc.utils.step import Step
 from lmc.utils.training_element import (
-    NLPTrainingElement,
     CheckpointEvaluationElement,
+    NLPTrainingElement,
+    SegmentationTrainingElement,
     TrainingElements,
     VisionTrainingElement,
     get_ckpts_by_step,
@@ -86,16 +96,8 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
     """Configure model for NLP tasks"""
     conf = config.model
 
-    # Setup tokenizer first
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.data.tokenizer_name,
-        cache_dir=str(config.data.path),
-        model_max_length=config.data.max_seq_length,
-        padding_side=config.data.padding_side,
-        truncation_side=config.data.truncation_side,
-    )
     if config.data.dataset not in DatasetRegistry.get_available_datasets():
-        raise ValueError(f"Unkown output dimension for dataset {config.data.dataset}")
+        raise ValueError(f"Unkown dataset {config.data.dataset}")
     out = (
         config.data.get_num_labels()
     )  # This will already raise an appropriate error if dataset not found
@@ -117,6 +119,16 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
             output_dim=out,
             initialization_strategy=conf.initialization_strategy,
         )
+    elif "olmo" in conf.model_name.lower():
+        from lmc.models.olmo import OLMo
+
+        model = OLMo(
+            conf.model_name,
+            initialization_strategy=conf.initialization_strategy,
+            revision=conf.revision,
+            use_bfloat16=conf.use_bfloat16,
+            chat_template=config.data.chat_template,
+        )
     # Determine model type based on task
     elif config.data.dataset.startswith("glue"):
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -126,7 +138,18 @@ def configure_nlp_model(config: Trainer, device: torch.device) -> torch.nn.Modul
         model = AutoModelForCausalLM.from_pretrained(
             conf.model_name, cache_dir=str(config.data.path)
         )
-
+    if hasattr(model, "tokenizer"):
+        tokenizer = model.tokenizer
+    else:
+        # Setup tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            config.data.tokenizer_name,
+            cache_dir=str(config.data.path),
+            model_max_length=config.data.max_seq_length,
+            padding_side=config.data.padding_side,
+            truncation_side=config.data.truncation_side,
+            trust_remote_code=True,
+        )
     model = model.to(device)
     logger.info(f"Created NLP model: {conf.model_name}")
     return model, tokenizer
@@ -161,7 +184,21 @@ def configure_vision_model(config: Trainer, device: torch.device) -> "BaseModel"
             initialization_strategy=conf.initialization_strategy,
             norm=conf.norm,
         )
-
+    elif "vit" in conf.model_name:
+        model = VIT(
+            model_name=conf.model_name,
+            output_dim=out,
+            initialization_strategy=conf.initialization_strategy,
+        )
+    # todo: better check here
+    elif "segformer" in conf.model_name or "nvidia" in conf.model_name:
+        model = SEGFORMER(
+            model_name=conf.model_name,
+            output_dim=out,
+            initialization_strategy=conf.initialization_strategy,
+        )
+    else:
+        raise ValueError("Unknown model_name %s", conf.model_name)
     logger.info("Model created.")
     # logger.info
     model = model.to(device)
@@ -327,8 +364,19 @@ def get_task_preprocessor(
     tokenizer: PreTrainedTokenizer,
     data_conf: DataConfig,
     evaluate: bool,
-) -> Callable:
+) -> Tuple[Callable, bool]:
     """Returns the appropriate preprocessing function for the given task type."""
+    batched = True
+    if data_conf.dataset in ["gsm8k", "math", "mathqa", "asdiv"]:
+        loader = MathDatasetLoader(
+            tokenizer, data_conf.dataset_info, padding=evaluate, eval=evaluate
+        )
+        return loader.process_batch, True
+        return (
+            tokenizer,
+            data_conf,
+            evaluate,
+        )
 
     def preprocess_classification(examples):
         tokenizer_kwargs = {
@@ -519,7 +567,14 @@ def get_task_preprocessor(
         TaskType.REGRESSION: preprocess_sequence_pair,
     }
 
-    return preprocessors[task_type]
+    return preprocessors[task_type], batched
+
+
+def ensure_labels(examples):
+    # Ensure labels are present
+    if "labels" not in examples and "input_ids" in examples:
+        examples["labels"] = [ids.copy() for ids in examples["input_ids"]]
+    return examples
 
 
 def setup_nlp_loader(
@@ -550,7 +605,8 @@ def setup_nlp_loader(
             split = splits["test"]
         else:
             logger.warning(
-                f"Dataset {data_conf.dataset} has no validation/test split, using train split"
+                "Dataset %s has no validation/test split, using train split",
+                data_conf.dataset,
             )
             split = splits["train"]
 
@@ -561,31 +617,66 @@ def setup_nlp_loader(
         "split": split,
         "name": dataset_config,
     }
+    if dataset_conf.trust_remote_code:
+        load_kwargs["trust_remote_code"] = True
 
     dataset = load_dataset(dataset_conf.hf_path, **load_kwargs)
 
     # Debug: print first example
-    logger.debug(f"First example from dataset: {dataset[0]}")
-    logger.debug(f"Dataset features: {dataset.features}")
+    logger.debug("First example from dataset: %s", dataset[0])
+    logger.debug("Dataset features: %s", str(dataset.features))
+    tokenizer_to_use = tokenizer
+    # For math tasks in evaluation mode, use left padding
+    if (
+        not train
+        and data_conf.dataset in ["gsm8k", "math", "mathqa", "asdiv"]
+        and data_conf.task_type == TaskType.GENERATION
+    ):
+        # Deep copy the tokenizer for evaluation
+        eval_tokenizer = deepcopy(tokenizer)
+        eval_tokenizer.padding_side = "left"
+        # check if this is necessary
+        if eval_tokenizer.pad_token is None:
+            print(f"No pad token found")
+            eval_tokenizer.pad_token = eval_tokenizer.eos_token
+        tokenizer_to_use = eval_tokenizer
+        print("Using a generation tokenizer, wwith padding='left'.")
 
     # Get appropriate preprocessor
-    preprocessor = get_task_preprocessor(task_type, tokenizer, data_conf, evaluate)
+    preprocessor, batched = get_task_preprocessor(
+        task_type, tokenizer_to_use, data_conf, evaluate
+    )
 
     # Transform dataset
     tokenized_dataset = dataset.map(
-        preprocessor, batched=True, remove_columns=dataset.column_names
+        preprocessor,
+        batched=batched,
+        remove_columns=dataset.column_names,
+        num_proc=1,  # Force single process execution
+        disable_nullable=True,
     )
+    # tokenized_dataset = tokenized_dataset.map(ensure_labels, batched=True)
 
     # Setup data collator based on task
-    if task_type == TaskType.GENERATION and data_conf.whole_word_masking:
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer, mlm=True, mlm_probability=data_conf.masking_probability
-        )
+    if task_type == TaskType.GENERATION:
+        if data_conf.whole_word_masking:
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=tokenizer_to_use,
+                mlm=True,
+                mlm_probability=data_conf.masking_probability,
+            )
+        else:
+            ## TODO: only implemented for olmo
+            response_template = "#### "
+            response_template = "<|assistant|>"
+            data_collator = DataCollatorForCompletionOnlyLM(
+                tokenizer_to_use.encode(response_template, add_special_tokens=False),
+                tokenizer=tokenizer,
+            )
     else:
-        data_collator = DataCollatorWithPadding(tokenizer)
+        data_collator = DataCollatorWithPadding(tokenizer_to_use)
 
     batch_size = data_conf.test_batch_size if evaluate else data_conf.batch_size
-    loader_kwargs = dict()
     return DataLoader(
         tokenized_dataset,
         batch_size=batch_size,
@@ -607,6 +698,9 @@ def setup_vision_loader(
     dataset_conf = data_conf.dataset_info
     w = dataset_conf.resolution
     mean, std = list(dataset_conf.mean), list(dataset_conf.std)
+    # necessary for fine-tuning regime
+    if data_conf.resize:
+        w = data_conf.resize
     transforms_ = [transforms.Resize((w, w))]
     if not evaluate:
         if data_conf.hflip:
@@ -639,13 +733,20 @@ def setup_vision_loader(
         module = ".".join(dataset_cls.split(".")[:-1])
         dataset_cls = getattr(importlib.import_module(module), func)
 
-    dataset = dataset_cls(
+    base_dataset = dataset_cls(
         root=data_conf.path,
         train=train,
         transform=transforms_,
         download=data_conf.download,
     )
 
+    # Wrap with RandomLabelDataset if random_labels is enabled
+    if hasattr(data_conf, "random_labels") and data_conf.random_labels and train:
+        # Use loader_seed for label randomization to ensure consistency
+        dataset = RandomLabelDataset(base_dataset, random_seed=loader_seed)
+        logger.info("Setup dataset with random labels.")
+    else:
+        dataset = base_dataset
     batch_size = data_conf.batch_size if not evaluate else data_conf.test_batch_size
 
     g = torch.Generator()
@@ -659,8 +760,9 @@ def setup_vision_loader(
         num_workers=data_conf.num_workers,
         generator=g,
         worker_init_fn=seed_worker,
-        pin_memory=True,
-        prefetch_factor=2,
+        pin_memory=data_conf.pin_memory,
+        prefetch_factor=2 if data_conf.num_workers > 0 else None,
+        # persistent_workers=True if data_conf.num_workers > 0 else False,
     )
     return loader
 
@@ -701,13 +803,13 @@ def setup_model_dir(config: Trainer) -> Path:
         config.model_dir = Path(
             config.logger.log_dir, f"{hashname}-{formatted_date}-{short_id}"
         )
-        logger.info(f"Created model dir: {config.model_dir}")
+        logger.info("Created model dir: %s", config.model_dir)
     elif Path(config.model_dir).exists() and config.logger.enforce_new_model_dir:
         now = datetime.now()
         short_id = str(now.microsecond)[-4:]
         config.model_dir = Path(str(config.model_dir) + "_" + short_id)
         logger.info(
-            f"enforce_new_model_dir True, creating a new model dir: {config.model_dir}"
+            "enforce_new_model_dir True, creating a new model dir: %s", config.model_dir
         )
     config.model_dir = Path(config.model_dir)
     config.model_dir.mkdir(exist_ok=True)
@@ -890,6 +992,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
         model, tokenizer = configure_model(
             config, device, seed=seed, state_dict=model_sd
         )
+        # TODO init_model_vector is from current step, not 0, when resume_from starts at nonzero step
+        params = [p.detach().cpu().contiguous() for p in model.parameters()]
+        init_model_vector = nn.utils.parameters_to_vector(params)
         if hasattr(config, "frozen_layers"):
             freeze_layers(model, config.frozen_layers)
         logger.info("Setup model %d with seed=%d.", i, seed)
@@ -916,7 +1021,9 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
             loader_seed=loader_seed,
             tokenizer=tokenizer,
         )
-        assert steps_per_epoch == len(train_loader)
+        assert steps_per_epoch == len(train_loader), (
+            f"Steps per epoch {steps_per_epoch} doesn't match training loader size {len(train_loader)}"
+        )
         logger.info("Setup dataloaders of %d with loader_seed=%d", i, loader_seed)
 
         # optimizer
@@ -951,6 +1058,8 @@ def setup_experiment(config: Trainer) -> Tuple[TrainingElements, torch.device, i
             training_element_class = CheckpointEvaluationElement
         elif is_nlp_task:
             training_element_class = NLPTrainingElement
+        elif config.data.task_type == TaskType.SEGMENTATION:
+            training_element_class = SegmentationTrainingElement
         else:
             training_element_class = VisionTrainingElement
         training_elements.add_element(
@@ -988,4 +1097,5 @@ def cleanup(config: Experiment):
             return
 
         logger.info("Deleting the experiment directory (%s)", config.model_dir)
+        rmtree(config.model_dir)
         rmtree(config.model_dir)
