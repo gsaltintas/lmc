@@ -483,6 +483,7 @@ class PerturbedTrainer(Trainer):
     perturb_fraction: float = 1
     perturb_debug_dummy_run: bool = False
     perturb_use_dataloader1_to_step: int = 0
+    perturb_use_dataloader1_from_step: int = -1
 
     _perturb_step: str = "Perturbation step either of the from Xst | X or Xep"
     _perturb_inds: str = "List of models to perturb"
@@ -515,9 +516,8 @@ class PerturbedTrainer(Trainer):
         self.sample_noise_at = kwargs.get("sample_noise_at", "init")
         self.perturb_fraction = kwargs.get("perturb_fraction", 1)
         self.perturb_debug_dummy_run = kwargs.get("perturb_debug_dummy_run", False)
-        self.perturb_use_dataloader1_to_step = kwargs.get(
-            "perturb_use_dataloader1_to_step", 0
-        )
+        self.perturb_use_dataloader1_to_step = kwargs.get("perturb_use_dataloader1_to_step", 0)
+        self.perturb_use_dataloader1_from_step = kwargs.get("perturb_use_dataloader1_from_step", -1)
         self.dont_perturb_module_patterns = kwargs.get(
             "dont_perturb_module_patterns", []
         )

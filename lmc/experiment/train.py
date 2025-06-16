@@ -249,13 +249,10 @@ class TrainingRunner(ExperimentManager):
             # tie all batches together until perturb_use_dataloader1_to_step - this allows implementing of parent-child spawning experiment (Frankle et al. 2020)
             first_batch = batch if first_batch is None else first_batch
             # allow negative indices (i.e. -1 means to last training step)
-            if element.curr_step < (
-                self.config.perturb_use_dataloader1_to_step % (element.max_steps + 1)
-            ):
-                batch = [
-                    x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x)
-                    for x in first_batch
-                ]
+            if element.curr_step < (self.config.perturb_use_dataloader1_to_step % (element.max_steps + 1)):
+                batch = [x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x) for x in first_batch]
+            if element.curr_step >= (self.config.perturb_use_dataloader1_from_step % (element.max_steps + 1)):
+                batch = [x.detach().clone() if isinstance(x, torch.Tensor) else deepcopy(x) for x in first_batch]
 
             # train
             element.step(batch)
